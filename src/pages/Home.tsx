@@ -1,0 +1,204 @@
+import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useTables, useActiveSessions, useTodaysSessions, useSettings } from '../hooks/useLiveData'
+import { useTick } from '../hooks/useTick'
+import { useInstallPrompt } from '../hooks/useInstallPrompt'
+import { getElapsedMs } from '../lib/time'
+import { calculateAmount } from '../lib/money'
+import { stopSession } from '../db/queries'
+import TopBar from '../components/TopBar'
+import SummaryStrip from '../components/SummaryStrip'
+import FilterPills from '../components/FilterPills'
+import TableCard from '../components/TableCard'
+import { Modal } from '../components/Modal'
+import type { GameType, Session } from '../types'
+
+type FilterValue = 'all' | GameType
+
+const ORPHAN_THRESHOLD_MS = 24 * 60 * 60 * 1000
+
+export default function Home() {
+  const tables = useTables()
+  const activeSessions = useActiveSessions()
+  const todaySessions = useTodaysSessions()
+  const settings = useSettings()
+  const navigate = useNavigate()
+  const { showBanner: showInstall, install, dismiss: dismissInstall } = useInstallPrompt()
+
+  useTick()
+
+  const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
+  const [orphanedOpen, setOrphanedOpen] = useState(false)
+  const [endingId, setEndingId] = useState<number | null>(null)
+
+  const sessionMap = useMemo(() => {
+    const map = new Map<number, Session>()
+    for (const s of activeSessions) map.set(s.tableId, s)
+    return map
+  }, [activeSessions])
+
+  const gameTypes = useMemo(
+    () => [...new Set(tables.map((t) => t.gameType))],
+    [tables],
+  )
+
+  const pills = useMemo(
+    () => [
+      { label: 'All', value: 'all' as const, count: tables.length },
+      ...gameTypes.map((gt) => ({
+        label: gt.charAt(0).toUpperCase() + gt.slice(1),
+        value: gt,
+        count: tables.filter((t) => t.gameType === gt).length,
+      })),
+    ],
+    [tables, gameTypes],
+  )
+
+  const filteredTables = useMemo(
+    () => tables.filter((t) => activeFilter === 'all' || t.gameType === activeFilter),
+    [tables, activeFilter],
+  )
+
+  const totalTables = tables.filter((t) => !t.outOfService).length
+  const runningCount = activeSessions.filter((s) => s.status === 'running').length
+
+  const todayTotal = todaySessions.reduce((sum, s) => {
+    if (s.status === 'completed') return sum + s.amount
+    return sum + calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
+  }, 0)
+
+  const currency = settings?.currency ?? '₹'
+
+  // Sessions running/paused for > 24h
+  const orphanedSessions = useMemo(() => {
+    const cutoff = Date.now() - ORPHAN_THRESHOLD_MS
+    return activeSessions.filter((s) => s.startedAt < cutoff)
+  }, [activeSessions])
+
+  async function handleEndOrphaned(id: number) {
+    setEndingId(id)
+    try {
+      await stopSession(id)
+    } finally {
+      setEndingId(null)
+    }
+  }
+
+  return (
+    <div className="bg-bg min-h-screen">
+
+      {/* Install banner */}
+      {showInstall && (
+        <div className="pt-safe">
+          <div className="mx-4 mt-3 flex items-center justify-between gap-3 bg-accent/10 border border-accent/30 rounded-xl px-4 py-3">
+            <p className="text-[13px] text-text leading-snug">
+              Install ClubKeeper for offline use
+            </p>
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={install}
+                className="text-[12px] font-bold text-bg bg-accent px-3 py-1.5 rounded-lg"
+              >
+                Install
+              </button>
+              <button
+                onClick={dismissInstall}
+                className="text-[12px] text-text-faint px-2 py-1.5"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Orphaned sessions banner */}
+      {orphanedSessions.length > 0 && (
+        <div className={showInstall ? 'mx-4 mt-2' : 'pt-safe mx-4 mt-3'}>
+          <div className="flex items-center justify-between bg-paused/10 border border-paused/30 rounded-xl px-4 py-3">
+            <div>
+              <p className="text-[13px] font-semibold text-paused leading-tight">
+                {orphanedSessions.length} session{orphanedSessions.length !== 1 ? 's' : ''} still running
+              </p>
+              <p className="text-[11px] text-text-faint mt-0.5">Started over 24h ago</p>
+            </div>
+            <button
+              onClick={() => setOrphanedOpen(true)}
+              className="text-[12px] font-semibold text-accent"
+            >
+              Review →
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className={showInstall || orphanedSessions.length > 0 ? 'px-4 mt-0' : 'pt-safe px-4'}>
+        <TopBar />
+        <SummaryStrip totalTables={totalTables} runningCount={runningCount} todayTotal={todayTotal} currency={currency} />
+        <FilterPills pills={pills} active={activeFilter} onChange={setActiveFilter} />
+      </div>
+
+      <div className="px-4 space-y-3 pb-6">
+        {filteredTables.map((table) => (
+          <TableCard
+            key={table.id}
+            table={table}
+            session={sessionMap.get(table.id!)}
+            onStartTap={() => navigate(`/start/${table.id}`)}
+          />
+        ))}
+      </div>
+
+      {/* FAB */}
+      <button
+        onClick={() => navigate('/settings')}
+        className="fixed bottom-20 right-5 w-14 h-14 bg-accent text-bg rounded-2xl flex items-center justify-center text-2xl font-bold z-50 active:scale-95 transition-transform"
+        style={{ boxShadow: '0 0 24px rgba(184,255,90,0.35), 0 4px 12px rgba(0,0,0,0.4)' }}
+        aria-label="Add table"
+      >
+        +
+      </button>
+
+      {/* Orphaned sessions modal */}
+      <Modal
+        open={orphanedOpen}
+        onClose={() => setOrphanedOpen(false)}
+        title="Long-running sessions"
+      >
+        <p className="text-text-faint text-[13px] mb-4">
+          These sessions have been running for over 24 hours. You can end them now or review individually.
+        </p>
+        <div className="space-y-3 mb-4">
+          {orphanedSessions.map((s) => {
+            const t = tables.find((tbl) => tbl.id === s.tableId)
+            return (
+              <div key={s.id} className="flex items-center justify-between gap-3 bg-bg border border-border rounded-xl px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-text truncate">{t?.name ?? `Table ${s.tableId}`}</p>
+                  <p className="text-[11px] font-mono text-text-faint mt-0.5">
+                    Since {new Date(s.startedAt).toLocaleString()}
+                  </p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    onClick={() => { setOrphanedOpen(false); navigate(`/session/${s.id}`) }}
+                    className="text-[12px] text-accent font-semibold px-2 py-1"
+                  >
+                    View
+                  </button>
+                  <button
+                    onClick={() => handleEndOrphaned(s.id!)}
+                    disabled={endingId === s.id}
+                    className="text-[12px] text-busy font-semibold px-2 py-1 disabled:opacity-50"
+                  >
+                    {endingId === s.id ? '…' : 'End'}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Modal>
+    </div>
+  )
+}
