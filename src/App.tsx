@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import BottomNav from './components/BottomNav'
+import { ToastContainer } from './components/ToastContainer'
 import Home from './pages/Home'
 import Summary from './pages/Summary'
 import History from './pages/History'
@@ -12,6 +13,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
+        <ToastContainer />
         <div className="min-h-screen bg-bg font-sans pb-16">
           <Routes>
             <Route path="/" element={<Home />} />

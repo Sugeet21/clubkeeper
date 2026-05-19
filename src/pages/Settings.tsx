@@ -5,6 +5,9 @@ import { useTables, useSettings } from '../hooks/useLiveData'
 import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport } from '../db/queries'
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
+import { useToastStore } from '../store/toastStore'
+import { validatePlayerName } from '../lib/validation'
+import { db } from '../db/database'
 import type { GameTable } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -74,6 +77,7 @@ export default function Settings() {
   const [clearModal, setClearModal] = useState(false)
   const [resetModal, setResetModal] = useState(false)
   const [resetConfirmText, setResetConfirmText] = useState('')
+  const [cleanModal, setCleanModal] = useState(false)
   const [storageInfo, setStorageInfo] = useState<{ usage: number; quota: number } | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -113,6 +117,26 @@ export default function Settings() {
       setResetModal(false)
       setResetConfirmText('')
       navigate('/')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleCleanInvalidNames() {
+    setBusy(true)
+    try {
+      const all = await db.sessions.toArray()
+      let count = 0
+      for (const s of all) {
+        if (!s.playerName) continue
+        const { valid } = validatePlayerName(s.playerName.trim())
+        if (!valid) {
+          await db.sessions.update(s.id!, { playerName: null })
+          count++
+        }
+      }
+      setCleanModal(false)
+      useToastStore.getState().show(`Cleaned ${count} record${count !== 1 ? 's' : ''}.`, 'success')
     } finally {
       setBusy(false)
     }
@@ -247,6 +271,13 @@ export default function Settings() {
           <span className="text-[12px] text-text-faint">Irreversible</span>
         </button>
         <button
+          onClick={() => setCleanModal(true)}
+          className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
+        >
+          <span className="text-[14px] text-text">Clean Invalid Player Names</span>
+          <span className="text-[12px] text-text-faint">Preserve sessions</span>
+        </button>
+        <button
           onClick={() => { setResetConfirmText(''); setResetModal(true) }}
           className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
         >
@@ -288,6 +319,34 @@ export default function Settings() {
         table={tableModal.table}
         existingTables={tables}
       />
+
+      {/* ── Clean invalid names modal ───────────────────────────────────── */}
+      <Modal
+        open={cleanModal}
+        onClose={() => !busy && setCleanModal(false)}
+        title="Clean Invalid Player Names?"
+      >
+        <p className="text-text-dim text-[14px] mb-5">
+          This will clear player names from old sessions that don't match current validation rules.
+          Session timing and amounts will be preserved.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={() => setCleanModal(false)}
+            disabled={busy}
+            className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleCleanInvalidNames}
+            disabled={busy}
+            className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold disabled:opacity-50"
+          >
+            {busy ? 'Cleaning…' : 'Continue'}
+          </button>
+        </div>
+      </Modal>
 
       {/* ── Clear sessions modal ────────────────────────────────────────── */}
       <Modal

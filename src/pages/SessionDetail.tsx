@@ -63,13 +63,13 @@ function DetailRow({
   children?: React.ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between py-3.5 border-b border-border last:border-0">
-      <span className="text-[11px] uppercase tracking-widest font-mono text-text-faint shrink-0 mr-4">
+    <div className="flex items-center justify-between gap-3 min-w-0 py-3.5 border-b border-border last:border-0">
+      <span className="text-[11px] uppercase tracking-widest font-mono text-text-faint shrink-0">
         {label}
       </span>
       {children ?? (
         <span
-          className={`text-right font-semibold tabular-nums ${
+          className={`truncate min-w-0 flex-1 text-right font-semibold tabular-nums ${
             large ? 'text-[19px] font-bold' : 'text-[14px]'
           } ${accent ? 'text-accent' : 'text-text'}`}
         >
