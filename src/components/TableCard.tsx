@@ -66,13 +66,13 @@ export default function TableCard({ table, session, onStartTap }: Props) {
         to={`/session/${session.id}`}
         className="block rounded-[18px] border border-busy/30 bg-gradient-to-br from-busy/[0.08] to-bg-card p-4 active:scale-[0.99] transition-transform"
       >
-        <div className="flex items-start justify-between mb-2">
-          <div>
+        <div className="flex items-start justify-between mb-2 min-w-0">
+          <div className="min-w-0 flex-1">
             <h3 className="text-[17px] font-bold tracking-tight text-text">{table.name}</h3>
             <MetaLine table={table} />
           </div>
-          <div className="text-right shrink-0 ml-3">
-            <p className="text-[13px] font-semibold text-text leading-tight">
+          <div className="text-right shrink-0 ml-3 min-w-0 flex-shrink">
+            <p className="text-[13px] font-semibold text-text leading-tight max-w-[140px] truncate">
               {session.playerName || '—'}
             </p>
             <p className="text-[11px] text-text-dim font-mono mt-0.5">
@@ -98,13 +98,13 @@ export default function TableCard({ table, session, onStartTap }: Props) {
         to={`/session/${session.id}`}
         className="block rounded-[18px] border border-paused/30 bg-gradient-to-br from-paused/[0.08] to-bg-card p-4 active:scale-[0.99] transition-transform"
       >
-        <div className="flex items-start justify-between mb-2">
-          <div>
+        <div className="flex items-start justify-between mb-2 min-w-0">
+          <div className="min-w-0 flex-1">
             <h3 className="text-[17px] font-bold tracking-tight text-text">{table.name}</h3>
             <MetaLine table={table} />
           </div>
-          <div className="text-right shrink-0 ml-3">
-            <p className="text-[13px] font-semibold text-text leading-tight">
+          <div className="text-right shrink-0 ml-3 min-w-0 flex-shrink">
+            <p className="text-[13px] font-semibold text-text leading-tight max-w-[140px] truncate">
               {session.playerName || '—'}
             </p>
             <p className="text-[11px] text-text-dim font-mono mt-0.5">

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Modal } from './Modal'
-import { addTable, updateTable } from '../db/queries'
+import { addTable, updateTable, getActiveSessionForTable } from '../db/queries'
+import { validateTableName, TABLE_NAME_MAX } from '../lib/validation'
+import { useToastStore } from '../store/toastStore'
 import type { GameTable, GameType } from '../types'
 
 const GAME_TYPES: { value: GameType; label: string }[] = [
@@ -35,12 +37,14 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
   const isDisabled = table?.outOfService ?? false
 
   const [name, setName] = useState('')
+  const [nameError, setNameError] = useState<string | null>(null)
   const [gameType, setGameType] = useState<GameType>('pool')
   const [ratePerHour, setRatePerHour] = useState('')
   const [ratePerFrame, setRatePerFrame] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [confirmDisable, setConfirmDisable] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [hasActiveSession, setHasActiveSession] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -49,16 +53,32 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
     setRatePerHour(String(table?.ratePerHour ?? ''))
     setRatePerFrame(String(table?.ratePerFrame ?? ''))
     setError(null)
+    setNameError(null)
     setConfirmDisable(false)
     setSaving(false)
+    setHasActiveSession(false)
+
+    if (table?.id !== undefined) {
+      getActiveSessionForTable(table.id).then((s) => setHasActiveSession(s !== undefined))
+    }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleNameChange(val: string) {
+    setName(val)
+    const result = validateTableName(val)
+    setNameError(result.valid ? null : (result.error ?? null))
+    setError(null)
+  }
 
   async function handleSave() {
     setError(null)
     const trimmedName = name.trim()
 
-    if (!trimmedName) { setError('Name is required.'); return }
-    if (trimmedName.length > 40) { setError('Name must be 40 characters or less.'); return }
+    const nameValidation = validateTableName(trimmedName)
+    if (!nameValidation.valid) {
+      setError(nameValidation.error ?? 'Invalid name.')
+      return
+    }
 
     const duplicate = existingTables.some(
       (t) => t.name.toLowerCase() === trimmedName.toLowerCase() && t.id !== table?.id,
@@ -110,7 +130,14 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
 
   async function handleDisable() {
     if (!table?.id) return
-    onClose() // close first to prevent stale-render crash
+    // Race condition guard: re-check for active session before disabling
+    const active = await getActiveSessionForTable(table.id)
+    if (active) {
+      useToastStore.getState().show('Cannot disable — active session detected.', 'error')
+      onClose()
+      return
+    }
+    onClose()
     await updateTable(table.id, { outOfService: true })
   }
 
@@ -162,11 +189,14 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
             <input
               type="text"
               value={name}
-              maxLength={40}
-              onChange={(e) => { setName(e.target.value); setError(null) }}
+              maxLength={TABLE_NAME_MAX}
+              onChange={(e) => handleNameChange(e.target.value)}
               placeholder="e.g. Pool 3"
               className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-[15px] placeholder-text-faint focus:border-accent focus:outline-none transition-colors"
             />
+            {nameError && (
+              <p className="text-[12px] text-busy mt-1">{nameError}</p>
+            )}
           </Field>
 
           <Field label="Game Type">
@@ -227,10 +257,13 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
                   Enable Table
                 </button>
               ) : (
-                // Active table — offer to disable
+                // Active table — offer to disable (blocked if session running)
                 <button
-                  onClick={() => setConfirmDisable(true)}
-                  className="py-3.5 bg-busy/10 text-busy border border-busy/30 rounded-xl text-[13px] font-semibold"
+                  onClick={() => !hasActiveSession && setConfirmDisable(true)}
+                  disabled={hasActiveSession}
+                  className={`py-3.5 bg-busy/10 text-busy border border-busy/30 rounded-xl text-[13px] font-semibold ${
+                    hasActiveSession ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                 >
                   Disable Table
                 </button>
@@ -244,12 +277,19 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
             </button>
             <button
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || Boolean(nameError)}
               className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold disabled:opacity-60"
             >
               {saving ? 'Saving…' : isEditing ? 'Update' : 'Add Table'}
             </button>
           </div>
+
+          {/* Warning shown below grid when disable is blocked */}
+          {isEditing && !isDisabled && hasActiveSession && (
+            <p className="text-[12px] text-busy mt-2">
+              Cannot disable — this table has a running session. End the session first.
+            </p>
+          )}
         </div>
       )}
     </Modal>

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/database'
 import { getActiveSessionForTable, startSession, getRecentPlayerNames } from '../db/queries'
+import { validatePlayerName, validateNote, PLAYER_NAME_MAX, NOTE_MAX } from '../lib/validation'
 import type { BillingMode } from '../types'
 
 // ─── Icon ─────────────────────────────────────────────────────────────────────
@@ -33,8 +34,10 @@ export default function StartSession() {
   // Form state
   const [billingMode, setBillingMode] = useState<BillingMode>('per_hour')
   const [playerName, setPlayerName] = useState('')
+  const [playerNameError, setPlayerNameError] = useState<string | null>(null)
   const [playerCount, setPlayerCount] = useState(2)
   const [note, setNote] = useState('')
+  const [noteError, setNoteError] = useState<string | null>(null)
   const [recentNames, setRecentNames] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -52,8 +55,28 @@ export default function StartSession() {
 
   // ─── Submit ───────────────────────────────────────────────────────────────
 
+  function handlePlayerNameChange(val: string) {
+    setPlayerName(val)
+    const result = validatePlayerName(val)
+    setPlayerNameError(result.valid ? null : (result.error ?? null))
+    setError(null)
+  }
+
+  function handleNoteChange(val: string) {
+    setNote(val)
+    const result = validateNote(val)
+    setNoteError(result.valid ? null : (result.error ?? null))
+  }
+
   async function handleSubmit() {
     if (submitting) return
+
+    // Re-validate before submitting
+    const nameCheck = validatePlayerName(playerName)
+    if (!nameCheck.valid) { setPlayerNameError(nameCheck.error ?? null); return }
+    const noteCheck = validateNote(note)
+    if (!noteCheck.valid) { setNoteError(noteCheck.error ?? null); return }
+
     setSubmitting(true)
     setError(null)
 
@@ -177,26 +200,27 @@ export default function StartSession() {
           <input
             type="text"
             value={playerName}
-            onChange={(e) => {
-              setPlayerName(e.target.value)
-              setError(null)
-            }}
+            maxLength={PLAYER_NAME_MAX}
+            onChange={(e) => handlePlayerNameChange(e.target.value)}
             placeholder="Enter name…"
             className="w-full bg-bg-elevated border border-border rounded-xl px-4 py-3 text-text text-[15px] placeholder-text-faint focus:border-accent focus:outline-none transition-colors"
           />
+          {playerNameError && (
+            <p className="text-[12px] text-busy mt-1">{playerNameError}</p>
+          )}
           {recentNames.length > 0 && (
-            <div className="flex gap-2 flex-wrap mt-2.5">
-              {recentNames.map((name) => (
+            <div className="flex flex-wrap gap-2 mt-3 max-h-24 overflow-y-auto">
+              {recentNames.map((n) => (
                 <button
-                  key={name}
-                  onClick={() => setPlayerName(name)}
-                  className={`text-[12px] px-3 py-1 rounded-full border transition-colors ${
-                    playerName === name
+                  key={n}
+                  onClick={() => handlePlayerNameChange(n)}
+                  className={`max-w-[150px] truncate text-[12px] px-3 py-1 rounded-full border transition-colors ${
+                    playerName === n
                       ? 'bg-accent/20 border-accent text-accent'
                       : 'bg-bg-elevated border-border text-text-dim'
                   }`}
                 >
-                  {name}
+                  {n}
                 </button>
               ))}
             </div>
@@ -236,10 +260,14 @@ export default function StartSession() {
           <input
             type="text"
             value={note}
-            onChange={(e) => setNote(e.target.value)}
+            maxLength={NOTE_MAX}
+            onChange={(e) => handleNoteChange(e.target.value)}
             placeholder="Add a note…"
             className="w-full bg-bg-elevated border border-border rounded-xl px-4 py-3 text-text text-[15px] placeholder-text-faint focus:border-accent focus:outline-none transition-colors"
           />
+          {noteError && (
+            <p className="text-[12px] text-busy mt-1">{noteError}</p>
+          )}
         </Field>
 
       </div>
@@ -254,7 +282,7 @@ export default function StartSession() {
       >
         <button
           onClick={handleSubmit}
-          disabled={submitting}
+          disabled={submitting || Boolean(playerNameError) || Boolean(noteError)}
           className="w-full py-4 bg-accent text-bg rounded-2xl text-[16px] font-bold tracking-tight active:scale-[0.98] disabled:opacity-60 transition-transform"
         >
           {submitting ? 'Starting…' : '▶  Start Timer Now'}

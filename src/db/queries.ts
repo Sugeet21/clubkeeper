@@ -1,6 +1,7 @@
 import { startOfDay, endOfDay } from 'date-fns'
 import { db } from './database'
 import { calculateAmount, applyRounding } from '../lib/money'
+import { validatePlayerName } from '../lib/validation'
 import { seedIfEmpty } from './seed'
 import type { GameTable, Session, ClubSettings } from '../types'
 
@@ -185,17 +186,19 @@ export async function getRecentPlayerNames(limit = 10): Promise<string[]> {
   const recent = await db.sessions
     .orderBy('startedAt')
     .reverse()
-    .limit(50)
+    .limit(100)
     .toArray()
 
   const seen = new Set<string>()
   const names: string[] = []
   for (const s of recent) {
-    if (s.playerName && s.playerName.trim() && !seen.has(s.playerName)) {
-      seen.add(s.playerName)
-      names.push(s.playerName)
-      if (names.length >= limit) break
-    }
+    if (!s.playerName) continue
+    const trimmed = s.playerName.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    if (!validatePlayerName(trimmed).valid) continue
+    seen.add(trimmed)
+    names.push(trimmed)
+    if (names.length >= limit) break
   }
   return names
 }
