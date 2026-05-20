@@ -18,7 +18,8 @@
       "Bash(node -e \"const fs=require\\('fs'\\); const d=fs.readFileSync\\('node_modules/dexie/dist/dexie.d.ts','utf8'\\); const m=d.match\\(/export\\\\s+\\\\{[^}]+\\\\}/s\\); if\\(m\\) console.log\\(m[0].substring\\(0,2000\\)\\)\")",
       "Bash(node -e \"const fs=require\\('fs'\\); const d=fs.readFileSync\\('node_modules/dexie/dist/dexie.d.ts','utf8'\\); const idx=d.indexOf\\('declare class Dexie'\\); if\\(idx>=0\\) console.log\\(d.substring\\(idx, idx+2500\\)\\)\")",
       "Bash(npm i *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Skill(clubkeeper)"
     ]
   }
 }

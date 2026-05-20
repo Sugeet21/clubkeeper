@@ -1,0 +1,145 @@
+# Test Status
+
+Tracks which test scenarios from TEST_SCENARIOS.md have been verified vs pending.
+
+## Last test session: 19 May 2026 (Sugeet)
+
+## Summary
+
+- Total sections: 12 (A-L)
+- Sections fully passed: 0
+- Sections fully tested: 0
+- Sections in progress: 4 (A, B, C, D)
+- Sections untested: 8 (E, F, G, H, I, J, K, L)
+
+## Section A — Tables Management
+
+| # | Test | Status | Notes |
+|---|---|---|---|
+| A1 | Add new table happy path | ✅ Pass | |
+| A2 | Empty name validation | ✅ Pass | |
+| A3 | Duplicate name | ⏳ Not tested | |
+| A4 | Name too long | ⏳ Not tested | After Prompt 8 should auto-cap at 30 |
+| A5 | Negative rate | ⏳ Not tested | |
+| A6 | Rate of 0 | ⏳ Not tested | |
+| A7 | Very large rate | ⏳ Not tested | |
+| A8 | Snooker frame rate appears | ✅ Pass | |
+| A9 | Pool no frame rate | ✅ Pass | |
+| A10 | Edit existing table | ✅ Pass | |
+| A11 | Rate snapshot on active session | ⏳ Not tested | |
+| A12 | Disable table | ✅ Fixed | Button disabled + warning shown when session active; race-condition re-check + toast on confirm |
+| A13 | Enable disabled table | ✅ Pass | |
+| A14 | Edit disabled table | ✅ Pass | |
+| A15 | Direct URL to start on disabled table | ⏳ Not tested | |
+
+## Section B — Starting Sessions
+
+| # | Test | Status | Notes |
+|---|---|---|---|
+| B1 | Minimum data | ✅ Pass | |
+| B2 | Full data | ✅ Pass | |
+| B3 | Recent players chips | ✅ Pass | |
+| B4 | Per-frame mode | ✅ Pass | |
+| B5 | Per-frame hidden for pool | ✅ Pass | |
+| B6 | Race condition double-start | ⏳ Not tested | |
+| B7 | Player count 0 | ⏳ Not tested | |
+| B8 | Player count 999 | ⏳ Not tested | |
+| B9 | 100-char player name | ✅ Fixed | maxLength=50 on input; validation regex; Start button disabled; display truncated everywhere |
+| B10 | Special characters in name | ✅ Fixed | PLAYER_NAME_REGEX blocks special chars; per-keystroke error shown; invalid submit blocked |
+
+## Section C — Live Timer Behavior
+
+| # | Test | Status | Notes |
+|---|---|---|---|
+| C1 | Counts up live | ✅ Pass | |
+| C2 | Survives refresh | ✅ Pass | |
+| C3 | Survives tab close | ✅ Pass | |
+| C4 | Survives browser quit | ⏳ Not tested | |
+| C5 | Accuracy over long time | ⏳ Not tested | |
+| C6 | Pause freezes | ✅ Pass | |
+| C7 | Pause survives refresh | ⏳ Not tested | |
+| C8 | Resume from frozen value | ✅ Pass | |
+| C9 | Multiple pause/resume cycles | ⏳ Not tested | |
+| C10 | Stop running session | ✅ Pass | |
+| C11 | Stop paused session | ⏳ Not tested | |
+| C12 | Edit start time | ✅ Pass | |
+| C13 | Invalid future start time | ⏳ Not tested | |
+| C14 | Edit start after completion | ⏳ Not tested | |
+
+## Section D — Time Rounding
+
+| # | Test | Status | Notes |
+|---|---|---|---|
+| D1 | No rounding | ⏳ Not tested | |
+| D2 | 15min rounding short session | ✅ Pass | After Prompt 7 fix |
+| D3 | 14 min → rounds to 15 | ⏳ Not tested | |
+| D4 | Exactly 15 min stays at 15 | ⏳ Not tested | |
+| D5 | 16 min rounds up to 30 | ⏳ Not tested | |
+| D6 | 30min rounding for 5min | ⏳ Not tested | |
+| D7 | Rounding doesn't affect per-frame | ⏳ Not tested | |
+| D8 | History shows "(rounded)" label | ⏳ Not tested | |
+
+## Section E — Daily Summary
+
+All ⏳ Not tested. Next session priority.
+
+## Section F — History
+
+All ⏳ Not tested.
+
+## Section G — Settings & Data
+
+All ⏳ Not tested.
+
+## Section H — Offline / PWA
+
+All ⏳ Not tested.
+
+## Section I — Multi-device / Multi-tab
+
+All ⏳ Not tested.
+
+## Section J — Edge Cases / Stress
+
+All ⏳ Not tested.
+
+## Section K — Visual / Responsive
+
+All ⏳ Not tested.
+
+## Section L — Error & Recovery
+
+All ⏳ Not tested.
+
+---
+
+## Bugs Found vs Fixed
+
+| Bug ID | Found in test | Status |
+|---|---|---|
+| Toggle misaligned | (visual inspection) | ✅ Fixed in Prompt 7 |
+| Date inputs not editable | (interaction test) | ✅ Fixed in Prompt 7 |
+| Amount column edge | (visual) | ✅ Fixed in Prompt 7 |
+| Time rounding broken | D2 | ✅ Fixed in Prompt 7 |
+| Delete crashes | A12 attempt | ✅ Fixed in Prompt 7 |
+| "Delete" naming | UX feedback | ✅ Fixed in Prompt 7 |
+| Disabled table edit pencil | A14 area | ✅ Fixed in Prompt 7 |
+| Calendar theme | (visual) | ✅ Fixed in Prompt 7 |
+| Running table disabled | A12 | ✅ Fixed in Prompt 8 |
+| Long player name overflow | B9 | ✅ Fixed in Prompt 8 |
+| Special chars in name | B10 | ✅ Fixed in Prompt 8 |
+| Bad data pollutes chips | B9 follow-up | ✅ Fixed in Prompt 8 |
+
+---
+
+## Testing Notes
+
+**Sugeet's pattern:** Tests in section order, screenshots on failure, reports multiple bugs in one batch.
+
+**Lesson:** Sugeet finds real bugs that AI testing misses. Always run full sections A-D after every prompt change, not just spot-checks.
+
+**Next test priority after Prompt 8:**
+1. Run A12, B9, B10 manually to confirm live behavior (build passes but needs real device test)
+2. Continue with section E (Daily Summary)
+3. Section G (Settings — verify "Clean Invalid Player Names" button works)
+4. Section H (Offline/PWA) before showing to first customer
