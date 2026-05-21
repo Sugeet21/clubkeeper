@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 
 const tabs = [
   {
-    to: '/',
+    to: '/tables',
     label: 'Tables',
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -63,7 +63,7 @@ export default function BottomNav() {
         <NavLink
           key={tab.to}
           to={tab.to}
-          end={tab.to === '/'}
+          end={tab.to === '/tables'}
           className={({ isActive }) =>
             `flex flex-col items-center justify-center gap-0.5 transition-colors ${
               isActive ? 'text-accent' : 'text-text-faint'

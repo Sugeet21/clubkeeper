@@ -140,7 +140,7 @@ export default function SessionDetail() {
       <div className="pt-safe min-h-screen bg-bg flex flex-col items-center justify-center gap-4 px-4">
         <p className="text-text-dim text-[15px]">Session not found.</p>
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/tables')}
           className="text-accent text-sm font-semibold"
         >
           ← Back to Home
@@ -245,7 +245,7 @@ export default function SessionDetail() {
       <div className="pt-safe">
         <div className="flex items-center justify-between px-3 pt-3 pb-1">
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/tables')}
             className="flex items-center gap-1 text-text-dim px-1 py-1.5 -ml-1 active:text-text transition-colors"
           >
             <ChevronLeft />
@@ -366,7 +366,7 @@ export default function SessionDetail() {
       <div className="px-4 mt-5 space-y-3">
         {session.status === 'completed' ? (
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/tables')}
             className="w-full py-4 bg-bg-card text-text border border-border rounded-2xl text-[15px] font-bold active:scale-[0.99] transition-transform"
           >
             Back to Home

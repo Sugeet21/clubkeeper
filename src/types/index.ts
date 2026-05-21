@@ -37,3 +37,39 @@ export interface ClubSettings {
   currency: string
   rounding: 'none' | '15min' | '30min'
 }
+
+// ─── Auth & Subscription ──────────────────────────────────────────────────────
+
+export interface UserProfile {
+  id: string              // matches Supabase auth.users.id (uuid)
+  email: string
+  displayName: string | null
+  avatarUrl: string | null
+  clubName: string | null // set during onboarding
+  createdAt: number
+}
+
+export type SubscriptionStatus =
+  | 'none'        // never subscribed
+  | 'trialing'    // 7-day free trial active
+  | 'active'      // paid and active
+  | 'past_due'    // payment failed, grace period
+  | 'cancelled'   // user cancelled
+  | 'expired'     // ended without renewal
+
+export type PlanTier = 'starter' | 'standard' | 'pro'
+
+export interface Subscription {
+  id: string
+  userId: string
+  status: SubscriptionStatus
+  plan: PlanTier
+  trialEndsAt: number | null        // Unix ms
+  currentPeriodStart: number | null
+  currentPeriodEnd: number | null
+  razorpayCustomerId: string | null
+  razorpaySubscriptionId: string | null
+  cancelAtPeriodEnd: boolean
+  createdAt: number
+  updatedAt: number
+}

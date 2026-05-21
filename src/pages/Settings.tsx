@@ -6,6 +6,7 @@ import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport 
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
 import { useToastStore } from '../store/toastStore'
+import { useAuthStore } from '../store/authStore'
 import { validatePlayerName } from '../lib/validation'
 import { db } from '../db/database'
 import type { GameTable } from '../types'
@@ -116,7 +117,7 @@ export default function Settings() {
       await resetEverything()
       setResetModal(false)
       setResetConfirmText('')
-      navigate('/')
+      navigate('/tables')
     } finally {
       setBusy(false)
     }
@@ -166,7 +167,7 @@ export default function Settings() {
       {/* Top bar */}
       <div className="flex items-center px-3 pt-3 pb-4">
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/tables')}
           className="flex items-center gap-1 text-text-dim px-1 py-1.5 -ml-1 active:text-text transition-colors"
         >
           <ChevronLeft />
@@ -310,6 +311,17 @@ export default function Settings() {
             <span className="text-[14px] text-text-faint">{sessionCount}</span>
           </Row>
         )}
+      </Section>
+
+      {/* ── Section 5: Account ─────────────────────────────────────────── */}
+      <Section title="Account">
+        <button
+          onClick={() => void useAuthStore.getState().signOut()}
+          className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
+        >
+          <span className="text-[14px] text-busy">Sign Out</span>
+          <span className="text-[12px] text-text-faint">→</span>
+        </button>
       </Section>
 
       {/* ── Table form modal ────────────────────────────────────────────── */}
