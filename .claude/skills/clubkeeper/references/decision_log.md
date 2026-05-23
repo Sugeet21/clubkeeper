@@ -211,6 +211,88 @@ Format:
 
 ---
 
+### 21 May 2026 — Fake payment simulation in Prompt 12, real Razorpay in Prompt 13
+
+**Decision:** Subscribe page shows full payment UI (sheet, UPI methods, pay button) but payment is simulated with a 1.4s setTimeout. No Supabase write yet.
+**Considered:** Integrating real Razorpay in Prompt 12 at the same time as the UI
+**Why:** UI and payment integration are two independent concerns. Building the UI first lets Sugeet verify the flow visually before any money moves. Reduces risk of mixing UI bugs with payment bugs.
+**Trade-offs accepted:** A user who goes through the flow gets confirmation screen but no real subscription. This is fine since it's pre-launch.
+**Revisit when:** Prompt 13 — replace `setTimeout(1400)` with Razorpay SDK + Supabase write.
+
+---
+
+### 21 May 2026 — Full auth→subscribe→app funnel now live (UI only)
+
+**Decision:** The complete user journey Landing → Signup → Subscribe → Tables is now wired as UI. All redirects work. Payment is fake.
+**Flow:** `/` → Sign in → Google OAuth → `/auth/callback` → `/subscribe` → Plan selection → Fake pay → `/tables`
+**What's real:** Auth (Supabase), session persistence, profile auto-create, route guards
+**What's fake:** Payment (setTimeout), subscription status (not written to Supabase)
+**Revisit when:** Prompt 13 (Razorpay) and beyond (Supabase subscription webhook).
+
+---
+
+## Decisions Rejected (Don't Reopen)
+
+---
+
+### 23 May 2026 — Razorpay Subscription API (not Orders API) for billing
+
+**Decision:** Use `razorpay.subscriptions.create()` (Subscription API), not `razorpay.orders.create()` (Orders API).
+**Considered:** Orders API (one-time charge), Subscription API (recurring)
+**Why:** Monthly recurring billing requires the Subscription API. Orders API is one-time only. Subscription API handles NACH auto-debit, retry on failure, and the `current_period_start/end` lifecycle events that update Supabase automatically via webhook.
+**Trade-offs accepted:** Can't use Razorpay Checkout for subscriptions the same way as one-time payments — `subscription_id` is passed instead of `order_id` to the checkout config.
+**Revisit when:** Never — this is the correct API for recurring billing.
+
+---
+
+### 23 May 2026 — 7-day trial via `start_at` param (not trial_period)
+
+**Decision:** Trial implemented by setting `start_at = now + 7 days` on the Razorpay subscription, NOT using Razorpay's built-in `trial_period` feature.
+**Considered:** `trial_period` param in subscription create, manual `start_at` delay
+**Why:** `start_at` gives exact control over when the first charge fires. The trial is entirely implemented on our side (Supabase `trial_ends_at` column + `useAccessGuard` date check). Razorpay just delays the first debit — no separate Razorpay "trial" to manage.
+**Trade-offs accepted:** We must trust our own date math for "is trial still active?" checks.
+**Revisit when:** Never — simple and working.
+
+---
+
+### 23 May 2026 — Webhook as source of truth, frontend optimistic
+
+**Decision:** Webhook updates Supabase status authoritatively. Frontend calls `refreshProfile()` after Razorpay's `handler()` callback with a 1500ms delay to give webhook a head start.
+**Considered:** Direct Supabase write from frontend on payment success, webhook-only
+**Why:** Direct frontend write has no server-side verification (payment could be spoofed). Webhook-only means user sees no feedback until webhook fires. Hybrid: frontend shows success optimistically, webhook confirms. The 1500ms delay is a best-effort grace period; even if webhook is slow, the user can still use the app (status was written to `trialing` by `create-subscription` before Checkout even opened).
+**Trade-offs accepted:** Brief window where Supabase status and Razorpay status could diverge if webhook is delayed. Acceptable for this scale.
+**Revisit when:** Webhook delays become a user complaint.
+
+---
+
+### 21 May 2026 — Auth: Supabase + Google OAuth only (no email/password)
+
+**Decision:** Sign in via Google OAuth only. No email/password form for v1.
+**Considered:** Email + password, phone OTP, magic link
+**Why:** Google OAuth is lowest friction for Indian SMB owners who all have Gmail. No password reset flows to build. Supabase handles token refresh automatically.
+**Trade-offs accepted:** Users without Google account cannot sign up (extremely rare in target market).
+**Revisit when:** First customer asks for non-Google login.
+
+---
+
+### 21 May 2026 — Auth-first app (no anonymous trial mode)
+
+**Decision:** `/tables` requires auth + active subscription. No anonymous use of the main app.
+**Considered:** Anonymous trial (use app without signup, prompt later), require auth only for cloud sync
+**Why:** Subscription gating is the business model. Anonymous use makes conversion harder to track and complicates data ownership.
+**Trade-offs accepted:** Higher friction to try the app. Mitigated by landing page + 7-day trial.
+**Revisit when:** Conversion is very low — may need to offer a demo mode.
+
+---
+
+### 21 May 2026 — .env.local never committed (Supabase keys)
+
+**Decision:** `.env.local` added to `.gitignore`. Real Supabase URL/anon key stored locally only.
+**Why:** Anon key is semi-public (safe for client-side), but URL leaks project identity. Service role key (future) must never be in client code at all.
+**How to apply:** On new machine, create `.env.local` manually from Supabase dashboard → Settings → API.
+
+---
+
 ## Decisions Rejected (Don't Reopen)
 
 These were considered and rejected. Don't bring them back unless major context change:

@@ -113,6 +113,45 @@ All ⏳ Not tested.
 
 ---
 
+## Section M — Signup Flow (added Prompt 11)
+
+| # | Test | Status | Notes |
+|---|---|---|---|
+| M1 | Fresh user — Google OAuth → profile created in Supabase → redirected to /subscribe | ✅ Pass | Verified 21 May 2026 — profile + subscription rows auto-created via trigger |
+| M2 | Existing user with no subscription — visit /signup → auto-redirect to /subscribe | ⏳ Not tested | Auth Effect 2 logic |
+| M3 | Existing user with active subscription — visit /signup → auto-redirect to /tables | ⏳ Not tested | Auth Effect 2 logic |
+| M4 | Close Google popup / abort OAuth — returns to /signup, error toast shown, Retry works | ⏳ Not tested | Requires real browser test |
+| M5 | /signup?error=access_denied in URL → error toast shown on load | ✅ Verified | Checked in preview |
+| M6 | Google button shows spinner after tap | ✅ Verified | Visual check in preview |
+| M7 | Back chevron navigates to / (Landing) | ⏳ Not tested | |
+| M8 | "Almost there!" screen shows correct signed-in email | ⏳ Not tested | PostSigninTransition |
+| M9 | "Why do we need a card?" expandable opens/closes smoothly | ⏳ Not tested | |
+| M10 | "Add Payment Method" on transition → navigates to /subscribe | ⏳ Not tested | |
+
+---
+
+## Section N — Subscribe Flow (added Prompt 12)
+
+| # | Test | Status | Notes |
+|---|---|---|---|
+| N1 | Visit /subscribe without auth → redirects to /signup | ✅ Verified | Auth guard confirmed in preview |
+| N2 | Visit /subscribe with active/trialing subscription → redirects to /tables | ⏳ Not tested | Needs real auth + subscription |
+| N3 | Monthly/Annual toggle updates plan prices correctly | ⏳ Not tested | Annual: ₹299→₹249, ₹599→₹499/mo |
+| N4 | Annual shows savings badge (₹598 saved / ₹1,198 saved) | ⏳ Not tested | |
+| N5 | Tap Starter card → selected state (double border glow) | ⏳ Not tested | |
+| N6 | Tap Standard (default) → already selected | ⏳ Not tested | |
+| N7 | Tap Pro card → nothing happens (disabled) | ⏳ Not tested | |
+| N8 | Sticky checkout bar shows correct plan name + price | ⏳ Not tested | |
+| N9 | "Start Free Trial →" opens payment bottom sheet | ⏳ Not tested | |
+| N10 | Payment sheet: UPI accordion is open by default | ⏳ Not tested | |
+| N11 | Payment sheet: tapping other accordion closes UPI, opens new | ⏳ Not tested | |
+| N12 | Tap "Start Free Trial" in sheet → spinner → confirmation screen | ⏳ Not tested | FAKE payment, 1.4s delay |
+| N13 | Confirmation: shows correct email and trial end date | ⏳ Not tested | |
+| N14 | "Continue to ClubKeeper →" → navigates to /tables | ⏳ Not tested | |
+| N15 | Back chevron → amber warning banner (auto-hides 3.5s) | ⏳ Not tested | |
+
+---
+
 ## Bugs Found vs Fixed
 
 | Bug ID | Found in test | Status |
@@ -132,14 +171,40 @@ All ⏳ Not tested.
 
 ---
 
+---
+
+## Section N — Payments (Prompt 13 — Real Razorpay)
+
+Run AFTER Vercel deploy + webhook setup.
+
+| # | Test | Status | Notes |
+|---|---|---|---|
+| N1 | Happy path: fresh Google account → /subscribe → Standard Monthly → Start Free Trial → Razorpay TEST modal opens | ⬜ Pending | Use test card 4111 1111 1111 1111 |
+| N2 | Happy path: payment completes → Confirmation screen shown | ⬜ Pending | |
+| N3 | Happy path: Continue button → /tables loads, no redirect loop | ⬜ Pending | |
+| N4 | Happy path: hard-refresh /tables → stays, no bounce | ⬜ Pending | |
+| N5 | Supabase: subscriptions row has status='trialing', razorpay_subscription_id populated, trial_ends_at = today+7 | ⬜ Pending | Check Supabase dashboard |
+| N6 | Webhook delivery: Razorpay dashboard shows webhook sent, HTTP 200 response | ⬜ Pending | Check Razorpay dashboard |
+| N7 | Failure: dismiss Razorpay modal (close X) → back on subscribe page, no error toast, can retry | ⬜ Pending | |
+| N8 | Failure: /api/create-subscription returns error → payError displayed inline in sheet | ⬜ Pending | |
+| N9 | Cancel: Settings → Subscription → Cancel → confirm → Supabase cancel_at_period_end=true | ⬜ Pending | |
+| N10 | Cancel: banner updates to "Cancelling on D MMM" on Home | ⬜ Pending | |
+| N11 | Trial banner: trialing user sees "Free trial: N days left" banner on Home | ⬜ Pending | |
+| N12 | Settings subscription section: plan name, status badge, next charge shown correctly | ⬜ Pending | |
+| N13 | Scroll bleed: opening PaymentBottomSheet locks body scroll | ⬜ Pending | |
+
+---
+
 ## Testing Notes
 
 **Sugeet's pattern:** Tests in section order, screenshots on failure, reports multiple bugs in one batch.
 
 **Lesson:** Sugeet finds real bugs that AI testing misses. Always run full sections A-D after every prompt change, not just spot-checks.
 
-**Next test priority after Prompt 8:**
-1. Run A12, B9, B10 manually to confirm live behavior (build passes but needs real device test)
-2. Continue with section E (Daily Summary)
-3. Section G (Settings — verify "Clean Invalid Player Names" button works)
-4. Section H (Offline/PWA) before showing to first customer
+**Next test priority after Prompt 13:**
+1. Complete webhook setup (RAZORPAY_WEBHOOK_SECRET → Vercel env vars → re-deploy)
+2. Run N1–N13 with real Google account in browser
+3. Run M1–M4 (auth flow) if not done yet
+4. Run A12, B9, B10 manually on device (Prompt 8 fixes)
+5. Continue with section E (Daily Summary)
+6. Section H (Offline/PWA) before showing to first customer

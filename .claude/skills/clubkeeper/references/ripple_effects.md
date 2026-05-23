@@ -156,6 +156,54 @@ If a change isn't documented here yet, pause and trace dependencies first.
 - Bottom nav links
 - Browser history of existing users — old URLs may be bookmarked
 
+### If you change the Subscribe page (`src/pages/Subscribe.tsx` or `src/components/subscribe/`)
+
+**Affects:**
+- `src/components/subscribe/PlanSelection.tsx` — `PLANS` array has hardcoded prices (₹299/₹599/₹999 monthly, ₹2990/₹5990/₹9990 annual). If pricing changes, update here AND in `StickyCheckout.tsx`
+- `src/components/subscribe/StickyCheckout.tsx` — receives `currentPrice` as a number prop; no internal price logic. Safe to change pricing in Subscribe.tsx only
+- `src/components/subscribe/PaymentBottomSheet.tsx` — accepts `payError: string | null` prop; displays inline error below the CTA. Must stay in sync with `handlePayNow()` error handling in `Subscribe.tsx`
+- `src/components/subscribe/ConfirmationScreen.tsx` — rendered when `screen === 'confirmed'`. Navigate uses `replace: true` — do NOT remove or user can back into Subscribe
+- `src/pages/AuthCallback.tsx` — checks `subscription.status` to decide `/subscribe` vs `/tables`
+- `src/hooks/useAccessGuard.ts` — reads `subscription.status`; `'trialing'` and `'active'` allow access
+- `api/create-subscription.ts` — called by `handlePayNow()` via fetch POST. If flow changes, both must update together
+- `src/lib/razorpayPlans.ts` — plan IDs consumed by `api/create-subscription.ts`. If plan IDs change, update ONLY this file
+- Annual prices: `MONTHLY_PRICES` and `ANNUAL_PRICES` in `Subscribe.tsx`. ROI calculator in `Landing.tsx` also hardcodes `₹599` — keep in sync
+
+### If you change Razorpay plan IDs
+
+**Affects:**
+- `src/lib/razorpayPlans.ts` — ONLY file to edit. It's the single source of truth.
+- `api/create-subscription.ts` imports `getPlanId()` from `razorpayPlans.ts` — no change needed there
+- Razorpay Dashboard — the plan must exist there with the exact ID before using it in the app
+- `src/components/landing/PricingSection.tsx` and `src/components/subscribe/PlanCard.tsx` — if tier names or prices change (not just plan IDs), update the display text here
+
+### If you change the webhook handler (`api/razorpay-webhook.ts`)
+
+**Affects:**
+- `RAZORPAY_WEBHOOK_SECRET` env var must be set in Vercel (Production + Preview). If missing, all webhooks return 500.
+- Supabase `subscriptions` table — webhook writes `status`, `current_period_start`, `current_period_end`, `cancel_at_period_end`, `updated_at`. Column names must match DB schema.
+- `src/store/authStore.ts` `refreshProfile()` — maps DB columns to TS types. If webhook writes a new column, add it to `refreshProfile()` mapping too.
+- `src/hooks/useAccessGuard.ts` — reads `status` values. If webhook writes a new status value, add it to the guard.
+- Razorpay Dashboard → Settings → Webhooks — event list must include all events the handler processes. Missing an event = silent data gap.
+
+**Webhook event → status mapping (as of Prompt 13):**
+- `subscription.authenticated` → `trialing`
+- `subscription.activated` → `active` + period dates
+- `subscription.charged` → `active` + period dates
+- `subscription.halted` → `past_due`
+- `subscription.cancelled` → `cancelled`
+- `subscription.completed` → `expired`
+
+### If you change the Landing page (`src/pages/Landing.tsx` or `src/components/landing/`)
+
+**Affects:**
+- `src/components/landing/HeroSection.tsx` — live timer uses `useTick` + `useRef`; if useTick changes, timer breaks
+- `src/components/landing/ROICalculator.tsx` — formula is `forgetCount × ratePerHour × 30`; ROI divisor hardcoded to `599` (Standard plan price). If pricing changes, update this
+- `src/components/landing/PricingSection.tsx` — plan prices (₹299/₹599/₹999) are hardcoded; keep in sync with Razorpay plan config when payments go live
+- All CTA buttons → `navigate('/signup')`; if signup route changes, update all landing CTAs
+- `PUBLIC_PATHS` in `App.tsx` — `/` must stay in this array so BottomNav stays hidden
+- `src/components/landing/Eyebrow.tsx` — shared by all landing sections; changing it affects all eyebrows at once
+
 ---
 
 ## Theme/Style Changes
@@ -205,16 +253,56 @@ If a change isn't documented here yet, pause and trace dependencies first.
 
 ---
 
-## Authentication Changes (Future)
+## Authentication Changes (Prompt 9 — NOW LIVE)
 
-### When auth is added
+### If you change the auth flow (authStore, RequireAccess, AuthCallback)
 
 **Affects:**
-- Every Dexie query — needs userId scope
-- Every page — needs auth guard or anonymous mode
-- Routing — login/signup pages, redirects
-- Service Worker — token refresh logic
-- Migration — existing offline users get their data uploaded on first signin
+- `src/store/authStore.ts` — central auth state (session, user, profile, subscription, loading)
+- `src/hooks/useAccessGuard.ts` — reads loading/session/subscription, returns typed guard result
+- `src/components/RequireAccess.tsx` — uses useAccessGuard, redirects to /signup or /subscribe
+- `src/pages/AuthCallback.tsx` — reads loading + subscription to route after OAuth
+- `src/App.tsx` — AuthInitializer calls initialize(); AppLayout hides BottomNav on public paths
+- All private routes: /tables, /start/:id, /session/:id, /summary, /history, /settings
+
+**Rules:**
+- `loading: true` until `initialize()` resolves — RequireAccess shows spinner, not redirect
+- `signOut()` must clear session + profile + subscription in store (currently done manually)
+- PUBLIC_PATHS in App.tsx must stay in sync with actual public Route paths
+
+### If you change the subscription schema (Supabase table or TypeScript types)
+
+**Affects:**
+- `src/types/index.ts` — SubscriptionStatus, PlanTier, Subscription interface
+- `src/store/authStore.ts` — `refreshProfile()` maps DB columns → TS fields
+- `src/hooks/useAccessGuard.ts` — reads status, trialEndsAt, etc. to compute canAccess
+- `src/pages/Subscribe.tsx` — displays plans and triggers Razorpay (future)
+- Supabase DB: `public.subscriptions` table + RLS policies
+- Webhook handlers (future) — must write correct status values
+
+**Column name map (snake_case DB → camelCase TS):**
+- `trial_ends_at` → `trialEndsAt`
+- `current_period_start` → `currentPeriodStart`
+- `current_period_end` → `currentPeriodEnd`
+- `razorpay_customer_id` → `razorpayCustomerId`
+- `razorpay_subscription_id` → `razorpaySubscriptionId`
+- `cancel_at_period_end` → `cancelAtPeriodEnd`
+
+### If you add a new public route
+
+**Affects:**
+- `src/App.tsx` — add to `<Routes>` outside `<RequireAccess>`
+- `PUBLIC_PATHS` array in App.tsx — add path so BottomNav stays hidden
+
+### If you rename a route (e.g. /tables → something else)
+
+**Affects:**
+- `src/App.tsx` — Route path
+- `src/components/BottomNav.tsx` — tab `to` prop
+- `src/pages/SessionDetail.tsx` — all `navigate('/tables')` calls
+- `src/pages/Settings.tsx` — all `navigate('/tables')` calls
+- `src/pages/AuthCallback.tsx` — `navigate('/tables')` after successful auth
+- `src/pages/Landing.tsx` — "Go to App" button
 
 ### When cloud sync is added
 

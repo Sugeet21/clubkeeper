@@ -91,35 +91,117 @@ The skill is meant to be a LIVING document. The more it's updated, the more usef
 
 (Update this section after each session.)
 
-**Last updated:** 19 May 2026
+**Last updated:** 23 May 2026 (Prompt 13)
 
 **Completed:**
-- Prompts 0-6 done: project setup, data layer, all 4 main screens (Home, Summary, History, Settings), Add/Edit Table, PWA install support
-- Prompt 7 done: bug fixes including toggle alignment, date picker theme, time rounding wired into stopSession, soft-delete renamed to Disable Table
-- Prompt 8 done: validation & overflow fixes — see details below
-- Deployed to Vercel: `clubkeeper.vercel.app` (or similar — confirm with Sugeet)
+- Prompts 0-6: project setup, data layer, all 4 main screens, Add/Edit Table, PWA install support
+- Prompt 7: bug fixes (toggle, date picker, time rounding, soft-delete rename)
+- Prompt 8: validation & overflow fixes (player name 50-char, special chars, disable running table guard)
+- Prompt 9: Supabase auth foundation — see details below
+- Deployed to Vercel (auto-deploys on push to main)
 - GitHub: `github.com/Sugeet21/clubkeeper`
-- Test sections A-D run by Sugeet; A12, B9, B10 bugs confirmed and now fixed
+- Supabase project: `vkczmgzujpidbwtzulel.supabase.co`
 
-**Prompt 8 — what was shipped:**
-- `src/lib/validation.ts` created: `validatePlayerName` (50 chars, regex), `validateNote` (200 chars), `validateTableName` (30 chars, regex)
-- `src/store/toastStore.ts` created: Zustand toast store, 3s auto-dismiss
-- `src/components/ToastContainer.tsx` created: fixed top, theme-aware (success/error/info), mounted in App.tsx
-- `getRecentPlayerNames()` in queries.ts: now filters out names that fail validation (cleans polluted history)
-- `TableFormModal.tsx`: checks `getActiveSessionForTable` on open; Disable button disabled + warning shown; race-condition re-check with toast if session starts between check and confirm
-- `StartSession.tsx`: player name `maxLength=50`, per-keystroke validation + error, Start button disabled on invalid; note `maxLength=200`; suggestion chips use `flex-wrap max-h-24 overflow-y-auto` + `max-w-[150px] truncate`
-- `TableCard.tsx`: player name gets `max-w-[140px] truncate` in both Running and Paused cards
-- `SessionDetail.tsx`: `DetailRow` value gets `truncate min-w-0 flex-1 text-right`; container gets `gap-3 min-w-0`
-- `Settings.tsx`: "Clean Invalid Player Names" button → confirm modal → iterates sessions, nulls invalid names, shows toast with count
+**Prompt 9 — what was shipped:**
+- `@supabase/supabase-js` installed
+- `.env.local`: real Supabase URL + anon key (gitignored — never commit this)
+- `.gitignore`: added `.env.local` and `.env*.local`
+- `src/lib/supabase.ts`: Supabase client (persistSession, autoRefreshToken, detectSessionInUrl)
+- `src/store/authStore.ts`: Zustand store — session, user, profile, subscription, loading; initialize(), signInWithGoogle(), signOut(), refreshProfile()
+- `src/hooks/useAccessGuard.ts`: typed guard — returns `{ canAccess, reason }` for all subscription states
+- `src/components/RequireAccess.tsx`: Outlet-pattern route guard; redirects to /signup or /subscribe
+- `src/pages/Landing.tsx`: placeholder at `/`
+- `src/pages/Signup.tsx`: placeholder at `/signup`
+- `src/pages/Subscribe.tsx`: placeholder at `/subscribe`
+- `src/pages/AuthCallback.tsx`: real OAuth callback — reads loading+subscription, routes to /subscribe or /tables
+- `src/App.tsx`: split into public routes (/, /signup, /subscribe, /auth/callback) and private routes (/tables, /start/:id, etc.); AuthInitializer calls initialize() on mount; BottomNav hidden on public paths
+- `src/components/BottomNav.tsx`: Tables tab changed from `/` → `/tables`
+- `src/pages/SessionDetail.tsx` + `Settings.tsx`: all `navigate('/')` → `navigate('/tables')`
+- `src/pages/Settings.tsx`: Sign Out button added (calls useAuthStore.getState().signOut())
+- `src/types/index.ts`: added UserProfile, SubscriptionStatus, PlanTier, Subscription
+- `src/vite-env.d.ts`: typed env vars for Supabase + Razorpay
+
+**Supabase setup needed (manual step — run SQL in Supabase dashboard):**
+- `public.profiles` table + RLS (view/update own row)
+- `public.subscriptions` table + RLS (view own row)
+- `handle_new_user()` trigger: auto-creates profile + subscription row on every signup
+- SQL was provided and approved by Sugeet in Prompt 9 session
+
+**Prompt 10 — what was shipped:**
+- `src/pages/Landing.tsx`: full orchestrator — outer radial glow bg, 390px device column, sticky top bar (ClubKeeper logo + Sign in → /signup), sections in order
+- `src/components/landing/Eyebrow.tsx`: shared eyebrow label (18px line + mono uppercase text)
+- `src/components/landing/HeroSection.tsx`: headline, live hero timer (useTick + useRef, offset 1h24m36s), app mockup with 3 table cards (Free/Running/Paused), primary CTA button
+- `src/components/landing/PainPointSection.tsx`: 3 pain cards with emoji icons
+- `src/components/landing/ROICalculator.tsx`: interactive — `forgetCount` × `ratePerHour` × 30 = monthly loss; `monthly/599` = ROI multiplier; Indian format via `toLocaleString('en-IN')`
+- `src/components/landing/HowItWorks.tsx`: 3 numbered steps (01/02/03 in accent mono)
+- `src/components/landing/PricingSection.tsx`: Starter / Standard (featured with glow + badge) / Pro (disabled), trial pill, trial banner
+- `src/components/landing/ComparisonTable.tsx`: overflow-x-auto scrollable table, sticky left column
+- `src/components/landing/FAQ.tsx`: 6 items, `openIndex: number | null`, max-height CSS transition, `+` rotates to `×` when open
+- `src/components/landing/FinalCTA.tsx`: accent green CTA block with corner glow
+- `src/components/landing/Footer.tsx`: logo, nav links, Made in Pune
+
+**Prompt 11 — what was shipped:**
+- `src/pages/Signup.tsx`: state machine (`form | loading | transition | error`)
+  - Effect 1: detects `?error=` in URL → `error` state on mount
+  - Effect 2: redirects authenticated users — no sub → `transition`, has sub → `/tables`
+  - `isOAuthInFlight` ref prevents double-tap; `handleRetry` uses 50ms tick
+- `src/components/GoogleSigninButton.tsx`: reusable — white bg, Google multi-color logo SVG, spinner swap on loading, works on Signup and potentially Subscribe page
+- `src/components/signup/SigninForm.tsx`: full page layout — back chevron → `/`, hero, Google button, legal, 3 trust rows, spacer, Sign in outline button, footer. Renders `SigninError` when `hasError`
+- `src/components/signup/PostSigninTransition.tsx`: "Almost there!" screen — accent check circle, trial pills, "Add Payment Method →" → `/subscribe`, "Why card?" max-height expandable, signed-in-as account line (reads `profile.email` or `user.email`)
+- `src/components/signup/SigninError.tsx`: fixed bottom toast (busy/red), `!` icon, Retry button
+
+**Key auth flow after Signup:**
+`/signup` → Google OAuth → `/auth/callback` → if no sub: `/subscribe`, else: `/tables`
+
+**Prompt 12 — what was shipped:**
+- `src/pages/Subscribe.tsx`: orchestrator — auth guard, all state (billing, plan, sheetOpen, paying, backWarning), fake 1.4s payment simulation, ProgressStep component inline, avatar initial from profile
+- `src/components/subscribe/BillingToggle.tsx`: Monthly/Annual toggle, 'save 2 mo' badge, accent glow on active
+- `src/components/subscribe/PlanCard.tsx`: all 3 plans — select-tick for Starter, featured glow + badge for Standard, disabled + Coming soon for Pro. Annual shows per-month + savings line
+- `src/components/subscribe/PlanSelection.tsx`: welcome + toggle + 3 cards + ROI note. `pb-40` clears sticky bar
+- `src/components/subscribe/StickyCheckout.tsx`: flex-shrink-0 sticky bottom bar, gradient+blur bg, plan+price summary, CTA
+- `src/components/subscribe/PaymentBottomSheet.tsx`: `translateY` slide-up sheet, accordion methods (UPI default open), GPay/PhonePe/Paytm/BHIM grid, UPI input, paying spinner, Razorpay branding
+- `src/components/subscribe/ConfirmationScreen.tsx`: full-page on simulated success — check circle, 'Trial started!', email, Continue → /tables
+
+**⚠️ Known limitation added (Prompt 12):**
+IndexedDB data is browser-local and shared across all users on the same browser. No user-scoping yet. Will be addressed when cloud sync is added.
+
+**Payment is REAL via Razorpay test mode.** `handlePayNow()` calls `/api/create-subscription` → Razorpay SDK opens modal → webhook updates Supabase status authoritatively.
+
+**Prompt 13 — what was shipped:**
+- `api/create-subscription.ts`: Vercel serverless — authenticates JWT, creates Razorpay subscription, writes `status='trialing'` + `trial_ends_at` to Supabase via service role
+- `api/razorpay-webhook.ts`: Vercel serverless — HMAC signature-verified, maps all 6 subscription events to Supabase status updates
+- `api/cancel-subscription.ts`: Vercel serverless — authenticates JWT, cancels subscription at cycle end, sets `cancel_at_period_end=true`
+- `src/lib/razorpayPlans.ts`: single source of truth for 6 Razorpay plan IDs (starter/standard/pro × monthly/annual)
+- `src/types/index.ts`: added `RazorpayCheckoutOptions`, `RazorpayResponse`, `RazorpayInstance`, `Window.Razorpay` global declaration
+- `src/pages/Subscribe.tsx`: replaced fake setTimeout with real Razorpay Checkout; added `payError` state; scroll-bleed `useEffect`; imports `supabase` directly for `getSession()`
+- `src/components/subscribe/PaymentBottomSheet.tsx`: added `payError` prop + inline red error display; `overscroll-contain` on scrollable panel
+- `src/pages/Settings.tsx`: new Subscription section (plan/status/next-charge/cancel/change-plan); cancel modal; `handleCancelSubscription()` calls `/api/cancel-subscription`
+- `src/components/SubscriptionStatusBanner.tsx`: trialing/past_due/cancelling banners with Indian rupee formatting
+- `src/pages/Home.tsx`: renders `<SubscriptionStatusBanner />` above tables grid
+- `index.html`: added Razorpay checkout.js `<script>` tag in `<head>`
+- `razorpay` and `@vercel/node` packages installed
+
+**Manual step still needed (post-deploy):**
+1. Razorpay Dashboard → Settings → Webhooks → Add `https://YOUR-VERCEL-URL/api/razorpay-webhook`
+2. Generate webhook secret → add `RAZORPAY_WEBHOOK_SECRET=<secret>` to Vercel env vars
+3. Re-deploy Vercel to pick up the new env var
+4. Enable events: subscription.authenticated, .activated, .charged, .halted, .cancelled, .completed, payment.failed
+
+**Razorpay Plan IDs (production values, saved in `src/lib/razorpayPlans.ts`):**
+- starter_monthly: plan_5shBXPM8XV0HwB
+- starter_annual: plan_5shDtaqKDM84Ie
+- standard_monthly: plan_5shF1qj5PW0A19
+- standard_annual: plan_5shFh5N1LH24eF
+- pro_monthly: plan_5sh3Rj6D3rEMe7
+- pro_annual: plan_SshJ4iqI7iICkz
 
 **Pending:**
-- Manual device test of A12, B9, B10 after Prompt 8
-- Test sections E-L still to run
-- Signup/Signin pages (next priority for Sugeet)
-- Subscription/pricing page
-- Razorpay payment integration
+- Webhook setup (manual — see above)
+- Switch Razorpay to LIVE mode (KYC needed first)
+- Test /subscribe end-to-end with real auth in browser (post-webhook-setup)
+- GST invoicing (Prompt 14)
+- Email notifications (Prompt 14)
+- Existing offline data migration strategy when cloud sync arrives (deferred)
 
 **Open Questions:**
-- Final pricing tier numbers (starter/standard/pro)
-- Whether to require auth before letting users add tables, or allow anonymous trial first
-- How to migrate existing offline-only data when adding cloud sync later
+- Existing offline data migration strategy when cloud sync arrives (deferred)
