@@ -29,13 +29,19 @@ Full project memory lives in `.claude/skills/clubkeeper/` — load the skill bef
 
 Vercel serverless functions use Node16 module resolution, which is stricter than Vite:
 
-1. All relative imports need `.js` extension:
-   `import { x } from '../src/lib/foo.js'` ← correct
-   `import { x } from '../src/lib/foo'`    ← will fail on Vercel
+1. All relative imports MUST have `.js` extension:
+   Wrong: `import { PLANS } from '../src/lib/razorpayPlans'`
+   Right:  `import { PLANS } from '../src/lib/razorpayPlans.js'`
 
-2. Never import from `razorpay/dist/types/...` deep paths — use `'razorpay'` only.
+2. Razorpay SDK return types are incomplete. Always cast to avoid void overload:
+   Wrong: `const sub = await razorpay.subscriptions.create(...)`
+   Right:  `const sub = await (razorpay.subscriptions.create(...) as unknown as Promise<{ id: string; short_url: string }>)`
 
-3. Run `npm run build` locally before pushing any `api/` change — Vite dev server won't catch these errors but `tsc` will.
+3. Never import from `razorpay/dist/types/...` deep paths — use `'razorpay'` only, cast response if types are wrong.
+
+4. Run `npm run build` locally before pushing any `api/` change — Vite dev server won't catch these errors but `tsc` will.
+
+Ripple: If you change `src/lib/razorpayPlans.ts` → update the `.js` import in all `api/*.ts` files that import it (currently only `api/create-subscription.ts`).
 
 ## Key env vars
 
