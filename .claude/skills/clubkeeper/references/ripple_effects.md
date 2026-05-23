@@ -330,6 +330,24 @@ If a change isn't documented here yet, pause and trace dependencies first.
 
 ---
 
+## Vercel Serverless API Files (api/*.ts)
+
+These files run on Vercel's Node16 module resolution, which is STRICTER than the frontend Vite build. Rules that apply ONLY to `api/*.ts` files:
+
+1. **All relative imports MUST have `.js` extension**
+   - Wrong: `import { PLANS } from '../src/lib/razorpayPlans'`
+   - Right:  `import { PLANS } from '../src/lib/razorpayPlans.js'`
+
+2. **Never import from `razorpay/dist/types/...` deep paths.** Use `'razorpay'` only. If the SDK return type is missing a field, use `Awaited<ReturnType<typeof razorpay.subscriptions.create>>` to infer it directly.
+
+3. **After ANY change to `api/*.ts` files, run `npm run build` locally before pushing.** Vercel catches TypeScript errors that the local Vite dev server misses.
+
+**Ripple: If you change `src/lib/razorpayPlans.ts`** → update the `.js` import in every `api/*.ts` file that imports it (currently only `api/create-subscription.ts`).
+
+**Discovered when:** Prompt 13 build on Vercel failed because `'razorpay/dist/types/subscriptions'` doesn't exist as a public module path, and Node ESM requires `.js` extensions on relative imports.
+
+---
+
 ## Most Common Mistakes to Watch For
 
 1. **Adding a new Session field but forgetting to update `startSession()`** → field is undefined on new rows, crashes everywhere
