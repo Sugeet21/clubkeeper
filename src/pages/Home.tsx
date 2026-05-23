@@ -11,6 +11,7 @@ import SummaryStrip from '../components/SummaryStrip'
 import FilterPills from '../components/FilterPills'
 import TableCard from '../components/TableCard'
 import { Modal } from '../components/Modal'
+import { SubscriptionStatusBanner } from '../components/SubscriptionStatusBanner'
 import type { GameType, Session } from '../types'
 
 type FilterValue = 'all' | GameType
@@ -137,6 +138,8 @@ export default function Home() {
         <SummaryStrip totalTables={totalTables} runningCount={runningCount} todayTotal={todayTotal} currency={currency} />
         <FilterPills pills={pills} active={activeFilter} onChange={setActiveFilter} />
       </div>
+
+      <SubscriptionStatusBanner />
 
       <div className="px-4 space-y-3 pb-6">
         {filteredTables.map((table) => (

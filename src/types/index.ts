@@ -1,4 +1,33 @@
 export type GameType = 'pool' | 'snooker' | 'carrom' | 'playstation' | 'other'
+
+// ─── Razorpay ────────────────────────────────────────────────────────────────
+
+export interface RazorpayCheckoutOptions {
+  key: string
+  subscription_id: string
+  name: string
+  description: string
+  prefill?: { name?: string; email?: string }
+  theme?: { color?: string }
+  handler: (response: RazorpayResponse) => void
+  modal?: { ondismiss?: () => void }
+}
+
+export interface RazorpayResponse {
+  razorpay_payment_id: string
+  razorpay_subscription_id: string
+  razorpay_signature: string
+}
+
+export interface RazorpayInstance {
+  open: () => void
+}
+
+declare global {
+  interface Window {
+    Razorpay: new (options: RazorpayCheckoutOptions) => RazorpayInstance
+  }
+}
 export type BillingMode = 'per_hour' | 'per_frame'
 export type TableStatus = 'free' | 'busy' | 'paused' | 'out_of_service'
 

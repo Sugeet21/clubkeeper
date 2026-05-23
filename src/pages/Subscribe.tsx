@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, addDays } from 'date-fns'
+import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
 import { PlanSelection } from '../components/subscribe/PlanSelection'
 import { StickyCheckout } from '../components/subscribe/StickyCheckout'
@@ -61,6 +62,7 @@ export default function Subscribe() {
   const [selectedPlan, setSelectedPlan] = useState<PlanId>('standard')
   const [sheetOpen, setSheetOpen] = useState(false)
   const [paying, setPaying] = useState(false)
+  const [payError, setPayError] = useState<string | null>(null)
   const [showBackWarning, setShowBackWarning] = useState(false)
   const warnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -76,14 +78,70 @@ export default function Subscribe() {
     warnTimerRef.current = setTimeout(() => setShowBackWarning(false), 3500)
   }
 
+  // Lock body scroll when sheet is open
+  useEffect(() => {
+    document.body.style.overflow = sheetOpen ? 'hidden' : ''
+    return () => { document.body.style.overflow = '' }
+  }, [sheetOpen])
+
   async function handlePayNow() {
     if (paying) return
     setPaying(true)
-    await new Promise((r) => setTimeout(r, 1400)) // FAKE — real Razorpay in Prompt 13
-    setPaying(false)
-    setSheetOpen(false)
-    setScreen('confirmed')
-    // NOTE: no Supabase update here yet — Prompt 13 writes subscription.status = 'trialing'
+    setPayError(null)
+    try {
+      const { data: { session: authSession } } = await supabase.auth.getSession()
+      if (!authSession) throw new Error('Not authenticated')
+
+      const res = await fetch('/api/create-subscription', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authSession.access_token}`,
+        },
+        body: JSON.stringify({
+          userId: authSession.user.id,
+          tier: selectedPlan,
+          cycle: billing,
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json() as { error?: string }
+        throw new Error(err.error ?? 'Failed to start trial')
+      }
+
+      const { subscriptionId } = await res.json() as { subscriptionId: string }
+
+      const rzp = new window.Razorpay({
+        key: import.meta.env.VITE_RAZORPAY_KEY_ID as string,
+        subscription_id: subscriptionId,
+        name: 'ClubKeeper',
+        description: `${selectedPlan} plan — 7-day free trial`,
+        prefill: {
+          name: profile?.displayName ?? '',
+          email: profile?.email ?? session?.user.email ?? '',
+        },
+        theme: { color: '#b8ff5a' },
+        handler: async () => {
+          // Webhook updates Supabase authoritatively; brief delay gives it a head start
+          await new Promise((r) => setTimeout(r, 1500))
+          await useAuthStore.getState().refreshProfile()
+          setSheetOpen(false)
+          setScreen('confirmed')
+          setPaying(false)
+        },
+        modal: {
+          ondismiss: () => {
+            setPaying(false)
+          },
+        },
+      })
+      rzp.open()
+    } catch (err) {
+      console.error('handlePayNow error:', err)
+      setPayError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+      setPaying(false)
+    }
   }
 
   if (screen === 'confirmed') {
@@ -219,6 +277,7 @@ export default function Subscribe() {
           currentPrice={currentPrice}
           trialEndDate={trialEndDate}
           paying={paying}
+          payError={payError}
           onPay={handlePayNow}
         />
       </div>

@@ -12,6 +12,7 @@ interface Props {
   currentPrice: number
   trialEndDate: string
   paying: boolean
+  payError: string | null
   onPay: () => void
 }
 
@@ -50,7 +51,7 @@ const METHODS: { id: Method; icon: string; name: string; tag?: string; body: str
 ]
 
 export function PaymentBottomSheet({
-  open, onClose, selectedPlan, billing, currentPrice, trialEndDate, paying, onPay,
+  open, onClose, selectedPlan, billing, currentPrice, trialEndDate, paying, payError, onPay,
 }: Props) {
   const [openMethod, setOpenMethod] = useState<Method>('upi')
   function toggleMethod(id: Method) {
@@ -95,7 +96,7 @@ export function PaymentBottomSheet({
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto px-[18px] pb-2">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-[18px] pb-2">
         {/* Summary row */}
         <div className="flex items-center justify-between gap-2.5 px-3.5 py-3.5 bg-bg-card border border-border rounded-[14px] mb-3.5">
           <div className="flex flex-col gap-0.5">
@@ -236,6 +237,16 @@ export function PaymentBottomSheet({
           <span className="font-semibold text-text">{rupee(currentPrice)}</span> will be charged on{' '}
           <span className="font-semibold text-text">{trialEndDate}</span>. Cancel anytime in Settings before then to avoid charges.
         </p>
+
+        {payError && (
+          <div
+            className="mt-2.5 flex items-start gap-2 px-3 py-2.5 rounded-[10px] text-[12px] leading-[1.4]"
+            style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.3)' }}
+          >
+            <span className="text-[#ef4444] font-bold flex-shrink-0">!</span>
+            <span className="text-[#ef4444]">{payError}</span>
+          </div>
+        )}
 
         <div className="flex items-center justify-center gap-1.5 mt-2.5 font-mono text-[10.5px] tracking-[.06em] text-text-faint">
           <span className="flex items-center gap-1 text-text-dim font-semibold">

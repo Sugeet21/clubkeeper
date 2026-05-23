@@ -9,6 +9,7 @@ import { useToastStore } from '../store/toastStore'
 import { useAuthStore } from '../store/authStore'
 import { validatePlayerName } from '../lib/validation'
 import { db } from '../db/database'
+import { supabase } from '../lib/supabase'
 import type { GameTable } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -58,12 +59,21 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function rupee(n: number) {
+  return '₹' + n.toLocaleString('en-IN')
+}
+
+function formatDate(ms: number) {
+  return format(new Date(ms), 'd MMM yyyy')
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Settings() {
   const navigate = useNavigate()
   const tables = useTables()
   const settings = useSettings()
+  const { subscription } = useAuthStore()
 
   // Club name draft
   const [clubName, setClubName] = useState('')
@@ -79,6 +89,7 @@ export default function Settings() {
   const [resetModal, setResetModal] = useState(false)
   const [resetConfirmText, setResetConfirmText] = useState('')
   const [cleanModal, setCleanModal] = useState(false)
+  const [cancelSubModal, setCancelSubModal] = useState(false)
   const [storageInfo, setStorageInfo] = useState<{ usage: number; quota: number } | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -155,6 +166,30 @@ export default function Settings() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+  }
+
+  async function handleCancelSubscription() {
+    setBusy(true)
+    try {
+      const { data: { session: authSession } } = await supabase.auth.getSession()
+      if (!authSession) throw new Error('Not authenticated')
+      const res = await fetch('/api/cancel-subscription', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${authSession.access_token}` },
+      })
+      if (!res.ok) {
+        const err = await res.json() as { error?: string }
+        useToastStore.getState().show(err.error ?? 'Failed to cancel', 'error')
+        return
+      }
+      await useAuthStore.getState().refreshProfile()
+      setCancelSubModal(false)
+      useToastStore.getState().show('Subscription cancelled. Access continues until period ends.', 'success')
+    } catch (err) {
+      useToastStore.getState().show(err instanceof Error ? err.message : 'Something went wrong', 'error')
+    } finally {
+      setBusy(false)
+    }
   }
 
   const sessionCount = 0 // shown in about; could use useLiveQuery but not worth extra hook here
@@ -255,7 +290,73 @@ export default function Settings() {
         )}
       </Section>
 
-      {/* ── Section 3: Data ─────────────────────────────────────────────── */}
+      {/* ── Section 3: Subscription ─────────────────────────────────────── */}
+      {subscription && subscription.status !== 'none' && (
+        <Section title="Subscription">
+          <Row>
+            <RowLabel>Plan</RowLabel>
+            <span className="text-[14px] text-text capitalize">
+              {subscription.plan ?? '—'}{' '}
+              <span className="text-text-faint text-[12px]">
+                {subscription.cancelAtPeriodEnd ? '(cancelling)' : ''}
+              </span>
+            </span>
+          </Row>
+          <Row>
+            <RowLabel>Status</RowLabel>
+            <span className="text-[13px] font-mono">
+              {subscription.status === 'trialing' && subscription.trialEndsAt && (
+                <span className="text-accent">
+                  Trialing — {Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / 86400000))} days left
+                </span>
+              )}
+              {subscription.status === 'active' && !subscription.cancelAtPeriodEnd && subscription.currentPeriodEnd && (
+                <span className="text-accent">Active — renews {formatDate(subscription.currentPeriodEnd)}</span>
+              )}
+              {subscription.status === 'active' && subscription.cancelAtPeriodEnd && subscription.currentPeriodEnd && (
+                <span style={{ color: '#f7c948' }}>Cancelling {formatDate(subscription.currentPeriodEnd)}</span>
+              )}
+              {subscription.status === 'past_due' && (
+                <span className="text-busy">Payment failed</span>
+              )}
+              {(subscription.status === 'cancelled' || subscription.status === 'expired') && (
+                <span className="text-text-faint">{subscription.status}</span>
+              )}
+            </span>
+          </Row>
+          {subscription.currentPeriodEnd && subscription.status === 'active' && (
+            <Row>
+              <RowLabel>Next charge</RowLabel>
+              <span className="text-[13px] font-mono text-text">
+                {subscription.plan === 'starter'
+                  ? rupee(299)
+                  : subscription.plan === 'standard'
+                  ? rupee(599)
+                  : rupee(999)}{' '}
+                on {formatDate(subscription.currentPeriodEnd)}
+              </span>
+            </Row>
+          )}
+          {!subscription.cancelAtPeriodEnd && (subscription.status === 'active' || subscription.status === 'trialing') && (
+            <button
+              onClick={() => setCancelSubModal(true)}
+              className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
+            >
+              <span className="text-[14px] text-busy">Cancel subscription</span>
+              <span className="text-[12px] text-text-faint">→</span>
+            </button>
+          )}
+          <button
+            onClick={() => navigate('/subscribe?change=1')}
+            className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
+          >
+            <span className="text-[14px] text-text">Change plan</span>
+            <span className="text-[12px] text-accent">→</span>
+          </button>
+        </Section>
+      )}
+
+      {/* ── Section 4 (was 3): Data ─────────────────────────────────────── */}
       <Section title="Data">
         <button
           onClick={handleExportJSON}
@@ -323,6 +424,33 @@ export default function Settings() {
           <span className="text-[12px] text-text-faint">→</span>
         </button>
       </Section>
+
+      {/* ── Cancel subscription modal ───────────────────────────────────── */}
+      <Modal
+        open={cancelSubModal}
+        onClose={() => !busy && setCancelSubModal(false)}
+        title="Cancel subscription?"
+      >
+        <p className="text-text-dim text-[14px] mb-5">
+          You'll keep access until the end of your current billing period. After that, ClubKeeper will stop working.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={() => setCancelSubModal(false)}
+            disabled={busy}
+            className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold"
+          >
+            Keep plan
+          </button>
+          <button
+            onClick={handleCancelSubscription}
+            disabled={busy}
+            className="py-3.5 bg-busy text-white rounded-xl text-[14px] font-bold disabled:opacity-50"
+          >
+            {busy ? 'Cancelling…' : 'Yes, cancel'}
+          </button>
+        </div>
+      </Modal>
 
       {/* ── Table form modal ────────────────────────────────────────────── */}
       <TableFormModal
