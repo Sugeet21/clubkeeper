@@ -48,10 +48,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const trialEndSec = nowSec + 7 * 24 * 60 * 60
   const totalCount = cycle === 'monthly' ? 12 : 1
 
-  type RazorpaySubscription = Awaited<ReturnType<typeof razorpay.subscriptions.create>>
+  interface RazorpaySubscription { id: string; short_url: string }
   let subscription: RazorpaySubscription
   try {
-    subscription = await razorpay.subscriptions.create({
+    subscription = await (razorpay.subscriptions.create({
       plan_id: planId,
       total_count: totalCount,
       customer_notify: 1,
@@ -61,7 +61,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         tier,
         cycle,
       },
-    })
+    }) as unknown as Promise<RazorpaySubscription>)
   } catch (err) {
     console.error('Razorpay subscription create error:', err)
     return res.status(500).json({ error: 'Failed to create subscription with payment provider' })
