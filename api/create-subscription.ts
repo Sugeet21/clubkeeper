@@ -1,9 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import Razorpay from 'razorpay'
-import type { Subscriptions } from 'razorpay/dist/types/subscriptions'
 import { createClient } from '@supabase/supabase-js'
-import { getPlanId } from '../src/lib/razorpayPlans'
-import type { Tier, Cycle } from '../src/lib/razorpayPlans'
+import { getPlanId } from '../src/lib/razorpayPlans.js'
+import type { Tier, Cycle } from '../src/lib/razorpayPlans.js'
 
 const razorpay = new Razorpay({
   key_id: process.env.VITE_RAZORPAY_KEY_ID!,
@@ -49,7 +48,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const trialEndSec = nowSec + 7 * 24 * 60 * 60
   const totalCount = cycle === 'monthly' ? 12 : 1
 
-  let subscription: Subscriptions.RazorpaySubscription
+  type RazorpaySubscription = Awaited<ReturnType<typeof razorpay.subscriptions.create>>
+  let subscription: RazorpaySubscription
   try {
     subscription = await razorpay.subscriptions.create({
       plan_id: planId,
