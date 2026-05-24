@@ -63,8 +63,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     }) as unknown as Promise<RazorpaySubscription>)
   } catch (err) {
-    console.error('Razorpay subscription create error:', err)
-    return res.status(500).json({ error: 'Failed to create subscription with payment provider' })
+    const rzpErr = err as { error?: { description?: string; code?: string }; statusCode?: number }
+    console.error('[create-subscription] Razorpay error:', JSON.stringify(err, null, 2))
+    return res.status(500).json({
+      message: rzpErr.error?.description ?? 'Failed to create subscription with payment provider',
+      code: rzpErr.error?.code,
+      razorpayStatus: rzpErr.statusCode,
+    })
   }
 
   // Write to Supabase with service role (bypasses RLS)
