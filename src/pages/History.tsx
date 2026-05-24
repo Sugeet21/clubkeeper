@@ -76,7 +76,7 @@ function SessionRow({ session, table, currency }: { session: Session; table: Gam
         </div>
       </div>
       <div className="text-right shrink-0">
-        <p className="text-[15px] font-bold text-text tabular-nums">{currency}{amount}</p>
+        <p className="text-[15px] font-bold text-text tabular-nums">{currency}{amount.toLocaleString('en-IN')}</p>
         <p className="text-[11px] text-text-faint font-mono mt-0.5">{durationLabel}</p>
       </div>
     </div>

@@ -197,7 +197,7 @@ export default function SessionDetail() {
     setPending(true)
     try {
       await stopSession(session.id!)
-      navigate('/', { replace: true })
+      navigate('/tables', { replace: true })
     } finally {
       setPending(false)
       setConfirmStop(false)
@@ -246,14 +246,14 @@ export default function SessionDetail() {
         <div className="flex items-center justify-between px-3 pt-3 pb-1">
           <button
             onClick={() => navigate('/tables')}
-            className="flex items-center gap-1 text-text-dim px-1 py-1.5 -ml-1 active:text-text transition-colors"
+            className="flex items-center gap-1 text-text-dim px-1 min-h-[44px] -ml-1 active:text-text transition-colors"
           >
             <ChevronLeft />
             <span className="text-sm">Home</span>
           </button>
           <button
             onClick={() => setEditStartOpen(true)}
-            className="p-2 text-text-dim active:text-text transition-colors"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim active:text-text transition-colors"
             aria-label="Edit start time"
           >
             <PencilIcon />

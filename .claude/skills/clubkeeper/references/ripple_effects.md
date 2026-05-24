@@ -61,6 +61,28 @@ If a change isn't documented here yet, pause and trace dependencies first.
 
 ## Component Changes
 
+### If you change `<FilterPills>` component
+
+**Affects:**
+- `src/pages/Home.tsx` — only consumer. Props: `pills`, `active`, `onChange`.
+- Pill height / padding changes affect the overall height of the filter row, which affects the visual spacing between TopBar and the table grid.
+- Touch target: all pills must keep `min-h-[44px]` (added BUG-005 fix, 24 May 2026).
+
+**Discovered when:** Phase 2B touch-target sweep.
+
+---
+
+### If you change `<TopBar>` component
+
+**Affects:**
+- `src/pages/Home.tsx` — only consumer.
+- The settings gear inside TopBar navigates to `/settings` — if that route changes, update here.
+- The gear button must stay `w-11 h-11` (44px) minimum (added BUG-006 fix, 24 May 2026).
+
+**Discovered when:** Phase 2B touch-target sweep.
+
+---
+
 ### If you change `<TableCard>` props or behavior
 
 **Affects:**
@@ -68,12 +90,30 @@ If a change isn't documented here yet, pause and trace dependencies first.
 - Visual regression: card has 4 visual states (Free, Busy, Paused, Out of Service) — verify all 4
 - Touch behavior: tap zones (whole card vs just CTA button)
 
-### If you change `<TableFormModal>` 
+### If you change `<TableFormModal>`
 
 **Affects:**
-- `src/pages/Settings.tsx` — only consumer
-- Both ADD and EDIT modes (different button labels, fields)
-- Validation logic in `src/lib/validation.ts`
+- `src/pages/Settings.tsx` — consumer #1: Add Table button (top right of Tables section) + Edit pencil for each table row
+- `src/pages/Home.tsx` — consumer #2 (added Phase 2C-1, 24 May 2026): FAB `+` button opens inline Add Table modal
+- Both ADD and EDIT modes share the same component; ADD mode is triggered with no `table` prop, EDIT mode passes the existing `GameTable` object
+- Validation logic in `src/lib/validation.ts` — `validateTableName` called inside
+- Props interface: `{ open, onClose, table?, existingTables }` — if you add a prop, update ALL call sites (currently 3: Settings Add, Settings Edit, Home FAB)
+- `existingTables` prop is used for duplicate-name checking — must always receive the full current tables array
+
+**Discovered when:** Phase 2C-1 — BUG-004 fix moved FAB from navigate('/settings') to inline modal.
+
+---
+
+### If you change `<Modal>` component
+
+**Affects:**
+- Every modal in the app — `<Modal>` is used by: `SessionDetail.tsx` (stop confirm, edit start time), `Settings.tsx` (clear sessions, reset everything, cancel subscription, clean names), `TableFormModal.tsx` (wraps the whole form), `Home.tsx` (orphaned sessions)
+- Scroll-lock behaviour: `useEffect` with `[open]` dep sets `document.body.style.overflow = 'hidden'` on open, restores on close/unmount
+- Escape key: `useEffect` with `[open, onClose]` dep adds/removes `keydown` listener — if you change `onClose` reference stability, wrap it in `useCallback` at the call site to avoid re-registering on every render
+- Layout: scrim is `fixed inset-0 z-40`, sheet is `fixed bottom-0 left-0 right-0 z-50` — both are independent fixed layers. Do NOT nest them in a shared container or the scrim will intercept clicks on the sheet (confirmed bug, 24 May 2026)
+- PaymentBottomSheet (`src/components/subscribe/PaymentBottomSheet.tsx`) is NOT a `<Modal>` — it has its own translateY slide-up and is a sibling in Subscribe.tsx; changes to Modal do not affect it
+
+**Discovered when:** Phase 2C-1 — BUG-012 fix; the original single-container layout caused `absolute inset-0` scrim to intercept pointer events on the sheet in Playwright hit-testing.
 
 ### If you change `<Toggle>` component
 
@@ -159,15 +199,30 @@ If a change isn't documented here yet, pause and trace dependencies first.
 ### If you change the Subscribe page (`src/pages/Subscribe.tsx` or `src/components/subscribe/`)
 
 **Affects:**
-- `src/components/subscribe/PlanSelection.tsx` — `PLANS` array has hardcoded prices (₹299/₹599/₹999 monthly, ₹2990/₹5990/₹9990 annual). If pricing changes, update here AND in `StickyCheckout.tsx`
-- `src/components/subscribe/StickyCheckout.tsx` — receives `currentPrice` as a number prop; no internal price logic. Safe to change pricing in Subscribe.tsx only
-- `src/components/subscribe/PaymentBottomSheet.tsx` — accepts `payError: string | null` prop; displays inline error below the CTA. Must stay in sync with `handlePayNow()` error handling in `Subscribe.tsx`
+- `src/components/subscribe/PlanSelection.tsx` — `PLANS` array has hardcoded prices (₹299/₹599/₹999 monthly, ₹2990/₹5990/₹9990 annual). If pricing changes, update here AND in `StickyCheckout.tsx`. `selectedPlan` prop is `PlanId | null` (since BUG-016 fix).
+- `src/components/subscribe/StickyCheckout.tsx` — receives `selectedPlan: PlanId | null`; renders `null` (hides entirely) when no plan is selected. Receives `currentPrice` as number. Safe to change pricing in Subscribe.tsx only.
+- `src/components/subscribe/PaymentBottomSheet.tsx` — accepts: `payError: string | null`, `onMaybeLater: () => void`, `onRetry: () => void`. All three must stay in sync with `handlePayNow()`/`handleMaybeLater()`/`handleRetryPayment()` in `Subscribe.tsx`. Sheet has ESC key listener (BUG-016), 4 escape paths, "Maybe later" + "Retry" buttons.
 - `src/components/subscribe/ConfirmationScreen.tsx` — rendered when `screen === 'confirmed'`. Navigate uses `replace: true` — do NOT remove or user can back into Subscribe
 - `src/pages/AuthCallback.tsx` — checks `subscription.status` to decide `/subscribe` vs `/tables`
 - `src/hooks/useAccessGuard.ts` — reads `subscription.status`; `'trialing'` and `'active'` allow access
-- `api/create-subscription.ts` — called by `handlePayNow()` via fetch POST. If flow changes, both must update together
+- `api/create-subscription.ts` — called by `handlePayNow()` via fetch POST with 15s AbortController timeout (since BUG-017 fix). If flow changes, both must update together.
 - `src/lib/razorpayPlans.ts` — plan IDs consumed by `api/create-subscription.ts`. If plan IDs change, update ONLY this file
 - Annual prices: `MONTHLY_PRICES` and `ANNUAL_PRICES` in `Subscribe.tsx`. ROI calculator in `Landing.tsx` also hardcodes `₹599` — keep in sync
+
+**PaymentBottomSheet escape paths (as of BUG-016 fix, 24 May 2026):**
+- X button (`onClose`) — closes sheet, plan stays selected
+- ESC key (`useEffect` in PaymentBottomSheet) — calls `onClose`
+- Backdrop click (overlay div in Subscribe.tsx) — calls `setSheetOpen(false)`
+- "Maybe later" button (`onMaybeLater`) — closes sheet AND sets `selectedPlan = null` (hides StickyCheckout bar)
+All 4 paths are guarded by `!paying` — cannot escape mid-payment.
+
+**handlePayNow error handling (as of BUG-017 fix, 24 May 2026):**
+- 15-second AbortController timeout → user-friendly timeout message
+- HTTP 404 → special message pointing to `vercel dev` for local dev
+- Non-ok HTTP → try to parse error body, fall back to generic message
+- JSON parse failure on success body → user-friendly message
+- payError displayed prominently with "Retry" button (calls handleRetryPayment)
+- "Maybe later" always visible below error as exit path
 
 ### If you change Razorpay plan IDs
 
@@ -258,7 +313,7 @@ If a change isn't documented here yet, pause and trace dependencies first.
 ### If you change the auth flow (authStore, RequireAccess, AuthCallback)
 
 **Affects:**
-- `src/store/authStore.ts` — central auth state (session, user, profile, subscription, loading)
+- `src/store/authStore.ts` — central auth state (session, user, profile, subscription, loading, _lastFetchedAt)
 - `src/hooks/useAccessGuard.ts` — reads loading/session/subscription, returns typed guard result
 - `src/components/RequireAccess.tsx` — uses useAccessGuard, redirects to /signup or /subscribe
 - `src/pages/AuthCallback.tsx` — reads loading + subscription to route after OAuth
@@ -269,6 +324,8 @@ If a change isn't documented here yet, pause and trace dependencies first.
 - `loading: true` until `initialize()` resolves — RequireAccess shows spinner, not redirect
 - `signOut()` must clear session + profile + subscription in store (currently done manually)
 - PUBLIC_PATHS in App.tsx must stay in sync with actual public Route paths
+- **refreshProfile dedup rule (added BUG-002 fix, 24 May 2026):** `refreshProfile()` is a no-op if called within 3000ms of the last fetch, UNLESS called with `force=true`. Always use `force=true` after a real server mutation (post-payment, post-cancel). Never add new `refreshProfile()` calls without checking whether they'll fire within 3s of initialize(). Supabase fires `INITIAL_SESSION` synchronously on `onAuthStateChange` registration — this is the source of double-fetch.
+- **consumers of refreshProfile():** `authStore.ts:initialize()` (auto, no force), `authStore.ts:onAuthStateChange` (auto, no force — deduplicated), `Subscribe.tsx` post-payment handler (force=true), `Settings.tsx` post-cancel-subscription (force=true). If you add a new forced call, document it here.
 
 ### If you change the subscription schema (Supabase table or TypeScript types)
 

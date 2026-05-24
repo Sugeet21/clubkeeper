@@ -137,7 +137,7 @@ function SessionRow({
       {/* Right */}
       <div className="text-right shrink-0">
         <p className="text-[15px] font-bold text-text tabular-nums">
-          {currency}{amount}
+          {currency}{amount.toLocaleString('en-IN')}
         </p>
         <p className="text-[11px] text-text-faint font-mono mt-0.5 tabular-nums">
           {durationLabel}

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 type PlanId = 'starter' | 'standard'
 type Billing = 'monthly' | 'annual'
@@ -7,6 +7,7 @@ type Method = 'upi' | 'card' | 'netbanking' | 'wallets' | ''
 interface Props {
   open: boolean
   onClose: () => void
+  onMaybeLater: () => void
   selectedPlan: PlanId
   billing: Billing
   currentPrice: number
@@ -14,6 +15,7 @@ interface Props {
   paying: boolean
   payError: string | null
   onPay: () => void
+  onRetry: () => void
 }
 
 const PLAN_NAMES: Record<PlanId, string> = {
@@ -51,13 +53,23 @@ const METHODS: { id: Method; icon: string; name: string; tag?: string; body: str
 ]
 
 export function PaymentBottomSheet({
-  open, onClose, selectedPlan, billing, currentPrice, trialEndDate, paying, payError, onPay,
+  open, onClose, onMaybeLater, selectedPlan, billing, currentPrice, trialEndDate, paying, payError, onPay, onRetry,
 }: Props) {
   const [openMethod, setOpenMethod] = useState<Method>('upi')
   function toggleMethod(id: Method) {
     setOpenMethod((prev) => (prev === id ? '' : id))
   }
   const [upiId, setUpiId] = useState('')
+
+  // ESC key closes sheet — same pattern as BUG-012 Modal fix
+  useEffect(() => {
+    if (!open) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !paying) onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => { document.removeEventListener('keydown', handleKeyDown) }
+  }, [open, paying, onClose])
 
   const planDesc =
     billing === 'monthly'
@@ -76,6 +88,8 @@ export function PaymentBottomSheet({
       role="dialog"
       aria-modal="true"
       aria-label="Payment"
+      aria-hidden={!open}
+      tabIndex={open ? 0 : -1}
     >
       {/* Grab handle */}
       <div className="w-10 h-1 rounded-full bg-border mx-auto mt-2.5 flex-shrink-0" />
@@ -87,7 +101,9 @@ export function PaymentBottomSheet({
         </h2>
         <button
           onClick={onClose}
-          className="w-11 h-11 rounded-[12px] flex items-center justify-center text-text-dim border border-transparent transition-all duration-200 active:bg-bg-card active:border-border"
+          disabled={paying}
+          aria-label="Close payment sheet"
+          className="w-11 h-11 rounded-full flex items-center justify-center text-text-dim bg-zinc-800/50 border border-transparent transition-all duration-200 active:bg-bg-card active:border-border disabled:opacity-50"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -240,11 +256,20 @@ export function PaymentBottomSheet({
 
         {payError && (
           <div
-            className="mt-2.5 flex items-start gap-2 px-3 py-2.5 rounded-[10px] text-[12px] leading-[1.4]"
+            className="mt-2.5 rounded-[10px] text-[12px] leading-[1.4]"
             style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.3)' }}
           >
-            <span className="text-[#ef4444] font-bold flex-shrink-0">!</span>
-            <span className="text-[#ef4444]">{payError}</span>
+            <div className="flex items-start gap-2 px-3 py-2.5">
+              <span className="text-[#ef4444] font-bold flex-shrink-0 mt-[1px]">!</span>
+              <span className="text-[#ef4444] flex-1">{payError}</span>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="flex-shrink-0 text-[#ef4444] border border-[rgba(239,68,68,.4)] rounded-[8px] px-2.5 py-1 font-semibold text-[11px] uppercase tracking-[.08em] active:opacity-70 transition-opacity"
+              >
+                Retry
+              </button>
+            </div>
           </div>
         )}
 
@@ -255,6 +280,16 @@ export function PaymentBottomSheet({
           </span>
           · 256-bit SSL
         </div>
+
+        {/* Maybe later — always-visible escape hatch at bottom of sheet */}
+        <button
+          type="button"
+          onClick={onMaybeLater}
+          disabled={paying}
+          className="w-full mt-3.5 min-h-[44px] flex items-center justify-center text-text-dim text-[13px] font-medium tracking-[-0.01em] active:text-text transition-colors disabled:opacity-40"
+        >
+          Maybe later
+        </button>
       </div>
     </div>
   )

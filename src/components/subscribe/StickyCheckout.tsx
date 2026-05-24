@@ -2,7 +2,7 @@ type PlanId = 'starter' | 'standard'
 type Billing = 'monthly' | 'annual'
 
 interface Props {
-  selectedPlan: PlanId
+  selectedPlan: PlanId | null
   billing: Billing
   currentPrice: number
   trialEndDate: string
@@ -19,6 +19,9 @@ function rupee(n: number) {
 }
 
 export function StickyCheckout({ selectedPlan, billing, currentPrice, trialEndDate, onCheckout }: Props) {
+  // No plan selected (e.g. after "Maybe later") — hide checkout bar entirely
+  if (!selectedPlan) return null
+
   const period = billing === 'monthly' ? '/ month' : '/ year'
 
   return (

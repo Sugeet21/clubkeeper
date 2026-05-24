@@ -23,7 +23,7 @@ export default function FilterPills({ pills, active, onChange }: Props) {
           <button
             key={pill.value}
             onClick={() => onChange(pill.value)}
-            className={`flex-none flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-semibold whitespace-nowrap transition-colors ${
+            className={`flex-none flex items-center gap-1.5 px-4 min-h-[44px] rounded-full text-[12px] font-semibold whitespace-nowrap transition-colors ${
               isActive
                 ? 'bg-accent text-bg'
                 : 'bg-bg-elevated text-text-dim border border-border'

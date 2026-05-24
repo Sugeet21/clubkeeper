@@ -19,6 +19,8 @@ function getPrice(plan: PlanId, billing: Billing): number {
   return billing === 'monthly' ? MONTHLY_PRICES[plan] : ANNUAL_PRICES[plan]
 }
 
+const FETCH_TIMEOUT_MS = 15_000
+
 function ProgressStep({ status, label }: { status: 'done' | 'now' | 'upcoming'; label: string }) {
   return (
     <span
@@ -59,7 +61,7 @@ export default function Subscribe() {
 
   const [screen, setScreen] = useState<Screen>('plans')
   const [billing, setBilling] = useState<Billing>('monthly')
-  const [selectedPlan, setSelectedPlan] = useState<PlanId>('standard')
+  const [selectedPlan, setSelectedPlan] = useState<PlanId | null>('standard')
   const [sheetOpen, setSheetOpen] = useState(false)
   const [paying, setPaying] = useState(false)
   const [payError, setPayError] = useState<string | null>(null)
@@ -67,7 +69,7 @@ export default function Subscribe() {
   const warnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const trialEndDate = format(addDays(new Date(), 7), 'MMM d')
-  const currentPrice = getPrice(selectedPlan, billing)
+  const currentPrice = selectedPlan ? getPrice(selectedPlan, billing) : 0
   const firstName = profile?.displayName?.split(' ')[0] ?? user?.email?.split('@')[0] ?? 'there'
   const email = profile?.email ?? user?.email ?? ''
   const avatarInitial = (firstName[0] ?? 'U').toUpperCase()
@@ -78,6 +80,12 @@ export default function Subscribe() {
     warnTimerRef.current = setTimeout(() => setShowBackWarning(false), 3500)
   }
 
+  function handleMaybeLater() {
+    setSheetOpen(false)
+    setSelectedPlan(null)
+    setPayError(null)
+  }
+
   // Lock body scroll when sheet is open
   useEffect(() => {
     document.body.style.overflow = sheetOpen ? 'hidden' : ''
@@ -85,32 +93,65 @@ export default function Subscribe() {
   }, [sheetOpen])
 
   async function handlePayNow() {
-    if (paying) return
+    if (paying || !selectedPlan) return
     setPaying(true)
     setPayError(null)
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+
     try {
       const { data: { session: authSession } } = await supabase.auth.getSession()
       if (!authSession) throw new Error('Not authenticated')
 
-      const res = await fetch('/api/create-subscription', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authSession.access_token}`,
-        },
-        body: JSON.stringify({
-          userId: authSession.user.id,
-          tier: selectedPlan,
-          cycle: billing,
-        }),
-      })
-
-      if (!res.ok) {
-        const err = await res.json() as { error?: string }
-        throw new Error(err.error ?? 'Failed to start trial')
+      let res: Response
+      try {
+        res = await fetch('/api/create-subscription', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authSession.access_token}`,
+          },
+          body: JSON.stringify({
+            userId: authSession.user.id,
+            tier: selectedPlan,
+            cycle: billing,
+          }),
+          signal: controller.signal,
+        })
+      } catch (fetchErr) {
+        if (fetchErr instanceof Error && fetchErr.name === 'AbortError') {
+          throw new Error('Request timed out after 15 seconds. Please check your connection and try again.')
+        }
+        throw fetchErr
+      } finally {
+        clearTimeout(timeoutId)
       }
 
-      const { subscriptionId } = await res.json() as { subscriptionId: string }
+      if (res.status === 404) {
+        throw new Error(
+          "Backend payment service is unavailable. If you're testing locally, run `vercel dev` instead of `npm run dev`. If you're on production, contact support."
+        )
+      }
+
+      if (!res.ok) {
+        let errMsg = 'Payment failed. Please try again or contact support.'
+        try {
+          const errBody = await res.json() as { error?: string }
+          if (errBody.error) errMsg = errBody.error
+        } catch {
+          // JSON parse failed — use generic message
+        }
+        throw new Error(errMsg)
+      }
+
+      let subscriptionId: string
+      try {
+        const body = await res.json() as { subscriptionId: string }
+        subscriptionId = body.subscriptionId
+      } catch {
+        throw new Error('Unexpected response from server. Please try again or contact support.')
+      }
 
       const rzp = new window.Razorpay({
         key: import.meta.env.VITE_RAZORPAY_KEY_ID as string,
@@ -125,7 +166,7 @@ export default function Subscribe() {
         handler: async () => {
           // Webhook updates Supabase authoritatively; brief delay gives it a head start
           await new Promise((r) => setTimeout(r, 1500))
-          await useAuthStore.getState().refreshProfile()
+          await useAuthStore.getState().refreshProfile(true)
           setSheetOpen(false)
           setScreen('confirmed')
           setPaying(false)
@@ -138,10 +179,16 @@ export default function Subscribe() {
       })
       rzp.open()
     } catch (err) {
+      clearTimeout(timeoutId)
       console.error('handlePayNow error:', err)
       setPayError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
       setPaying(false)
     }
+  }
+
+  function handleRetryPayment() {
+    setPayError(null)
+    void handlePayNow()
   }
 
   if (screen === 'confirmed') {
@@ -268,18 +315,22 @@ export default function Subscribe() {
           onClick={() => !paying && setSheetOpen(false)}
         />
 
-        {/* Payment bottom sheet */}
-        <PaymentBottomSheet
-          open={sheetOpen}
-          onClose={() => !paying && setSheetOpen(false)}
-          selectedPlan={selectedPlan}
-          billing={billing}
-          currentPrice={currentPrice}
-          trialEndDate={trialEndDate}
-          paying={paying}
-          payError={payError}
-          onPay={handlePayNow}
-        />
+        {/* Payment bottom sheet — only render when plan is selected */}
+        {selectedPlan && (
+          <PaymentBottomSheet
+            open={sheetOpen}
+            onClose={() => !paying && setSheetOpen(false)}
+            onMaybeLater={handleMaybeLater}
+            selectedPlan={selectedPlan}
+            billing={billing}
+            currentPrice={currentPrice}
+            trialEndDate={trialEndDate}
+            paying={paying}
+            payError={payError}
+            onPay={handlePayNow}
+            onRetry={handleRetryPayment}
+          />
+        )}
       </div>
     </div>
   )

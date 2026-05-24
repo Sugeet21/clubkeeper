@@ -36,7 +36,7 @@ export default function TopBar() {
         )}
         <button
           onClick={() => navigate('/settings')}
-          className="w-9 h-9 flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors -mr-1"
+          className="w-11 h-11 flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors -mr-1"
           aria-label="Settings"
         >
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">

@@ -7,7 +7,7 @@ type Billing = 'monthly' | 'annual'
 interface Props {
   billing: Billing
   onBillingChange: (b: Billing) => void
-  selectedPlan: PlanId
+  selectedPlan: PlanId | null
   onPlanSelect: (p: PlanId) => void
   displayName: string
 }

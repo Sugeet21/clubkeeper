@@ -182,7 +182,7 @@ export default function Settings() {
         useToastStore.getState().show(err.error ?? 'Failed to cancel', 'error')
         return
       }
-      await useAuthStore.getState().refreshProfile()
+      await useAuthStore.getState().refreshProfile(true)
       setCancelSubModal(false)
       useToastStore.getState().show('Subscription cancelled. Access continues until period ends.', 'success')
     } catch (err) {
@@ -291,7 +291,13 @@ export default function Settings() {
       </Section>
 
       {/* ── Section 3: Subscription ─────────────────────────────────────── */}
-      {subscription && subscription.status !== 'none' && (
+      {subscription === null ? (
+        <Section title="Subscription">
+          <Row>
+            <span className="text-[13px] text-text-faint font-mono">Loading subscription…</span>
+          </Row>
+        </Section>
+      ) : subscription.status !== 'none' ? (
         <Section title="Subscription">
           <Row>
             <RowLabel>Plan</RowLabel>
@@ -353,6 +359,22 @@ export default function Settings() {
             <span className="text-[14px] text-text">Change plan</span>
             <span className="text-[12px] text-accent">→</span>
           </button>
+        </Section>
+      ) : (
+        <Section title="Subscription">
+          <div className="px-4 py-5 flex flex-col gap-3">
+            <div>
+              <p className="text-[15px] font-semibold text-text">No active plan</p>
+              <p className="text-[13px] text-text-dim mt-0.5">Subscribe to unlock all features</p>
+            </div>
+            <button
+              onClick={() => navigate('/subscribe')}
+              aria-label="Subscribe to ClubKeeper"
+              className="w-full py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold active:opacity-80 transition-opacity"
+            >
+              Subscribe →
+            </button>
+          </div>
         </Section>
       )}
 
@@ -499,6 +521,7 @@ export default function Settings() {
         </p>
         <div className="grid grid-cols-2 gap-3">
           <button
+            data-testid="clear-modal-cancel"
             onClick={() => setClearModal(false)}
             disabled={busy}
             className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold"

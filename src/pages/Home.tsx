@@ -11,6 +11,7 @@ import SummaryStrip from '../components/SummaryStrip'
 import FilterPills from '../components/FilterPills'
 import TableCard from '../components/TableCard'
 import { Modal } from '../components/Modal'
+import { TableFormModal } from '../components/TableFormModal'
 import { SubscriptionStatusBanner } from '../components/SubscriptionStatusBanner'
 import type { GameType, Session } from '../types'
 
@@ -29,6 +30,7 @@ export default function Home() {
   useTick()
 
   const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
+  const [addTableOpen, setAddTableOpen] = useState(false)
   const [orphanedOpen, setOrphanedOpen] = useState(false)
   const [endingId, setEndingId] = useState<number | null>(null)
 
@@ -152,15 +154,22 @@ export default function Home() {
         ))}
       </div>
 
-      {/* FAB */}
+      {/* FAB — opens Add Table modal inline */}
       <button
-        onClick={() => navigate('/settings')}
+        onClick={() => setAddTableOpen(true)}
         className="fixed bottom-20 right-5 w-14 h-14 bg-accent text-bg rounded-2xl flex items-center justify-center text-2xl font-bold z-50 active:scale-95 transition-transform"
         style={{ boxShadow: '0 0 24px rgba(184,255,90,0.35), 0 4px 12px rgba(0,0,0,0.4)' }}
         aria-label="Add table"
       >
         +
       </button>
+
+      {/* Add Table modal — opened by FAB */}
+      <TableFormModal
+        open={addTableOpen}
+        onClose={() => setAddTableOpen(false)}
+        existingTables={tables}
+      />
 
       {/* Orphaned sessions modal */}
       <Modal

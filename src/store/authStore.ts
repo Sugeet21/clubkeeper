@@ -9,11 +9,18 @@ interface AuthState {
   profile: UserProfile | null
   subscription: Subscription | null
   loading: boolean
+  _lastFetchedAt: number  // epoch ms; 0 = never fetched
   initialize: () => Promise<void>
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
-  refreshProfile: () => Promise<void>
+  refreshProfile: (force?: boolean) => Promise<void>
 }
+
+// Minimum ms between automatic refreshProfile calls. Prevents double-fetch
+// from initialize() + the synchronous onAuthStateChange INITIAL_SESSION event
+// that Supabase fires immediately when the listener is registered.
+// Post-payment refresh (Subscribe.tsx) uses force=true to bypass this guard.
+const REFRESH_COOLDOWN_MS = 3000
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   session: null,
@@ -21,6 +28,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   profile: null,
   subscription: null,
   loading: true,
+  _lastFetchedAt: 0,
 
   initialize: async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -42,9 +50,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     })
   },
 
-  refreshProfile: async () => {
+  refreshProfile: async (force = false) => {
     const user = get().user
     if (!user) return
+
+    // Deduplicate: skip if called within the cooldown window (unless forced)
+    if (!force) {
+      const msSinceLast = Date.now() - get()._lastFetchedAt
+      if (msSinceLast < REFRESH_COOLDOWN_MS) return
+    }
+    set({ _lastFetchedAt: Date.now() })
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -101,6 +116,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       provider: 'google',
       options: {
         redirectTo: window.location.origin + '/auth/callback',
+        queryParams: { prompt: 'select_account' },
       },
     })
   },

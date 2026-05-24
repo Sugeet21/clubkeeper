@@ -293,6 +293,81 @@ Format:
 
 ---
 
+### 24 May 2026 — Home FAB: inline modal over route navigation
+
+**Decision:** The `+` FAB on `/tables` now opens `<TableFormModal>` inline (state-driven) instead of navigating to `/settings`.
+**Considered:** (a) Navigate to `/settings` (original behaviour), (b) dedicated `/add-table` route, (c) inline modal (chosen)
+**Why:**
+- FABs on list/grid pages should not navigate away — users expect to stay on the page
+- No `/add-table` route existed; it was just `navigate('/settings')` which sent users to an entirely different screen
+- Inline modal keeps context (tables grid visible behind the scrim), feels native to the app
+- `<TableFormModal>` was already fully built and Settings uses it the same way — zero duplication
+- `existingTables` is already in scope on Home (`useTables()` result), so no extra data fetching needed
+**Trade-offs accepted:** FAB and the "Add Table" button in Settings both create tables; two entry points. Acceptable — Settings is for management, Home FAB is for quick add.
+**Revisit when:** If Settings "Add Table" becomes confusing alongside Home FAB, remove one. Likely keep FAB, demote Settings button.
+
+---
+
+---
+
+### 24 May 2026 — authStore.refreshProfile dedup: Option 2 (lastFetchedAt guard)
+
+**Decision:** Add `_lastFetchedAt: number` timestamp to authStore. `refreshProfile()` is a no-op if called within 3000ms of the last fetch, unless called with `force=true`.
+**Considered:**
+- Option 1: Centralize — only `initialize()` calls refreshProfile; remove calls from all consumers. Rejected: Settings and Subscribe have legitimate post-mutation refresh needs that can't be removed.
+- Option 2: `lastFetchedAt` guard (chosen) — single change in authStore, zero changes to call sites except adding `force=true` to the two intentional post-mutation calls.
+- Option 3: useRef-guarded useEffect per consumer — only solves component-level duplication, not the initialize() + onAuthStateChange double-call inside the store itself.
+**Why:** The root duplication lives inside authStore (initialize calls refreshProfile, then onAuthStateChange fires INITIAL_SESSION synchronously and calls it again). Option 2 solves it at the source. The 3000ms window is intentionally short — it covers the <100ms gap between initialize() and the INITIAL_SESSION event while still allowing legitimate forced refreshes (post-payment has a 1500ms delay before calling with force=true anyway).
+**Trade-offs accepted:** If somehow two real mutations fire within 3s of each other, the second one's refreshProfile is skipped (non-forced). Acceptable — that scenario doesn't exist in the current app.
+**Revisit when:** Never expected — this is a permanent correctness fix.
+
+---
+
+---
+
+### 24 May 2026 — Multi-path escape design for PaymentBottomSheet (BUG-016)
+
+**Decision:** Implement 4 independent escape paths from the payment sheet: X button, ESC key, backdrop click, "Maybe later" button.
+**Considered:**
+- (a) X button only — too easy to miss; ESC not obvious on mobile
+- (b) X + ESC — better but still feels trapped on mobile (no explicit "I'm not ready" text)
+- (c) X + ESC + backdrop + "Maybe later" text button at bottom (chosen)
+**Why:** Payment sheets are high-anxiety UX moments. Any perceived trap kills trust. "Maybe later" at the bottom reassures the user before they even feel trapped. All 4 paths are disabled while `paying=true` (can't interrupt mid-payment).
+**"Maybe later" behavior:** closes sheet AND sets `selectedPlan = null`, which hides StickyCheckout bar. User is back on /subscribe in plan-selection mode with no sticky prompt, giving them breathing room.
+**Trade-offs accepted:** `selectedPlan` is now nullable (`PlanId | null`) — required minor type updates in StickyCheckout and PlanSelection. Small change, safe.
+**Revisit when:** Never — this is the correct pattern for any payment/commitment sheet in the app.
+
+---
+
+### 24 May 2026 — handlePayNow: AbortController timeout + layered error handling (BUG-017)
+
+**Decision:** Add 15-second fetch timeout (AbortController) + try/catch around every `.json()` call + HTTP 404 detection with env-specific message.
+**Considered:**
+- Simple try/catch only — doesn't handle hung responses (no timeout)
+- Timeout only — doesn't handle empty body from 404
+- Full layered approach (chosen): timeout + status checks + json try/catch + 404 special case
+**Why:** Local dev with `npm run dev` returns empty 404 for /api/* routes. This is a predictable failure mode that every developer hits. The 404 message directly tells them "run vercel dev" — eliminates 10-minute debugging sessions.
+**15-second timeout:** Long enough for slow mobile connections and Razorpay subscription creation (hits Razorpay API). Short enough that users know something is wrong within a reasonable time.
+**Trade-offs accepted:** Slightly more complex error path in handlePayNow. Worth it — errors on payment pages are the worst user experience.
+**Revisit when:** If Razorpay API latency regularly exceeds 15s, increase timeout. Currently ~1-3s in test mode.
+
+---
+
+---
+
+### 24 May 2026 — Settings subscription section for unsubscribed users (BUG-013 final fix)
+
+**Decision:** Show a "No active plan, Subscribe →" CTA card when `subscription.status === 'none'`
+**Considered:**
+- (a) Render `null` — hide section entirely (Phase 2A behaviour for the else branch)
+- (b) Show subscribe CTA card (chosen)
+**Why:** Blank space looks broken — users don't know if the section failed to load or simply doesn't apply. A CTA card both informs ("no active plan") and converts (direct path to /subscribe). Consistent with the principle of never hiding UI sections on async/conditional state — always show something meaningful.
+**Files changed:** `src/pages/Settings.tsx` — else branch of the subscription ternary (lines ~363-379)
+**Trade-offs accepted:** Unsubscribed users see a "Subscribe" nudge on the Settings page — could feel pushy. Acceptable: ClubKeeper requires a subscription to function; the nudge is accurate.
+**Revisit when:** Never expected to need revision — this is the correct pattern.
+
+---
+
 ## Decisions Rejected (Don't Reopen)
 
 These were considered and rejected. Don't bring them back unless major context change:

@@ -62,6 +62,8 @@ export function FAQ() {
                 </span>
               </button>
               <div
+                aria-hidden={!isOpen}
+                inert={isOpen ? undefined : ''}
                 style={{
                   maxHeight: isOpen ? '300px' : '0',
                   overflow: 'hidden',

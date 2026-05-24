@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/database'
 import { getActiveSessionForTable, startSession, getRecentPlayerNames } from '../db/queries'
-import { validatePlayerName, validateNote, PLAYER_NAME_MAX, NOTE_MAX } from '../lib/validation'
+import { validatePlayerName, validateNote, NOTE_MAX } from '../lib/validation'
 import type { BillingMode } from '../types'
 
 // ─── Icon ─────────────────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ export default function StartSession() {
       <div className="flex items-center px-3 pt-3 pb-1">
         <button
           onClick={() => navigate(-1)}
-          className="flex items-center gap-1 text-text-dim px-1 py-1.5 -ml-1 active:text-text transition-colors"
+          className="flex items-center gap-1 text-text-dim px-1 min-h-[44px] -ml-1 active:text-text transition-colors"
         >
           <ChevronLeft />
           <span className="text-sm">Back</span>
@@ -200,7 +200,6 @@ export default function StartSession() {
           <input
             type="text"
             value={playerName}
-            maxLength={PLAYER_NAME_MAX}
             onChange={(e) => handlePlayerNameChange(e.target.value)}
             placeholder="Enter name…"
             className="w-full bg-bg-elevated border border-border rounded-xl px-4 py-3 text-text text-[15px] placeholder-text-faint focus:border-accent focus:outline-none transition-colors"
@@ -214,7 +213,7 @@ export default function StartSession() {
                 <button
                   key={n}
                   onClick={() => handlePlayerNameChange(n)}
-                  className={`max-w-[150px] truncate text-[12px] px-3 py-1 rounded-full border transition-colors ${
+                  className={`max-w-[150px] truncate text-[12px] px-3 min-h-[44px] flex items-center rounded-full border transition-colors ${
                     playerName === n
                       ? 'bg-accent/20 border-accent text-accent'
                       : 'bg-bg-elevated border-border text-text-dim'
