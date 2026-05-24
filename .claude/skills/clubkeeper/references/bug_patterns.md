@@ -152,15 +152,29 @@ try {
 ### Pattern S4 — 7-day trial via `start_at`, not `trial_period`
 **Rule:** Trial = setting `start_at = now + 7 days` on Razorpay subscription. Our `trial_ends_at` in Supabase + `useAccessGuard` date check is the truth. Don't use Razorpay's `trial_period` param.
 
-### Pattern S5 — Plan IDs live in one place AND must belong to the same Razorpay account as the active key
-**Rule:** All 6 Razorpay plan IDs (starter/standard/pro × monthly/annual) are in `src/lib/razorpayPlans.ts`. Single source of truth. Never inline plan IDs anywhere else.
-**Critical addition (BUG-018):** Plan IDs are account-scoped. A key from account A cannot resolve plan IDs from account B — Razorpay returns 400 "The ID provided is invalid or could not be found." This happens silently after any key rotation or account switch.
+### Pattern S5 — Plan IDs live in one place AND must match both account AND mode of the active key
+
+**Rule:** All 6 Razorpay plan IDs (starter/standard/pro × monthly/annual) live in `src/lib/razorpayPlans.ts`. Single source of truth. Never inline plan IDs anywhere else.
+
+**Two isolation axes — both can cause BUG-018-class errors:**
+1. **Account isolation (BUG-018):** A key from account A cannot resolve plan IDs from account B. Rotating keys or switching accounts silently breaks all plan IDs.
+2. **Mode isolation (BUG-021):** TEST keys can only resolve TEST mode plan IDs. LIVE keys can only resolve LIVE mode plan IDs. TEST key + LIVE plan IDs → Razorpay 400 "The ID provided is invalid or could not be found."
+
+**Canonical permanent fix (BUG-021):**
+`src/lib/razorpayPlans.ts` defines `TEST_PLANS` and `LIVE_PLANS` separately, then auto-selects:
+```ts
+const isTestMode = keyId?.startsWith('rzp_live_') !== true
+export const PLANS = isTestMode ? TEST_PLANS : LIVE_PLANS
+```
+Server-side mirror is in `api/_shared/plans.ts` (reads `process.env`, same logic).
+Switching Vercel env between TEST ↔ LIVE now requires **zero code changes** — just set the right keys.
+
 **Verification command:** After ANY change to `VITE_RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` in Vercel, or any new plan creation, verify each plan ID with:
 ```bash
 curl -u KEY_ID:KEY_SECRET https://api.razorpay.com/v1/plans/PLAN_ID
 ```
-- **200** with plan JSON = key and plan are in the same account ✅
-- **400** "does not exist" = mismatch — recreate plans under the correct account ❌
+- **200** with plan JSON = key, account, and mode all match ✅
+- **400** "does not exist" = account OR mode mismatch — check both ❌
 
 **Trigger this check when:** (1) rotating Razorpay keys, (2) switching TEST → LIVE mode, (3) plan IDs are copied from a different dashboard session.
 

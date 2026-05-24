@@ -1,8 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import Razorpay from 'razorpay'
 import { createClient } from '@supabase/supabase-js'
-import { getPlanId } from '../src/lib/razorpayPlans.js'
-import type { Tier, Cycle } from '../src/lib/razorpayPlans.js'
+// Uses api/_shared/plans.ts (not src/lib/razorpayPlans.ts) because the server
+// runtime uses process.env, not import.meta.env. Both files share the same
+// TEST_PLANS / LIVE_PLANS objects and auto-select by key prefix. See Pattern S5.
+import { getPlanId } from './_shared/plans.js'
+import type { Tier, Cycle } from './_shared/plans.js'
 
 const razorpay = new Razorpay({
   key_id: process.env.VITE_RAZORPAY_KEY_ID!,

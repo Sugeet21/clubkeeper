@@ -1,8 +1,7 @@
-// Pattern S5: Plan IDs are mode-isolated in Razorpay — TEST keys can only
-// resolve TEST plan IDs, LIVE keys can only resolve LIVE plan IDs.
-// BUG-021: mode-mismatch (TEST key + LIVE plan IDs) yields 400 "ID not found".
-// Permanent fix: auto-select TEST_PLANS or LIVE_PLANS based on key prefix.
-// Switching Vercel env between TEST ↔ LIVE now requires zero code changes.
+// Pattern S5 — server-side mirror of src/lib/razorpayPlans.ts
+// Cannot use import.meta.env here (Node runtime). Reads process.env directly.
+// Auto-selects TEST_PLANS or LIVE_PLANS based on key prefix.
+// See BUG-021 and Pattern S5 in bug_patterns.md for the full story.
 
 export type Tier = 'starter' | 'standard' | 'pro'
 export type Cycle = 'monthly' | 'annual'
@@ -27,24 +26,24 @@ const LIVE_PLANS: PlanMap = {
   pro_annual:       'plan_SshJ4iqI7iICkz',
 }
 
-const keyId: string | undefined = import.meta.env.VITE_RAZORPAY_KEY_ID
+// Vercel exposes VITE_RAZORPAY_KEY_ID (the same variable name) in serverless
+// functions — confirmed by api/create-subscription.ts using process.env.VITE_RAZORPAY_KEY_ID.
+const keyId: string | undefined = process.env.VITE_RAZORPAY_KEY_ID
 
-if (keyId === undefined || keyId === '') {
+if (!keyId) {
   console.warn(
-    '[razorpayPlans] VITE_RAZORPAY_KEY_ID is not set. ' +
-    'Plan auto-selection will default to TEST_PLANS. ' +
-    'Set the env var to rzp_test_... or rzp_live_...'
+    '[plans/_shared] VITE_RAZORPAY_KEY_ID is not set in server env. ' +
+    'Defaulting to TEST_PLANS.'
   )
 } else if (!keyId.startsWith('rzp_test_') && !keyId.startsWith('rzp_live_')) {
   console.warn(
-    `[razorpayPlans] VITE_RAZORPAY_KEY_ID has unexpected prefix: "${keyId.slice(0, 12)}...". ` +
+    `[plans/_shared] VITE_RAZORPAY_KEY_ID has unexpected prefix: "${keyId.slice(0, 12)}...". ` +
     'Expected rzp_test_ or rzp_live_. Defaulting to TEST_PLANS.'
   )
 }
 
 const isTestMode: boolean = keyId?.startsWith('rzp_live_') !== true
 
-// Single source of truth — consumed by api/create-subscription.ts and frontend
 export const PLANS: PlanMap = isTestMode ? TEST_PLANS : LIVE_PLANS
 
 export function getPlanId(tier: Tier, cycle: Cycle): string {

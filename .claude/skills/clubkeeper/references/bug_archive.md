@@ -387,6 +387,28 @@ useEffect(() => {
 
 ---
 
+### 25 May 2026 — BUG-021: Razorpay 400 "ID not found" — mode-mismatch variant (TEST key + LIVE plan IDs)
+
+**Symptom:** Same surface as BUG-018 — `/api/create-subscription` returns HTTP 500, frontend shows "Payment failed". Vercel logs: Razorpay 400 `statusCode`, description "The ID provided is invalid or could not be found."
+**Variant:** Mode-mismatch. Keys in Vercel were TEST (`rzp_test_...`) but the plan IDs in `razorpayPlans.ts` were LIVE plans (created under a different Razorpay mode). Razorpay TEST and LIVE modes are fully isolated universes — plans created in LIVE mode are invisible to TEST keys, and vice versa.
+**Root cause:** After fixing BUG-018 (account-mismatch), new TEST-mode plan IDs were needed. LIVE plan IDs were left in code. TEST key can't see LIVE plans — same 400 error, different axis of isolation.
+**Fix:**
+1. Created 6 fresh TEST-mode plan IDs in Razorpay dashboard.
+2. Refactored `src/lib/razorpayPlans.ts` to define `TEST_PLANS` and `LIVE_PLANS` as separate `const` objects, then auto-select based on key prefix:
+   ```ts
+   const isTestMode = keyId?.startsWith('rzp_live_') !== true
+   export const PLANS = isTestMode ? TEST_PLANS : LIVE_PLANS
+   ```
+3. Created `api/_shared/plans.ts` — server-side mirror (uses `process.env`, same auto-select logic). `api/create-subscription.ts` now imports from `_shared/plans.ts` instead of `src/lib/razorpayPlans.js`.
+4. `getPlanId()` signature unchanged — zero changes needed in callers.
+5. `console.warn` at module load if `VITE_RAZORPAY_KEY_ID` is missing or has unexpected prefix.
+**Files changed:** `src/lib/razorpayPlans.ts` (refactored), `api/_shared/plans.ts` (new), `api/create-subscription.ts` (import swap)
+**Permanent fix guarantee:** Switching Vercel env between TEST and LIVE mode now requires zero code changes. Set `rzp_test_...` keys → TEST_PLANS auto-selected. Set `rzp_live_...` keys → LIVE_PLANS auto-selected.
+**Lesson:** Razorpay has two orthogonal isolation dimensions: (1) account isolation (BUG-018), (2) mode isolation (this bug). Pattern S5 now covers both. The canonical fix is the auto-select pattern — it eliminates the entire class of mode-mismatch bugs forever.
+**See:** Pattern S5 (updated to cover mode isolation).
+
+---
+
 ## Open Issues / Not Yet Reproduced
 
 (Move here when Sugeet reports something but it can't be reproduced. Revisit later.)
