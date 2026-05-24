@@ -31,16 +31,29 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   _lastFetchedAt: 0,
 
   initialize: async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    set({ session, user: session?.user ?? null })
+    console.log('[authStore] initialize start')
+    try {
+      const { data: { session }, error } = await supabase.auth.getSession()
+      console.log('[authStore] getSession result', { hasSession: !!session, error })
+      set({ session, user: session?.user ?? null })
 
-    if (session?.user) {
-      await get().refreshProfile()
+      if (session?.user) {
+        await get().refreshProfile()
+      }
+
+      console.log('[authStore] refreshProfile done', {
+        profile: !!get().profile,
+        subscription: get().subscription?.status,
+      })
+    } catch (err) {
+      console.error('[authStore] initialize error', err)
+    } finally {
+      set({ loading: false })
+      console.log('[authStore] initialize complete, loading=false')
     }
 
-    set({ loading: false })
-
     supabase.auth.onAuthStateChange(async (_event, session) => {
+      console.log('[authStore] onAuthStateChange', { event: _event, hasSession: !!session })
       set({ session, user: session?.user ?? null })
       if (session?.user) {
         await get().refreshProfile()
