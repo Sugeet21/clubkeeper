@@ -1,11 +1,14 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useTables, useActiveSessions, useTodaysSessions, useSettings } from '../hooks/useLiveData'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { startOfDay, endOfDay } from 'date-fns'
+import { useTables, useActiveSessions, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { useInstallPrompt } from '../hooks/useInstallPrompt'
 import { getElapsedMs } from '../lib/time'
 import { calculateAmount } from '../lib/money'
 import { stopSession } from '../db/queries'
+import { db } from '../db/database'
 import TopBar from '../components/TopBar'
 import SummaryStrip from '../components/SummaryStrip'
 import FilterPills from '../components/FilterPills'
@@ -22,7 +25,6 @@ const ORPHAN_THRESHOLD_MS = 24 * 60 * 60 * 1000
 export default function Home() {
   const tables = useTables()
   const activeSessions = useActiveSessions()
-  const todaySessions = useTodaysSessions()
   const settings = useSettings()
   const navigate = useNavigate()
   const { showBanner: showInstall, install, dismiss: dismissInstall } = useInstallPrompt()
@@ -65,10 +67,30 @@ export default function Home() {
   const totalTables = tables.filter((t) => !t.outOfService).length
   const runningCount = activeSessions.filter((s) => s.status === 'running').length
 
-  const todayTotal = todaySessions.reduce((sum, s) => {
-    if (s.status === 'completed') return sum + s.amount
-    return sum + calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
-  }, 0)
+  // Today total: sessions + items combined (live query for reactivity)
+  const todayTotals = useLiveQuery(async () => {
+    const start = startOfDay(new Date()).getTime()
+    const end = endOfDay(new Date()).getTime()
+    const todaySessions = await db.sessions
+      .where('startedAt')
+      .between(start, end, true, true)
+      .toArray()
+
+    const sessionIds = todaySessions.map((s) => s.id!).filter(Boolean)
+    const sessionItems = sessionIds.length
+      ? await db.sessionItems.where('sessionId').anyOf(sessionIds).toArray()
+      : []
+
+    const sessionsAmount = todaySessions.reduce((sum, s) => {
+      if (s.status === 'completed') return sum + s.amount
+      return sum + calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
+    }, 0)
+    const itemsAmount = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
+
+    return { sessions: sessionsAmount, items: itemsAmount, total: sessionsAmount + itemsAmount }
+  }, [], { sessions: 0, items: 0, total: 0 })
+
+  const todayTotal = todayTotals?.total ?? 0
 
   const currency = settings?.currency ?? '₹'
 

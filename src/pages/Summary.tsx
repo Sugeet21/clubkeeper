@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef } from 'react'
-import { format, isToday, isYesterday } from 'date-fns'
-import { useTables, useSessionsForDate, useSettings } from '../hooks/useLiveData'
+import { format, isToday, isYesterday, startOfDay, endOfDay } from 'date-fns'
+import { useSessionsInRange, useTables, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatDuration } from '../lib/time'
 import { calculateAmount } from '../lib/money'
@@ -43,7 +43,8 @@ function gameTypeBadgeClass(type: GameType | undefined): string {
   }
 }
 
-function sessionAmount(s: Session): number {
+/** Table-time-only amount (live for running sessions, stored for completed). */
+function sessionBaseAmount(s: Session): number {
   if (s.status === 'completed') return s.amount
   return calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
 }
@@ -75,13 +76,14 @@ function SessionRow({
   session,
   table,
   currency,
+  displayAmount,
 }: {
   session: Session
   table: GameTable | undefined
   currency: string
+  displayAmount: number
 }) {
   const elapsed = getElapsedMs(session)
-  const amount = sessionAmount(session)
   const abbr = table ? tableAbbr(table.name) : '?'
   const badgeClass = gameTypeBadgeClass(table?.gameType)
 
@@ -99,7 +101,7 @@ function SessionRow({
       ? 'Running'
       : 'Paused'
 
-  // Bug 4: show rounded duration when applicable
+  // Show rounded duration when applicable
   let durationLabel: string
   if (session.billingMode === 'per_frame') {
     durationLabel = `${session.framesPlayed ?? 0} frame${(session.framesPlayed ?? 0) !== 1 ? 's' : ''}`
@@ -137,7 +139,7 @@ function SessionRow({
       {/* Right */}
       <div className="text-right shrink-0">
         <p className="text-[15px] font-bold text-text tabular-nums">
-          {currency}{amount.toLocaleString('en-IN')}
+          {currency}{displayAmount.toLocaleString('en-IN')}
         </p>
         <p className="text-[11px] text-text-faint font-mono mt-0.5 tabular-nums">
           {durationLabel}
@@ -155,35 +157,40 @@ export default function Summary() {
   const currency = settings?.currency ?? '₹'
 
   const [selectedDate, setSelectedDate] = useState(() => new Date())
-  const sessions = useSessionsForDate(selectedDate)
   const dateInputRef = useRef<HTMLInputElement>(null)
 
   useTick() // keeps running-session amounts live
 
-  // Table lookup map — safe to memoize (doesn't use Date.now)
+  const startMs = startOfDay(selectedDate).getTime()
+  const endMs = endOfDay(selectedDate).getTime()
+  const rows = useSessionsInRange(startMs, endMs)
+
+  // Table lookup map
   const tableMap = useMemo(() => {
     const m = new Map<number, GameTable>()
     for (const t of tables) if (t.id !== undefined) m.set(t.id, t)
     return m
   }, [tables])
 
-  // Sorted session list — re-sort only when DB changes (not every tick)
-  const sortedSessions = useMemo(
-    () => [...sessions].sort((a, b) => b.startedAt - a.startedAt),
-    [sessions],
+  // Sorted rows
+  const sortedRows = useMemo(
+    () => [...rows].sort((a, b) => b.session.startedAt - a.session.startedAt),
+    [rows],
   )
 
-  // ── Aggregate stats — computed in render body (use Date.now via getElapsedMs)
+  // ── Aggregate stats ─────────────────────────────────────────────────────
 
   let totalRevenue = 0
   let totalElapsedMs = 0
   const tableCounts = new Map<number, number>()
 
-  for (const s of sessions) {
-    const e = getElapsedMs(s)
-    totalRevenue += sessionAmount(s)
+  for (const { session, items } of rows) {
+    const e = getElapsedMs(session)
+    const base = sessionBaseAmount(session)
+    const itemsTotal = items.reduce((s, i) => s + i.price * i.quantity, 0)
+    totalRevenue += base + itemsTotal
     totalElapsedMs += e
-    tableCounts.set(s.tableId, (tableCounts.get(s.tableId) ?? 0) + 1)
+    tableCounts.set(session.tableId, (tableCounts.get(session.tableId) ?? 0) + 1)
   }
 
   let busiestTableId: number | undefined
@@ -199,13 +206,14 @@ export default function Summary() {
   // ── Export CSV ────────────────────────────────────────────────────────────
 
   function handleExport() {
-    const headers = ['Table', 'Player', 'Players', 'Start', 'End', 'Duration (min)', `Amount (${currency})`, 'Billing', 'Frames']
-    const rows = [...sessions]
-      .sort((a, b) => a.startedAt - b.startedAt)
-      .map((s) => {
+    const headers = ['Table', 'Player', 'Players', 'Start', 'End', 'Duration (min)', `Table Amount (${currency})`, `Items (${currency})`, `Total (${currency})`, 'Billing', 'Frames']
+    const exportRows = [...rows]
+      .sort((a, b) => a.session.startedAt - b.session.startedAt)
+      .map(({ session: s, items }) => {
         const t = tableMap.get(s.tableId)
         const e = getElapsedMs(s)
-        const amt = sessionAmount(s)
+        const tableAmt = sessionBaseAmount(s)
+        const itemsAmt = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
         return [
           t?.name ?? `Table ${s.tableId}`,
           s.playerName ?? '',
@@ -213,13 +221,15 @@ export default function Summary() {
           format(s.startedAt, 'yyyy-MM-dd HH:mm:ss'),
           s.endedAt ? format(s.endedAt, 'yyyy-MM-dd HH:mm:ss') : 'Running',
           Math.floor(e / 60_000),
-          amt,
+          tableAmt,
+          itemsAmt,
+          tableAmt + itemsAmt,
           s.billingMode,
           s.framesPlayed ?? 0,
         ]
       })
 
-    const csv = [headers, ...rows]
+    const csv = [headers, ...exportRows]
       .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
       .join('\n')
 
@@ -260,7 +270,6 @@ export default function Summary() {
           <button className="w-full h-full flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors">
             <CalendarIcon />
           </button>
-          {/* Bug 8: [color-scheme:dark] makes native calendar popup dark-themed */}
           <input
             ref={dateInputRef}
             type="date"
@@ -289,8 +298,8 @@ export default function Summary() {
 
       {/* Quick stats */}
       <div className="grid grid-cols-3 gap-2 px-4 py-4 border-b border-border">
-        <StatCard label="Sessions" value={String(sessions.length)} />
-        <StatCard label="Time Played" value={sessions.length > 0 ? formatDuration(totalElapsedMs) : '—'} />
+        <StatCard label="Sessions" value={String(rows.length)} />
+        <StatCard label="Time Played" value={rows.length > 0 ? formatDuration(totalElapsedMs) : '—'} />
         <StatCard label="Busiest" value={busiestTable?.name ?? '—'} small />
       </div>
 
@@ -300,7 +309,7 @@ export default function Summary() {
           <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">
             Today's Sessions
           </p>
-          {sessions.length > 0 && (
+          {rows.length > 0 && (
             <button
               onClick={handleExport}
               className="text-[12px] text-accent font-semibold hover:text-accent-dim transition-colors"
@@ -310,21 +319,26 @@ export default function Summary() {
           )}
         </div>
 
-        {sessions.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="flex flex-col items-center py-16 text-center">
             <p className="text-text-faint text-[14px]">No sessions recorded</p>
             <p className="text-text-faint/60 text-[12px] mt-1">for {dateSubtitle(selectedDate).toLowerCase()}</p>
           </div>
         ) : (
           <div className="bg-bg-card border border-border rounded-2xl divide-y divide-border overflow-hidden">
-            {sortedSessions.map((s) => (
-              <SessionRow
-                key={s.id}
-                session={s}
-                table={tableMap.get(s.tableId)}
-                currency={currency}
-              />
-            ))}
+            {sortedRows.map(({ session, items }) => {
+              const base = sessionBaseAmount(session)
+              const itemsAmt = items.reduce((s, i) => s + i.price * i.quantity, 0)
+              return (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  table={tableMap.get(session.tableId)}
+                  currency={currency}
+                  displayAmount={base + itemsAmt}
+                />
+              )
+            })}
           </div>
         )}
       </div>

@@ -7,7 +7,7 @@ import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
 import { useToastStore } from '../store/toastStore'
 import { useAuthStore } from '../store/authStore'
-import { validatePlayerName } from '../lib/validation'
+import { validatePlayerName, validateUpiId } from '../lib/validation'
 import { db } from '../db/database'
 import { supabase } from '../lib/supabase'
 import type { GameTable } from '../types'
@@ -67,6 +67,8 @@ function formatDate(ms: number) {
   return format(new Date(ms), 'd MMM yyyy')
 }
 
+type RoundingMode = 'none' | '15min' | '30min'
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -81,6 +83,13 @@ export default function Settings() {
     if (settings?.clubName !== undefined) setClubName(settings.clubName)
   }, [settings?.clubName])
 
+  // UPI ID draft
+  const [upiId, setUpiId] = useState('')
+  const [upiError, setUpiError] = useState<string | null>(null)
+  useEffect(() => {
+    setUpiId(settings?.upiId ?? '')
+  }, [settings?.upiId])
+
   // Table form modal
   const [tableModal, setTableModal] = useState<{ open: boolean; table?: GameTable }>({ open: false })
 
@@ -92,6 +101,11 @@ export default function Settings() {
   const [cancelSubModal, setCancelSubModal] = useState(false)
   const [storageInfo, setStorageInfo] = useState<{ usage: number; quota: number } | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // Rounding confirm modal state
+  const [pendingRounding, setPendingRounding] = useState<RoundingMode | null>(null)
+  const [roundingConfirmOpen, setRoundingConfirmOpen] = useState(false)
+  const [activeSessionCount, setActiveSessionCount] = useState(0)
 
   useEffect(() => {
     if ('storage' in navigator) {
@@ -109,6 +123,46 @@ export default function Settings() {
     const trimmed = clubName.trim()
     if (!trimmed || trimmed === settings?.clubName) return
     await updateSettings({ clubName: trimmed })
+  }
+
+  function handleUpiBlur() {
+    const err = validateUpiId(upiId)
+    setUpiError(err)
+  }
+
+  async function handleSaveUpiId() {
+    const trimmed = upiId.trim()
+    const err = validateUpiId(trimmed)
+    if (err) { setUpiError(err); return }
+    // Save trimmed value (or undefined to clear it)
+    await updateSettings({ upiId: trimmed || undefined })
+    useToastStore.getState().show('UPI ID saved', 'success')
+    setUpiError(null)
+  }
+
+  async function handleRoundingChange(newMode: RoundingMode) {
+    if (newMode === settings?.rounding) return
+    // Count active sessions — warn owner if any are running
+    const active = await db.sessions
+      .where('status')
+      .anyOf(['running', 'paused'])
+      .count()
+
+    if (active > 0) {
+      setActiveSessionCount(active)
+      setPendingRounding(newMode)
+      setRoundingConfirmOpen(true)
+      return
+    }
+    // No active sessions — apply immediately
+    await updateSettings({ rounding: newMode })
+  }
+
+  async function handleApplyRounding() {
+    if (!pendingRounding) return
+    await updateSettings({ rounding: pendingRounding })
+    setRoundingConfirmOpen(false)
+    setPendingRounding(null)
   }
 
   async function handleClearSessions() {
@@ -192,7 +246,7 @@ export default function Settings() {
     }
   }
 
-  const sessionCount = 0 // shown in about; could use useLiveQuery but not worth extra hook here
+  const sessionCount = 0
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -227,6 +281,42 @@ export default function Settings() {
           <RowLabel>Currency</RowLabel>
           <span className="text-[14px] text-text-faint">₹ (Indian Rupee)</span>
         </Row>
+
+        {/* UPI ID */}
+        <div className="px-4 py-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <RowLabel>UPI ID</RowLabel>
+            <span className="text-[11px] text-text-faint font-mono">optional</span>
+          </div>
+          <input
+            type="text"
+            inputMode="email"
+            value={upiId}
+            onChange={(e) => { setUpiId(e.target.value); setUpiError(null) }}
+            onBlur={handleUpiBlur}
+            placeholder="e.g. 7758969291@axl"
+            className={`w-full bg-bg border rounded-xl px-4 py-3 text-text text-[14px] font-mono focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint ${
+              upiError ? 'border-busy focus:border-busy' : 'border-border focus:border-accent'
+            }`}
+          />
+          {upiError && (
+            <p className="text-busy text-[12px] mt-1.5">{upiError}</p>
+          )}
+          {!upiError && (
+            <p className="text-text-faint text-[11px] mt-1.5">
+              When set, a payment QR appears after every session ends. Players scan and pay the exact amount.
+            </p>
+          )}
+          <button
+            onClick={handleSaveUpiId}
+            disabled={Boolean(upiError) || upiId.trim() === (settings?.upiId ?? '')}
+            className="mt-2.5 min-h-[44px] px-5 bg-accent text-bg rounded-xl text-[13px] font-bold disabled:opacity-40 active:scale-[0.99] transition-transform"
+          >
+            Save UPI ID
+          </button>
+        </div>
+
+        {/* Time Rounding */}
         <Row>
           <RowLabel>Time Rounding</RowLabel>
         </Row>
@@ -235,7 +325,7 @@ export default function Settings() {
             {(['none', '15min', '30min'] as const).map((r) => (
               <button
                 key={r}
-                onClick={() => void updateSettings({ rounding: r })}
+                onClick={() => void handleRoundingChange(r)}
                 className={`flex-1 py-2 rounded-lg text-[12px] font-semibold transition-colors ${
                   (settings?.rounding ?? 'none') === r ? 'bg-accent text-bg' : 'text-text-dim'
                 }`}
@@ -264,7 +354,6 @@ export default function Settings() {
         ) : (
           tables.map((t) => (
             <div key={t.id} className="flex items-center justify-between px-4 py-3">
-              {/* Text area fades for disabled tables; pencil stays full opacity */}
               <div className={`flex-1 min-w-0 ${t.outOfService ? 'opacity-50' : ''}`}>
                 <div className="flex items-center gap-2">
                   <p className="text-[14px] font-semibold text-text leading-tight">{t.name}</p>
@@ -378,7 +467,7 @@ export default function Settings() {
         </Section>
       )}
 
-      {/* ── Section 4 (was 3): Data ─────────────────────────────────────── */}
+      {/* ── Section 4: Data ─────────────────────────────────────────────── */}
       <Section title="Data">
         <button
           onClick={handleExportJSON}
@@ -410,7 +499,7 @@ export default function Settings() {
         </button>
       </Section>
 
-      {/* ── Section 4: About ────────────────────────────────────────────── */}
+      {/* ── Section 5: About ────────────────────────────────────────────── */}
       <Section title="About">
         <Row>
           <RowLabel>App Version</RowLabel>
@@ -436,7 +525,7 @@ export default function Settings() {
         )}
       </Section>
 
-      {/* ── Section 5: Account ─────────────────────────────────────────── */}
+      {/* ── Section 6: Account ─────────────────────────────────────────── */}
       <Section title="Account">
         <button
           onClick={() => void useAuthStore.getState().signOut()}
@@ -446,6 +535,39 @@ export default function Settings() {
           <span className="text-[12px] text-text-faint">→</span>
         </button>
       </Section>
+
+      {/* ── Rounding confirm modal ──────────────────────────────────────── */}
+      <Modal
+        open={roundingConfirmOpen}
+        onClose={() => { setRoundingConfirmOpen(false); setPendingRounding(null) }}
+        title="Change rounding?"
+      >
+        <p className="text-text-dim text-[14px] mb-4">
+          You have{' '}
+          <span className="text-text font-semibold">
+            {activeSessionCount} session{activeSessionCount !== 1 ? 's' : ''}
+          </span>{' '}
+          running right now. The new rounding rule will apply to sessions you stop{' '}
+          <span className="text-text">after</span> this change.
+        </p>
+        <p className="text-text-faint text-[12px] mb-5">
+          Sessions already stopped today won't change.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={() => { setRoundingConfirmOpen(false); setPendingRounding(null) }}
+            className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleApplyRounding}
+            className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold"
+          >
+            Apply new rounding
+          </button>
+        </div>
+      </Modal>
 
       {/* ── Cancel subscription modal ───────────────────────────────────── */}
       <Modal

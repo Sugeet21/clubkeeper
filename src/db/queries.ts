@@ -1,9 +1,9 @@
 import { startOfDay, endOfDay } from 'date-fns'
 import { db } from './database'
 import { calculateAmount, applyRounding } from '../lib/money'
-import { validatePlayerName } from '../lib/validation'
+import { validatePlayerName, validateItemName } from '../lib/validation'
 import { seedIfEmpty } from './seed'
-import type { GameTable, Session, ClubSettings } from '../types'
+import type { GameTable, Session, ClubSettings, SessionItem } from '../types'
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -244,6 +244,98 @@ export async function getOrphanedSessions(): Promise<Session[]> {
     .anyOf(['running', 'paused'])
     .filter((s) => s.startedAt < cutoff)
     .toArray()
+}
+
+// ─── Session Items (POS) ──────────────────────────────────────────────────────
+
+export async function addSessionItem(
+  data: Omit<SessionItem, 'id' | 'addedAt'>
+): Promise<number> {
+  const nameError = validateItemName(data.name)
+  if (nameError) throw new Error(nameError)
+  if (!Number.isInteger(data.price) || data.price < 0 || data.price > 99999) {
+    throw new Error('Price must be 0–99999')
+  }
+  if (!Number.isInteger(data.quantity) || data.quantity < 1 || data.quantity > 99) {
+    throw new Error('Quantity must be 1–99')
+  }
+  return db.sessionItems.add({
+    ...data,
+    name: data.name.trim(),
+    addedAt: Date.now(),
+  })
+}
+
+export async function updateSessionItem(
+  id: number,
+  patch: Partial<Pick<SessionItem, 'name' | 'price' | 'quantity'>>
+): Promise<void> {
+  if (patch.name !== undefined) {
+    const err = validateItemName(patch.name)
+    if (err) throw new Error(err)
+    patch.name = patch.name.trim()
+  }
+  if (patch.price !== undefined) {
+    if (!Number.isInteger(patch.price) || patch.price < 0 || patch.price > 99999) {
+      throw new Error('Price must be 0–99999')
+    }
+  }
+  if (patch.quantity !== undefined) {
+    if (!Number.isInteger(patch.quantity) || patch.quantity < 1 || patch.quantity > 99) {
+      throw new Error('Quantity must be 1–99')
+    }
+  }
+  await db.sessionItems.update(id, patch)
+}
+
+export async function deleteSessionItem(id: number): Promise<void> {
+  await db.sessionItems.delete(id)
+}
+
+export async function restoreSessionItem(item: SessionItem): Promise<number> {
+  // for Undo after delete — preserves original addedAt
+  return db.sessionItems.add(item)
+}
+
+export interface RecentItem {
+  name: string
+  lastPrice: number
+  useCount: number
+}
+
+export async function getRecentItems(limit = 8): Promise<RecentItem[]> {
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+  const items = await db.sessionItems
+    .where('addedAt')
+    .above(thirtyDaysAgo)
+    .toArray()
+
+  // Group by name (case-insensitive), keep most recent price, count uses
+  const map = new Map<string, { name: string; lastPrice: number; lastAt: number; useCount: number }>()
+  for (const item of items) {
+    const key = item.name.trim().toLowerCase()
+    const existing = map.get(key)
+    if (!existing) {
+      map.set(key, {
+        name: item.name.trim(),
+        lastPrice: item.price,
+        lastAt: item.addedAt,
+        useCount: 1,
+      })
+    } else {
+      existing.useCount += 1
+      if (item.addedAt > existing.lastAt) {
+        existing.lastPrice = item.price
+        existing.lastAt = item.addedAt
+        existing.name = item.name.trim() // preserve casing of most recent
+      }
+    }
+  }
+
+  return Array.from(map.values())
+    .sort((a, b) => b.useCount - a.useCount || b.lastAt - a.lastAt)
+    .slice(0, limit)
+    .map(({ name, lastPrice, useCount }) => ({ name, lastPrice, useCount }))
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────

@@ -65,6 +65,16 @@ export interface ClubSettings {
   clubName: string
   currency: string
   rounding: 'none' | '15min' | '30min'
+  upiId?: string  // optional — if set, show payment QR after session stop
+}
+
+export interface SessionItem {
+  id?: number
+  sessionId: number     // FK to sessions table
+  name: string          // 1-50 chars after trim
+  price: number         // integer rupees, 0-99999
+  quantity: number      // integer, 1-99
+  addedAt: number       // Date.now() at creation
 }
 
 // ─── Auth & Subscription ──────────────────────────────────────────────────────

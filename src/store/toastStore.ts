@@ -1,20 +1,51 @@
 import { create } from 'zustand'
 
-type Toast = { id: string; message: string; type: 'success' | 'error' | 'info' }
+export type Toast = {
+  id: string
+  message: string
+  type: 'success' | 'error' | 'info'
+  actionLabel?: string
+  onAction?: () => void
+}
+
+type ShowOptions = {
+  message: string
+  type?: Toast['type']
+  actionLabel?: string
+  onAction?: () => void
+  durationMs?: number
+}
+
 type ToastStore = {
   toasts: Toast[]
-  show: (message: string, type?: Toast['type']) => void
+  show: (messageOrOptions: string | ShowOptions, type?: Toast['type']) => void
   dismiss: (id: string) => void
 }
 
 export const useToastStore = create<ToastStore>((set) => ({
   toasts: [],
-  show: (message, type = 'info') => {
+  show: (messageOrOptions, type = 'info') => {
     const id = Date.now().toString()
-    set((s) => ({ toasts: [...s.toasts, { id, message, type }] }))
+    let toast: Toast
+    let duration = 3000
+
+    if (typeof messageOrOptions === 'string') {
+      toast = { id, message: messageOrOptions, type }
+    } else {
+      duration = messageOrOptions.durationMs ?? 3000
+      toast = {
+        id,
+        message: messageOrOptions.message,
+        type: messageOrOptions.type ?? 'info',
+        actionLabel: messageOrOptions.actionLabel,
+        onAction: messageOrOptions.onAction,
+      }
+    }
+
+    set((s) => ({ toasts: [...s.toasts, toast] }))
     setTimeout(() => {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
-    }, 3000)
+    }, duration)
   },
   dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }))

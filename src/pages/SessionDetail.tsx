@@ -10,11 +10,13 @@ import {
   editSessionStart,
   updateSession,
 } from '../db/queries'
-import { useTable } from '../hooks/useLiveData'
+import { useTable, useSessionItems, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatHMS, formatDuration } from '../lib/time'
-import { calculateAmount } from '../lib/money'
+import { calculateAmount, calculateItemsTotal, applyRounding } from '../lib/money'
 import { Modal } from '../components/Modal'
+import { AddItemBottomSheet } from '../components/AddItemBottomSheet'
+import { PaymentQR } from '../components/PaymentQR'
 import type { Session } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -43,6 +45,14 @@ function PencilIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  )
+}
+
+function PlusIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M9 3v12M3 9h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   )
 }
@@ -104,6 +114,8 @@ export default function SessionDetail() {
   )
 
   const table = useTable(session != null ? session.tableId : undefined)
+  const items = useSessionItems(session != null ? session.id : undefined)
+  const settings = useSettings()
 
   // Tick every second so the timer re-renders
   useTick()
@@ -114,6 +126,13 @@ export default function SessionDetail() {
   const [editTime, setEditTime] = useState('')
   const [editError, setEditError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
+
+  // Payment screen state — values cached BEFORE stopSession() so they don't
+  // change when the DB record flips to completed (pattern from the build prompt)
+  const [paymentScreenOpen, setPaymentScreenOpen] = useState(false)
+  const [finalRoundedMs, setFinalRoundedMs] = useState(0)
+  const [finalGrandTotal, setFinalGrandTotal] = useState(0)
 
   // Populate edit-start fields whenever the modal is opened
   useEffect(() => {
@@ -152,17 +171,36 @@ export default function SessionDetail() {
   // ─── Derived values (session: Session is now guaranteed) ──────────────────
 
   const elapsedMs = getElapsedMs(session)
-  const liveAmount =
+  const rounding = settings?.rounding ?? 'none'
+
+  // For the confirm preview: compute what WOULD be billed on stop
+  const rawElapsedMs = elapsedMs
+  const roundedElapsedMs =
+    session.billingMode === 'per_hour' ? applyRounding(rawElapsedMs, rounding) : rawElapsedMs
+  const previewTableAmount = calculateAmount(
+    session.billingMode,
+    roundedElapsedMs,
+    session.rateSnapshot,
+    session.framesPlayed,
+  )
+  const previewItemsTotal = calculateItemsTotal(items)
+  const previewGrandTotal = previewTableAmount + previewItemsTotal
+
+  // Current live display (for the bill split card — uses raw elapsed for running sessions)
+  const currentSessionAmount =
     session.status === 'completed'
       ? session.amount
       : calculateAmount(session.billingMode, elapsedMs, session.rateSnapshot, session.framesPlayed)
+  const itemsTotal = calculateItemsTotal(items)
+  const grandTotal = currentSessionAmount + itemsTotal
+  const totalItemQty = items.reduce((s, i) => s + i.quantity, 0)
 
-  const hms = formatHMS(elapsedMs)          // "HH:MM:SS"
-  const hhMm = hms.slice(0, 5)              // "HH:MM"
-  const ss = hms.slice(6)                   // "SS"
+  const hms = formatHMS(elapsedMs)
+  const hhMm = hms.slice(0, 5)
+  const ss = hms.slice(6)
   const tableName = table?.name ?? `Table ${session.tableId}`
 
-  // Hero gradient (inline style since Tailwind v3 from-X/[%] requires known RGB)
+  // Hero gradient
   const heroBg =
     session.status === 'running'
       ? 'linear-gradient(to bottom, rgba(255,107,74,0.07) 0%, transparent 85%)'
@@ -192,15 +230,27 @@ export default function SessionDetail() {
     }
   }
 
-  async function handleStop() {
+  async function handleConfirmStop() {
     if (pending) return
     setPending(true)
     try {
+      // Capture billable values BEFORE stopping so the payment screen shows
+      // exactly what was stored — stopSession() uses the same math
+      const nowElapsed = getElapsedMs(session)
+      const billableMs =
+        session.billingMode === 'per_hour' ? applyRounding(nowElapsed, rounding) : nowElapsed
+      const tableAmt = calculateAmount(
+        session.billingMode, billableMs, session.rateSnapshot, session.framesPlayed,
+      )
+      const itemsNow = calculateItemsTotal(items)
+      setFinalRoundedMs(billableMs)
+      setFinalGrandTotal(tableAmt + itemsNow)
+
       await stopSession(session.id!)
-      navigate('/tables', { replace: true })
+      setConfirmStop(false)
+      setPaymentScreenOpen(true)
     } finally {
       setPending(false)
-      setConfirmStop(false)
     }
   }
 
@@ -236,6 +286,73 @@ export default function SessionDetail() {
 
   const isActive = session.status !== 'completed'
 
+  // ─── Payment screen (shown after session stop) ────────────────────────────
+
+  if (paymentScreenOpen) {
+    const upiId = settings?.upiId?.trim()
+    const clubName = settings?.clubName || 'ClubKeeper'
+    const transactionNote = `${tableName} - ${formatDuration(finalRoundedMs)}`
+
+    return (
+      <div className="min-h-screen bg-bg pb-24 pt-safe">
+        <div className="px-5 pt-8 pb-32">
+          {/* Session ended header */}
+          <div className="text-center mb-6">
+            <div className="text-accent text-sm font-medium tracking-wider uppercase font-mono">
+              Session Ended
+            </div>
+            <div className="text-text text-[22px] font-bold tracking-tight mt-2">
+              {tableName} · {formatDuration(finalRoundedMs)}
+            </div>
+            {session.playerName && (
+              <div className="text-text-dim text-sm mt-1">{session.playerName}</div>
+            )}
+          </div>
+
+          {upiId ? (
+            <>
+              <div className="bg-bg-card border border-border rounded-3xl p-6 flex flex-col items-center">
+                <PaymentQR
+                  upiId={upiId}
+                  payeeName={clubName}
+                  amount={finalGrandTotal}
+                  transactionNote={transactionNote}
+                  size={240}
+                />
+                <div className="mt-5 text-text text-[32px] font-bold font-mono tabular-nums">
+                  ₹{finalGrandTotal.toLocaleString('en-IN')}
+                </div>
+                <div className="text-text-dim text-xs mt-1">Scan to pay exact amount</div>
+              </div>
+              <p className="text-center text-text-dim text-xs mt-4 px-6">
+                The QR includes the exact amount — no manual entry. Works with GPay, PhonePe, Paytm, BHIM.
+              </p>
+            </>
+          ) : (
+            <div className="bg-bg-card border border-border rounded-3xl p-6 text-center">
+              <div className="text-text text-[40px] font-bold font-mono tabular-nums">
+                ₹{finalGrandTotal.toLocaleString('en-IN')}
+              </div>
+              <div className="text-text-dim text-sm mt-2">to collect from player</div>
+              <p className="text-text-faint text-xs mt-3">
+                Add your UPI ID in Settings to show a payment QR here.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-8">
+            <button
+              onClick={() => navigate('/tables', { replace: true })}
+              className="w-full min-h-[52px] bg-accent text-bg rounded-2xl font-semibold text-[15px] active:scale-[0.99] transition-transform"
+            >
+              Done — back to tables
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -263,7 +380,6 @@ export default function SessionDetail() {
 
       {/* Hero */}
       <div className="px-4 pt-2 pb-7" style={{ background: heroBg }}>
-        {/* Status tag */}
         <div className="mb-3">
           {session.status === 'running' && (
             <span className="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold uppercase tracking-widest text-busy">
@@ -283,13 +399,9 @@ export default function SessionDetail() {
             </span>
           )}
         </div>
-
-        {/* Table name */}
         <h1 className="text-[32px] font-extrabold tracking-tighter text-text leading-none mb-2">
           {tableName}
         </h1>
-
-        {/* Meta */}
         <p className="text-[11px] font-mono uppercase tracking-wider text-text-faint">
           {table?.gameType ?? '—'}
           {' · '}₹{session.rateSnapshot}/{session.billingMode === 'per_hour' ? 'hr' : 'frame'}
@@ -329,7 +441,6 @@ export default function SessionDetail() {
           label="Rate"
           value={`₹${session.rateSnapshot}/${session.billingMode === 'per_hour' ? 'hr' : 'frame'}`}
         />
-        <DetailRow label="Running Total" value={`₹${liveAmount}`} accent large />
 
         {/* Frames stepper — per_frame billing only */}
         {session.billingMode === 'per_frame' && (
@@ -356,14 +467,34 @@ export default function SessionDetail() {
           </DetailRow>
         )}
 
-        {/* Note — only shown if present */}
         {session.note && (
           <DetailRow label="Note" value={session.note} />
         )}
       </div>
 
+      {/* ── Bill split ──────────────────────────────────────────────────────── */}
+      <div className="px-4 mt-5">
+        <div className="bg-bg-card border border-border rounded-2xl p-4 space-y-2.5">
+          <div className="flex justify-between items-baseline">
+            <span className="text-text-dim text-sm">Table time</span>
+            <span className="font-mono text-text">₹{currentSessionAmount.toLocaleString('en-IN')}</span>
+          </div>
+          {items.length > 0 && (
+            <div className="flex justify-between items-baseline">
+              <span className="text-text-dim text-sm">Items ({totalItemQty})</span>
+              <span className="font-mono text-text">₹{itemsTotal.toLocaleString('en-IN')}</span>
+            </div>
+          )}
+          <div className="h-px bg-border my-1" />
+          <div className="flex justify-between items-baseline">
+            <span className="text-text font-medium">Total</span>
+            <span className="font-mono text-accent text-xl font-bold">₹{grandTotal.toLocaleString('en-IN')}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Action buttons */}
-      <div className="px-4 mt-5 space-y-3">
+      <div className="px-4 mt-4 space-y-3">
         {session.status === 'completed' ? (
           <button
             onClick={() => navigate('/tables')}
@@ -400,7 +531,25 @@ export default function SessionDetail() {
           </div>
         )}
 
-        {/* Edit start time — shown for all states */}
+        {/* Add Item / View Items button */}
+        {!isActive ? (
+          <button
+            onClick={() => setSheetOpen(true)}
+            className="w-full min-h-[44px] bg-bg-card text-text-dim border border-border rounded-2xl flex items-center justify-center gap-2 font-medium text-[14px] active:scale-[0.99] transition-transform"
+          >
+            View Items
+          </button>
+        ) : (
+          <button
+            onClick={() => setSheetOpen(true)}
+            className="w-full min-h-[44px] bg-bg-card text-text border border-border rounded-2xl flex items-center justify-center gap-2 font-medium text-[15px] active:scale-[0.99] transition-transform"
+          >
+            <PlusIcon />
+            Add Item
+          </button>
+        )}
+
+        {/* Edit start time */}
         <button
           onClick={() => setEditStartOpen(true)}
           className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
@@ -415,13 +564,47 @@ export default function SessionDetail() {
         onClose={() => !pending && setConfirmStop(false)}
         title="End this session?"
       >
-        <p className="text-text-dim text-[14px] mb-5 font-mono">
-          {tableName}
-          <span className="text-text-faint"> — </span>
-          {formatDuration(elapsedMs)}
-          <span className="text-text-faint"> — </span>
-          <span className="text-accent font-semibold">₹{liveAmount}</span>
-        </p>
+        <div className="space-y-3 mb-5">
+          <div className="text-text-dim text-sm">
+            End session for <span className="text-text font-medium">{tableName}</span>?
+          </div>
+          <div className="bg-bg-card border border-border rounded-xl p-3 space-y-1.5 text-sm">
+            {/* Time row — shows rounding if active */}
+            <div className="flex justify-between">
+              <span className="text-text-dim">Time</span>
+              <span className="text-text font-mono">
+                {formatDuration(roundedElapsedMs)}
+                {roundedElapsedMs !== rawElapsedMs && (
+                  <span className="text-text-faint text-xs ml-1">
+                    (was {formatDuration(rawElapsedMs)})
+                  </span>
+                )}
+              </span>
+            </div>
+            {/* Table time */}
+            <div className="flex justify-between">
+              <span className="text-text-dim">Table time</span>
+              <span className="text-text font-mono">₹{previewTableAmount.toLocaleString('en-IN')}</span>
+            </div>
+            {/* Items row — only if present */}
+            {items.length > 0 && (
+              <div className="flex justify-between">
+                <span className="text-text-dim">
+                  Items ({items.reduce((s, i) => s + i.quantity, 0)})
+                </span>
+                <span className="text-text font-mono">₹{previewItemsTotal.toLocaleString('en-IN')}</span>
+              </div>
+            )}
+            <div className="h-px bg-border my-1" />
+            {/* Grand total */}
+            <div className="flex justify-between items-baseline">
+              <span className="text-text font-medium">Total</span>
+              <span className="text-accent font-mono text-lg font-bold">
+                ₹{previewGrandTotal.toLocaleString('en-IN')}
+              </span>
+            </div>
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <button
             onClick={() => setConfirmStop(false)}
@@ -431,7 +614,7 @@ export default function SessionDetail() {
             Cancel
           </button>
           <button
-            onClick={handleStop}
+            onClick={handleConfirmStop}
             disabled={pending}
             className="py-3.5 bg-busy text-white rounded-xl text-[14px] font-bold disabled:opacity-50"
           >
@@ -491,6 +674,14 @@ export default function SessionDetail() {
           </div>
         </div>
       </Modal>
+
+      {/* ── Add Item bottom sheet ───────────────────────────────────────── */}
+      <AddItemBottomSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        sessionId={session.id!}
+        sessionStatus={session.status}
+      />
     </div>
   )
 }

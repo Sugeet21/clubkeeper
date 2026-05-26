@@ -447,3 +447,29 @@ When you discover a new ripple effect:
 ```
 
 The more this file grows, the safer changes become. Sugeet, especially when you don't know code well, this file is your safety net.
+
+---
+
+## Session Items (POS) — added 26 May 2026
+
+### If you change the `SessionItem` interface (add/rename/remove field)
+
+**Affects:**
+- `src/types/index.ts` — interface definition
+- `src/db/database.ts` — bump Dexie version if changing indexes; v3 added `sessionItems: '++id, sessionId, addedAt'`
+- `src/db/queries.ts` — `addSessionItem`, `updateSessionItem`, `deleteSessionItem`, `restoreSessionItem`
+- `src/hooks/useLiveData.ts` — `useSessionItems`
+- `src/lib/money.ts` — `calculateItemsTotal`
+- `src/components/AddItemBottomSheet.tsx` — full add/edit/delete UI
+- `src/pages/SessionDetail.tsx` — bill split section, grandTotal, sheet mount
+- `src/pages/Home.tsx` — Today amount (`todayTotals` live query includes items)
+- `src/pages/Summary.tsx` — `itemsTotalForDate` live query; `totalRevenue = sessionsRevenue + itemsTotalForDate`
+- `src/pages/History.tsx` — `itemsBySessionId` live query; day totals + CSV export columns
+
+**Ripple notes:**
+- `grandTotal` in SessionDetail = `currentSessionAmount + itemsTotal` — shown in bill split and stop-confirm modal
+- History CSV now has 3 new columns: `Table Amount`, `Items`, `Total` (replacing old single `Amount` column)
+- toastStore was extended to support `actionLabel`/`onAction`/`durationMs` for Undo — existing callers (string `show()`) still work unchanged
+- ToastContainer was updated to render the Undo action button
+
+**Discovered when:** Session Items (POS) feature, 26 May 2026

@@ -1,4 +1,4 @@
-import type { BillingMode } from '../types'
+import type { BillingMode, SessionItem } from '../types'
 
 export function calculateAmount(
   billingMode: BillingMode,
@@ -11,6 +11,10 @@ export function calculateAmount(
   }
   const hours = elapsedMs / (1000 * 60 * 60)
   return Math.round(hours * rateSnapshot)
+}
+
+export function calculateItemsTotal(items: SessionItem[]): number {
+  return items.reduce((sum, i) => sum + i.price * i.quantity, 0)
 }
 
 /** Round elapsed ms UP to the nearest bucket (15 or 30 minutes). */
