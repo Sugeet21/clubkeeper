@@ -30,29 +30,120 @@ function PencilIcon() {
   )
 }
 
-// ─── Layout helpers ───────────────────────────────────────────────────────────
+// Section icons — 20×20 inline SVG, stroke-2, currentColor
 
-function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
+function IconClubInfo() {
   return (
-    <div className="mb-7">
-      <div className="flex items-center justify-between px-4 mb-2">
-        <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">{title}</p>
-        {right}
-      </div>
-      <div className="mx-4 bg-bg-elevated border border-border rounded-2xl divide-y divide-border overflow-hidden">
-        {children}
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 21h18" />
+      <path d="M5 21V7l7-4 7 4v14" />
+      <rect x="9" y="13" width="6" height="8" />
+    </svg>
+  )
+}
+
+function IconTables() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="8" height="8" rx="1" />
+      <rect x="13" y="3" width="8" height="8" rx="1" />
+      <rect x="3" y="13" width="8" height="8" rx="1" />
+      <rect x="13" y="13" width="8" height="8" rx="1" />
+    </svg>
+  )
+}
+
+function IconSubscription() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+  )
+}
+
+function IconData() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  )
+}
+
+function IconAbout() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
+  )
+}
+
+function IconAccount() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  )
+}
+
+// ─── Collapsible Section Card ─────────────────────────────────────────────────
+
+function SettingsSection({
+  id,
+  title,
+  icon,
+  badge,
+  isOpen,
+  onToggle,
+  children,
+}: {
+  id: string
+  title: string
+  icon: ReactNode
+  badge?: ReactNode
+  isOpen: boolean
+  onToggle: () => void
+  children: ReactNode
+}) {
+  return (
+    <div className="bg-bg-card border border-border rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={isOpen}
+        aria-controls={`section-${id}`}
+        className="w-full flex items-center gap-3 px-4 py-4 min-h-[56px] text-left"
+      >
+        <span className="text-text-dim shrink-0">{icon}</span>
+        <span className="flex-1 text-[15px] font-semibold text-text">{title}</span>
+        {badge}
+        <svg
+          width="18" height="18" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2"
+          className={`text-text-faint shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}
+        >
+          <path d="M9 6l6 6-6 6" />
+        </svg>
+      </button>
+      <div
+        id={`section-${id}`}
+        className={`grid transition-all duration-200 ease-out ${
+          isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="px-4 pb-4 pt-1 border-t border-border">{children}</div>
+        </div>
       </div>
     </div>
   )
 }
 
-function Row({ children }: { children: ReactNode }) {
-  return <div className="flex items-center justify-between px-4 py-3.5 gap-3">{children}</div>
-}
-
-function RowLabel({ children }: { children: ReactNode }) {
-  return <span className="text-[14px] text-text shrink-0">{children}</span>
-}
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
@@ -75,7 +166,23 @@ export default function Settings() {
   const navigate = useNavigate()
   const tables = useTables()
   const settings = useSettings()
-  const { subscription } = useAuthStore()
+  const { subscription, user } = useAuthStore()
+
+  // Single open section — only one open at a time
+  const [openSection, setOpenSection] = useState<string>('club-info')
+
+  function toggleSection(id: string) {
+    setOpenSection((prev) => (prev === id ? '' : id))
+  }
+
+  // Persist open section in sessionStorage (UI flag only)
+  useEffect(() => {
+    const saved = sessionStorage.getItem('ck_settings_section')
+    if (saved) setOpenSection(saved)
+  }, [])
+  useEffect(() => {
+    sessionStorage.setItem('ck_settings_section', openSection)
+  }, [openSection])
 
   // Club name draft
   const [clubName, setClubName] = useState('')
@@ -134,7 +241,6 @@ export default function Settings() {
     const trimmed = upiId.trim()
     const err = validateUpiId(trimmed)
     if (err) { setUpiError(err); return }
-    // Save trimmed value (or undefined to clear it)
     await updateSettings({ upiId: trimmed || undefined })
     useToastStore.getState().show('UPI ID saved', 'success')
     setUpiError(null)
@@ -142,7 +248,6 @@ export default function Settings() {
 
   async function handleRoundingChange(newMode: RoundingMode) {
     if (newMode === settings?.rounding) return
-    // Count active sessions — warn owner if any are running
     const active = await db.sessions
       .where('status')
       .anyOf(['running', 'paused'])
@@ -154,7 +259,6 @@ export default function Settings() {
       setRoundingConfirmOpen(true)
       return
     }
-    // No active sessions — apply immediately
     await updateSettings({ rounding: newMode })
   }
 
@@ -246,7 +350,42 @@ export default function Settings() {
     }
   }
 
-  const sessionCount = 0
+  // ── Subscription badge (shown in section header when collapsed) ────────────
+
+  const activeTableCount = tables.filter((t) => !t.outOfService).length
+
+  function SubscriptionBadge() {
+    if (subscription === null) {
+      return <div className="w-16 h-5 rounded-md bg-bg animate-pulse" />
+    }
+    if (subscription.status === 'trialing') {
+      return (
+        <span className="text-[10px] font-mono font-bold uppercase tracking-widest px-2.5 py-1 rounded-md bg-paused/15 text-paused">
+          Trialing
+        </span>
+      )
+    }
+    if (subscription.status === 'active') {
+      return (
+        <span className="text-[10px] font-mono font-bold uppercase tracking-widest px-2.5 py-1 rounded-md bg-free/15 text-free">
+          Active
+        </span>
+      )
+    }
+    if (subscription.status === 'cancelled' || subscription.status === 'expired') {
+      return (
+        <span className="text-[10px] font-mono font-bold uppercase tracking-widest px-2.5 py-1 rounded-md bg-busy/15 text-busy">
+          Inactive
+        </span>
+      )
+    }
+    // status === 'none' or any other
+    return (
+      <span className="text-[10px] font-mono font-bold uppercase tracking-widest px-2.5 py-1 rounded-md bg-accent/15 text-accent">
+        Subscribe
+      </span>
+    )
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -257,7 +396,7 @@ export default function Settings() {
       <div className="flex items-center px-3 pt-3 pb-4">
         <button
           onClick={() => navigate('/tables')}
-          className="flex items-center gap-1 text-text-dim px-1 py-1.5 -ml-1 active:text-text transition-colors"
+          className="flex items-center gap-1 text-text-dim px-1 min-h-[44px] -ml-1 active:text-text transition-colors"
         >
           <ChevronLeft />
           <span className="text-sm">Home</span>
@@ -265,276 +404,350 @@ export default function Settings() {
         <h1 className="text-[18px] font-bold text-text ml-2">Settings</h1>
       </div>
 
-      {/* ── Section 1: Club Info ────────────────────────────────────────── */}
-      <Section title="Club Info">
-        <Row>
-          <RowLabel>Club Name</RowLabel>
-          <input
-            type="text"
-            value={clubName}
-            onChange={(e) => setClubName(e.target.value)}
-            onBlur={handleSaveClubName}
-            className="flex-1 bg-transparent text-right text-[14px] text-text focus:outline-none"
-          />
-        </Row>
-        <Row>
-          <RowLabel>Currency</RowLabel>
-          <span className="text-[14px] text-text-faint">₹ (Indian Rupee)</span>
-        </Row>
+      <div className="px-4 space-y-3">
 
-        {/* UPI ID */}
-        <div className="px-4 py-3">
-          <div className="flex items-center justify-between mb-1.5">
-            <RowLabel>UPI ID</RowLabel>
-            <span className="text-[11px] text-text-faint font-mono">optional</span>
+        {/* ── 1: Club Info (default open) ─────────────────────────────────── */}
+        <SettingsSection
+          id="club-info"
+          title="Club Info"
+          icon={<IconClubInfo />}
+          isOpen={openSection === 'club-info'}
+          onToggle={() => toggleSection('club-info')}
+        >
+          {/* Club name */}
+          <div className="mt-3 mb-3">
+            <label className="block text-[11px] font-mono uppercase tracking-widest text-text-faint mb-1.5">
+              Club Name
+            </label>
+            <input
+              type="text"
+              value={clubName}
+              onChange={(e) => setClubName(e.target.value)}
+              onBlur={handleSaveClubName}
+              placeholder="e.g. Star Billiards"
+              className="w-full px-4 py-3.5 bg-bg border border-border rounded-2xl text-text text-[15px] focus:border-accent outline-none placeholder:text-text-faint min-h-[44px]"
+            />
           </div>
-          <input
-            type="text"
-            inputMode="email"
-            value={upiId}
-            onChange={(e) => { setUpiId(e.target.value); setUpiError(null) }}
-            onBlur={handleUpiBlur}
-            placeholder="e.g. 7758969291@axl"
-            className={`w-full bg-bg border rounded-xl px-4 py-3 text-text text-[14px] font-mono focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint ${
-              upiError ? 'border-busy focus:border-busy' : 'border-border focus:border-accent'
-            }`}
-          />
-          {upiError && (
-            <p className="text-busy text-[12px] mt-1.5">{upiError}</p>
-          )}
-          {!upiError && (
-            <p className="text-text-faint text-[11px] mt-1.5">
-              When set, a payment QR appears after every session ends. Players scan and pay the exact amount.
+
+          {/* Currency — read-only */}
+          <div className="mb-3">
+            <label className="block text-[11px] font-mono uppercase tracking-widest text-text-faint mb-1.5">
+              Currency
+            </label>
+            <div className="w-full px-4 py-3.5 bg-bg border border-border rounded-2xl text-text-faint text-[15px] min-h-[44px] flex items-center">
+              ₹ Indian Rupee
+            </div>
+          </div>
+
+          {/* UPI ID */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[11px] font-mono uppercase tracking-widest text-text-faint">
+                UPI ID
+              </label>
+              <span className="text-[11px] text-text-faint font-mono">optional</span>
+            </div>
+            <input
+              type="text"
+              inputMode="email"
+              value={upiId}
+              onChange={(e) => { setUpiId(e.target.value); setUpiError(null) }}
+              onBlur={handleUpiBlur}
+              placeholder="e.g. 7758969291@axl"
+              className={`w-full bg-bg border rounded-2xl px-4 py-3.5 text-text text-[14px] font-mono focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint ${
+                upiError ? 'border-busy focus:border-busy' : 'border-border focus:border-accent'
+              }`}
+            />
+            {upiError && (
+              <p className="text-busy text-[12px] mt-1.5">{upiError}</p>
+            )}
+            {!upiError && (
+              <p className="text-text-faint text-[11px] mt-1.5">
+                When you set this, a payment QR appears after every session ends. Players scan and pay the exact amount.
+              </p>
+            )}
+            <button
+              onClick={handleSaveUpiId}
+              disabled={Boolean(upiError) || upiId.trim() === (settings?.upiId ?? '')}
+              className="mt-2.5 min-h-[44px] px-5 bg-accent text-bg rounded-xl text-[13px] font-bold disabled:opacity-40 active:scale-[0.99] transition-transform"
+            >
+              Save UPI ID
+            </button>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-border my-4" />
+
+          {/* Time Rounding */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[14px] font-semibold text-text">Time rounding</span>
+            </div>
+            <p className="text-[11px] text-text-faint mb-3">
+              Rounds up session time when stopping. Helps if you charge by 15-min slots.
             </p>
-          )}
-          <button
-            onClick={handleSaveUpiId}
-            disabled={Boolean(upiError) || upiId.trim() === (settings?.upiId ?? '')}
-            className="mt-2.5 min-h-[44px] px-5 bg-accent text-bg rounded-xl text-[13px] font-bold disabled:opacity-40 active:scale-[0.99] transition-transform"
-          >
-            Save UPI ID
-          </button>
-        </div>
-
-        {/* Time Rounding */}
-        <Row>
-          <RowLabel>Time Rounding</RowLabel>
-        </Row>
-        <div className="px-4 pb-3">
-          <div className="flex gap-1 bg-bg border border-border rounded-xl p-1">
-            {(['none', '15min', '30min'] as const).map((r) => (
-              <button
-                key={r}
-                onClick={() => void handleRoundingChange(r)}
-                className={`flex-1 py-2 rounded-lg text-[12px] font-semibold transition-colors ${
-                  (settings?.rounding ?? 'none') === r ? 'bg-accent text-bg' : 'text-text-dim'
-                }`}
-              >
-                {r === 'none' ? 'None' : r === '15min' ? '15 min' : '30 min'}
-              </button>
-            ))}
+            <div className="flex gap-1 bg-bg border border-border rounded-xl p-1">
+              {(['none', '15min', '30min'] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => void handleRoundingChange(r)}
+                  className={`flex-1 min-h-[44px] py-2 rounded-lg text-[12px] font-semibold transition-colors ${
+                    (settings?.rounding ?? 'none') === r ? 'bg-accent text-bg' : 'text-text-dim'
+                  }`}
+                >
+                  {r === 'none' ? 'None' : r === '15min' ? '15 min' : '30 min'}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      </Section>
+        </SettingsSection>
 
-      {/* ── Section 2: Tables ───────────────────────────────────────────── */}
-      <Section
-        title="Tables"
-        right={
-          <button
-            onClick={() => setTableModal({ open: true })}
-            className="text-[13px] font-semibold text-accent"
-          >
-            + Add Table
-          </button>
-        }
-      >
-        {tables.length === 0 ? (
-          <Row><span className="text-text-faint text-[13px]">No tables yet.</span></Row>
-        ) : (
-          tables.map((t) => (
-            <div key={t.id} className="flex items-center justify-between px-4 py-3">
-              <div className={`flex-1 min-w-0 ${t.outOfService ? 'opacity-50' : ''}`}>
-                <div className="flex items-center gap-2">
-                  <p className="text-[14px] font-semibold text-text leading-tight">{t.name}</p>
-                  {t.outOfService && (
-                    <span className="text-[9px] font-mono uppercase tracking-widest text-text-faint bg-bg px-2 py-0.5 rounded">
-                      Disabled
-                    </span>
-                  )}
+        {/* ── 2: Tables ──────────────────────────────────────────────────── */}
+        <SettingsSection
+          id="tables"
+          title="Tables"
+          icon={<IconTables />}
+          badge={
+            <span className="text-text-faint text-xs font-mono mr-1">
+              {activeTableCount}
+            </span>
+          }
+          isOpen={openSection === 'tables'}
+          onToggle={() => toggleSection('tables')}
+        >
+          <div className="mt-3 space-y-1">
+            {tables.length === 0 ? (
+              <p className="text-text-faint text-[13px] py-2">No tables yet.</p>
+            ) : (
+              tables.map((t) => (
+                <div key={t.id} className="flex items-center justify-between py-2.5">
+                  <div className={`flex-1 min-w-0 ${t.outOfService ? 'opacity-50' : ''}`}>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[14px] font-semibold text-text leading-tight">{t.name}</p>
+                      {t.outOfService && (
+                        <span className="text-[9px] font-mono uppercase tracking-widest text-text-faint bg-bg px-2 py-0.5 rounded">
+                          Disabled
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] font-mono text-text-faint uppercase tracking-wide mt-0.5">
+                      {t.gameType} · ₹{t.ratePerHour}/hr
+                      {t.ratePerFrame ? ` · ₹${t.ratePerFrame}/frame` : ''}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setTableModal({ open: true, table: t })}
+                    className="w-9 h-9 min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim rounded-lg active:bg-bg transition-colors ml-3 shrink-0"
+                  >
+                    <PencilIcon />
+                  </button>
                 </div>
-                <p className="text-[11px] font-mono text-text-faint uppercase tracking-wide mt-0.5">
-                  {t.gameType} · ₹{t.ratePerHour}/hr
-                  {t.ratePerFrame ? ` · ₹${t.ratePerFrame}/frame` : ''}
-                </p>
-              </div>
-              <button
-                onClick={() => setTableModal({ open: true, table: t })}
-                className="w-9 h-9 flex items-center justify-center text-text-dim rounded-lg active:bg-bg transition-colors ml-3 shrink-0"
-              >
-                <PencilIcon />
-              </button>
-            </div>
-          ))
-        )}
-      </Section>
-
-      {/* ── Section 3: Subscription ─────────────────────────────────────── */}
-      {subscription === null ? (
-        <Section title="Subscription">
-          <Row>
-            <span className="text-[13px] text-text-faint font-mono">Loading subscription…</span>
-          </Row>
-        </Section>
-      ) : subscription.status !== 'none' ? (
-        <Section title="Subscription">
-          <Row>
-            <RowLabel>Plan</RowLabel>
-            <span className="text-[14px] text-text capitalize">
-              {subscription.plan ?? '—'}{' '}
-              <span className="text-text-faint text-[12px]">
-                {subscription.cancelAtPeriodEnd ? '(cancelling)' : ''}
-              </span>
-            </span>
-          </Row>
-          <Row>
-            <RowLabel>Status</RowLabel>
-            <span className="text-[13px] font-mono">
-              {subscription.status === 'trialing' && subscription.trialEndsAt && (
-                <span className="text-accent">
-                  Trialing — {Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / 86400000))} days left
-                </span>
-              )}
-              {subscription.status === 'active' && !subscription.cancelAtPeriodEnd && subscription.currentPeriodEnd && (
-                <span className="text-accent">Active — renews {formatDate(subscription.currentPeriodEnd)}</span>
-              )}
-              {subscription.status === 'active' && subscription.cancelAtPeriodEnd && subscription.currentPeriodEnd && (
-                <span style={{ color: '#f7c948' }}>Cancelling {formatDate(subscription.currentPeriodEnd)}</span>
-              )}
-              {subscription.status === 'past_due' && (
-                <span className="text-busy">Payment failed</span>
-              )}
-              {(subscription.status === 'cancelled' || subscription.status === 'expired') && (
-                <span className="text-text-faint">{subscription.status}</span>
-              )}
-            </span>
-          </Row>
-          {subscription.currentPeriodEnd && subscription.status === 'active' && (
-            <Row>
-              <RowLabel>Next charge</RowLabel>
-              <span className="text-[13px] font-mono text-text">
-                {subscription.plan === 'starter'
-                  ? rupee(299)
-                  : subscription.plan === 'standard'
-                  ? rupee(599)
-                  : rupee(999)}{' '}
-                on {formatDate(subscription.currentPeriodEnd)}
-              </span>
-            </Row>
-          )}
-          {!subscription.cancelAtPeriodEnd && (subscription.status === 'active' || subscription.status === 'trialing') && (
+              ))
+            )}
             <button
-              onClick={() => setCancelSubModal(true)}
-              className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
+              onClick={() => setTableModal({ open: true })}
+              className="w-full min-h-[44px] mt-1 py-2.5 border border-dashed border-border rounded-xl text-[13px] font-semibold text-accent flex items-center justify-center gap-1.5"
             >
-              <span className="text-[14px] text-busy">Cancel subscription</span>
-              <span className="text-[12px] text-text-faint">→</span>
-            </button>
-          )}
-          <button
-            onClick={() => navigate('/subscribe?change=1')}
-            className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
-          >
-            <span className="text-[14px] text-text">Change plan</span>
-            <span className="text-[12px] text-accent">→</span>
-          </button>
-        </Section>
-      ) : (
-        <Section title="Subscription">
-          <div className="px-4 py-5 flex flex-col gap-3">
-            <div>
-              <p className="text-[15px] font-semibold text-text">No active plan</p>
-              <p className="text-[13px] text-text-dim mt-0.5">Subscribe to unlock all features</p>
-            </div>
-            <button
-              onClick={() => navigate('/subscribe')}
-              aria-label="Subscribe to ClubKeeper"
-              className="w-full py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold active:opacity-80 transition-opacity"
-            >
-              Subscribe →
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Add Table
             </button>
           </div>
-        </Section>
-      )}
+        </SettingsSection>
 
-      {/* ── Section 4: Data ─────────────────────────────────────────────── */}
-      <Section title="Data">
-        <button
-          onClick={handleExportJSON}
-          className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
+        {/* ── 3: Subscription ────────────────────────────────────────────── */}
+        <SettingsSection
+          id="subscription"
+          title="Subscription"
+          icon={<IconSubscription />}
+          badge={<SubscriptionBadge />}
+          isOpen={openSection === 'subscription'}
+          onToggle={() => toggleSection('subscription')}
         >
-          <span className="text-[14px] text-text">Export All Data (JSON)</span>
-          <span className="text-[13px] text-accent font-semibold">↓</span>
-        </button>
-        <button
-          onClick={() => setClearModal(true)}
-          className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
-        >
-          <span className="text-[14px] text-busy">Clear All Sessions</span>
-          <span className="text-[12px] text-text-faint">Irreversible</span>
-        </button>
-        <button
-          onClick={() => setCleanModal(true)}
-          className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
-        >
-          <span className="text-[14px] text-text">Clean Invalid Player Names</span>
-          <span className="text-[12px] text-text-faint">Preserve sessions</span>
-        </button>
-        <button
-          onClick={() => { setResetConfirmText(''); setResetModal(true) }}
-          className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
-        >
-          <span className="text-[14px] text-busy font-bold">Reset Everything</span>
-          <span className="text-[12px] text-text-faint">Deletes all data</span>
-        </button>
-      </Section>
+          <div className="mt-3">
+            {/* Pattern A3 — three-branch render: never gate on && subscription */}
+            {subscription === null ? (
+              <div className="py-2">
+                <div className="w-full h-5 rounded-md bg-bg animate-pulse mb-2" />
+                <div className="w-2/3 h-4 rounded-md bg-bg animate-pulse" />
+              </div>
+            ) : subscription.status !== 'none' ? (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between py-2.5 border-b border-border">
+                  <span className="text-[13px] text-text-dim">Plan</span>
+                  <span className="text-[14px] text-text capitalize">
+                    {subscription.plan ?? '—'}{' '}
+                    <span className="text-text-faint text-[12px]">
+                      {subscription.cancelAtPeriodEnd ? '(cancelling)' : ''}
+                    </span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between py-2.5 border-b border-border">
+                  <span className="text-[13px] text-text-dim">Status</span>
+                  <span className="text-[13px] font-mono">
+                    {subscription.status === 'trialing' && subscription.trialEndsAt && (
+                      <span className="text-accent">
+                        Trialing — {Math.max(0, Math.ceil((subscription.trialEndsAt - Date.now()) / 86400000))} days left
+                      </span>
+                    )}
+                    {subscription.status === 'active' && !subscription.cancelAtPeriodEnd && subscription.currentPeriodEnd && (
+                      <span className="text-accent">Active — renews {formatDate(subscription.currentPeriodEnd)}</span>
+                    )}
+                    {subscription.status === 'active' && subscription.cancelAtPeriodEnd && subscription.currentPeriodEnd && (
+                      <span style={{ color: '#f7c948' }}>Cancelling {formatDate(subscription.currentPeriodEnd)}</span>
+                    )}
+                    {subscription.status === 'past_due' && (
+                      <span className="text-busy">Payment failed</span>
+                    )}
+                    {(subscription.status === 'cancelled' || subscription.status === 'expired') && (
+                      <span className="text-text-faint">{subscription.status}</span>
+                    )}
+                  </span>
+                </div>
+                {subscription.currentPeriodEnd && subscription.status === 'active' && (
+                  <div className="flex items-center justify-between py-2.5 border-b border-border">
+                    <span className="text-[13px] text-text-dim">Next charge</span>
+                    <span className="text-[13px] font-mono text-text">
+                      {subscription.plan === 'starter'
+                        ? rupee(299)
+                        : subscription.plan === 'standard'
+                        ? rupee(599)
+                        : rupee(999)}{' '}
+                      on {formatDate(subscription.currentPeriodEnd)}
+                    </span>
+                  </div>
+                )}
+                <div className="pt-2 space-y-2">
+                  {!subscription.cancelAtPeriodEnd && (subscription.status === 'active' || subscription.status === 'trialing') && (
+                    <button
+                      onClick={() => setCancelSubModal(true)}
+                      className="w-full min-h-[44px] flex items-center justify-between px-4 py-3 rounded-xl bg-busy/8 border border-busy/20 active:bg-busy/15 transition-colors"
+                    >
+                      <span className="text-[14px] text-busy">Cancel subscription</span>
+                      <span className="text-[12px] text-busy/60">→</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => navigate('/subscribe?change=1')}
+                    className="w-full min-h-[44px] flex items-center justify-between px-4 py-3 rounded-xl bg-bg border border-border active:bg-bg-card transition-colors"
+                  >
+                    <span className="text-[14px] text-text">Change plan</span>
+                    <span className="text-[12px] text-accent">→</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="py-2 flex flex-col gap-3">
+                <div>
+                  <p className="text-[15px] font-semibold text-text">No active plan</p>
+                  <p className="text-[13px] text-text-dim mt-0.5">Subscribe to unlock all features</p>
+                </div>
+                <button
+                  onClick={() => navigate('/subscribe')}
+                  aria-label="Subscribe to ClubKeeper"
+                  className="w-full min-h-[44px] py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold active:opacity-80 transition-opacity"
+                >
+                  Subscribe →
+                </button>
+              </div>
+            )}
+          </div>
+        </SettingsSection>
 
-      {/* ── Section 5: About ────────────────────────────────────────────── */}
-      <Section title="About">
-        <Row>
-          <RowLabel>App Version</RowLabel>
-          <span className="text-[14px] text-text-faint font-mono">v1.0</span>
-        </Row>
-        <Row>
-          <RowLabel>Tables</RowLabel>
-          <span className="text-[14px] text-text-faint">{tables.length}</span>
-        </Row>
-        {storageInfo && (
-          <Row>
-            <RowLabel>Storage Used</RowLabel>
-            <span className="text-[14px] text-text-faint font-mono">
-              {formatBytes(storageInfo.usage)} / {formatBytes(storageInfo.quota)}
-            </span>
-          </Row>
-        )}
-        {sessionCount > 0 && (
-          <Row>
-            <RowLabel>Sessions</RowLabel>
-            <span className="text-[14px] text-text-faint">{sessionCount}</span>
-          </Row>
-        )}
-      </Section>
-
-      {/* ── Section 6: Account ─────────────────────────────────────────── */}
-      <Section title="Account">
-        <button
-          onClick={() => void useAuthStore.getState().signOut()}
-          className="w-full flex items-center justify-between px-4 py-3.5 active:bg-bg transition-colors"
+        {/* ── 4: Data & Backup ───────────────────────────────────────────── */}
+        <SettingsSection
+          id="data"
+          title="Data & Backup"
+          icon={<IconData />}
+          isOpen={openSection === 'data'}
+          onToggle={() => toggleSection('data')}
         >
-          <span className="text-[14px] text-busy">Sign Out</span>
-          <span className="text-[12px] text-text-faint">→</span>
-        </button>
-      </Section>
+          <div className="mt-3 space-y-2">
+            <button
+              onClick={handleExportJSON}
+              className="w-full min-h-[44px] flex flex-col items-start px-4 py-3 rounded-xl bg-bg border border-border active:bg-bg-card transition-colors"
+            >
+              <span className="text-[14px] text-text font-semibold">Export everything</span>
+              <span className="text-[11px] text-text-faint mt-0.5">Download a backup file you can save or import later.</span>
+            </button>
+            <button
+              onClick={() => setClearModal(true)}
+              className="w-full min-h-[44px] flex flex-col items-start px-4 py-3 rounded-xl bg-busy/8 border border-busy/20 active:bg-busy/15 transition-colors"
+            >
+              <span className="text-[14px] text-busy font-semibold">Clear all sessions</span>
+              <span className="text-[11px] text-text-faint mt-0.5">Removes all session history. Tables and settings stay. Irreversible.</span>
+            </button>
+            <button
+              onClick={() => setCleanModal(true)}
+              className="w-full min-h-[44px] flex flex-col items-start px-4 py-3 rounded-xl bg-bg border border-border active:bg-bg-card transition-colors"
+            >
+              <span className="text-[14px] text-text font-semibold">Tidy player names</span>
+              <span className="text-[11px] text-text-faint mt-0.5">Removes stray symbols and trims spaces in saved player names.</span>
+            </button>
+            <button
+              onClick={() => { setResetConfirmText(''); setResetModal(true) }}
+              className="w-full min-h-[44px] flex flex-col items-start px-4 py-3 rounded-xl bg-busy/8 border border-busy/20 active:bg-busy/15 transition-colors"
+            >
+              <span className="text-[14px] text-busy font-bold">Reset everything</span>
+              <span className="text-[11px] text-text-faint mt-0.5">Wipes tables, sessions, and settings. Use only when you want a fresh start.</span>
+            </button>
+          </div>
+        </SettingsSection>
+
+        {/* ── 5: About ───────────────────────────────────────────────────── */}
+        <SettingsSection
+          id="about"
+          title="About"
+          icon={<IconAbout />}
+          isOpen={openSection === 'about'}
+          onToggle={() => toggleSection('about')}
+        >
+          <div className="mt-3 space-y-1 divide-y divide-border">
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-[14px] text-text-dim">App version</span>
+              <span className="text-[14px] text-text-faint font-mono">v1.0</span>
+            </div>
+            <div className="flex items-center justify-between py-2.5">
+              <span className="text-[14px] text-text-dim">Total tables</span>
+              <span className="text-[14px] text-text-faint">{tables.length}</span>
+            </div>
+            {storageInfo && (
+              <div className="flex items-center justify-between py-2.5">
+                <span className="text-[14px] text-text-dim">Local storage used</span>
+                <span className="text-[14px] text-text-faint font-mono">
+                  {formatBytes(storageInfo.usage)} / {formatBytes(storageInfo.quota)}
+                </span>
+              </div>
+            )}
+          </div>
+        </SettingsSection>
+
+        {/* ── 6: Account ─────────────────────────────────────────────────── */}
+        <SettingsSection
+          id="account"
+          title="Account"
+          icon={<IconAccount />}
+          isOpen={openSection === 'account'}
+          onToggle={() => toggleSection('account')}
+        >
+          <div className="mt-3">
+            {user?.email && (
+              <div className="p-3 bg-bg rounded-xl mb-3">
+                <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Signed in as</p>
+                <p className="text-text text-sm mt-0.5 truncate">{user.email}</p>
+              </div>
+            )}
+            <button
+              onClick={() => void useAuthStore.getState().signOut()}
+              className="w-full min-h-[44px] py-3.5 bg-busy/8 text-busy border border-busy/20 rounded-xl text-[14px] font-semibold active:bg-busy/15 transition-colors"
+            >
+              Sign out
+            </button>
+          </div>
+        </SettingsSection>
+
+      </div>
 
       {/* ── Rounding confirm modal ──────────────────────────────────────── */}
       <Modal
@@ -608,7 +821,7 @@ export default function Settings() {
       <Modal
         open={cleanModal}
         onClose={() => !busy && setCleanModal(false)}
-        title="Clean Invalid Player Names?"
+        title="Tidy player names?"
       >
         <p className="text-text-dim text-[14px] mb-5">
           This will clear player names from old sessions that don't match current validation rules.

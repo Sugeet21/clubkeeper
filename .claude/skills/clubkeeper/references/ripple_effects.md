@@ -54,7 +54,7 @@ If a change isn't documented here yet, pause and trace dependencies first.
 - `src/types/index.ts`
 - `src/db/queries.ts` — `getSettings`, `updateSettings`
 - `src/db/seed.ts` — default values
-- `src/pages/Settings.tsx` — settings UI
+- `src/pages/Settings.tsx` — settings UI. NOTE: Settings page now renders fields inside collapsible sections. Club Info section = clubName, currency, upiId, rounding. UPI ID save logic: saves `undefined` (not empty string) when cleared. Rounding warns on active sessions via modal.
 - **Anywhere a setting is consumed:** e.g., `rounding` is read by `stopSession` in queries.ts. Search the codebase for setting usage.
 
 ---
@@ -502,8 +502,8 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 
 **Affects:**
 - `src/components/PaymentQR.tsx` — generates UPI deeplink QR via `qrcode` package. Props: `upiId`, `payeeName`, `amount`, `transactionNote`, `size?`. If UPI URI format changes, update here.
-- `src/pages/SessionDetail.tsx` — renders `<PaymentQR>` on payment screen only when `settings?.upiId` is set. Captures `finalGrandTotal` and `finalRoundedMs` BEFORE calling `stopSession()` to avoid post-stop value drift.
-- `src/pages/Settings.tsx` — `upiId` field in Club Info section. Validated with `validateUpiId()`. Saves `undefined` (not empty string) to Dexie when cleared.
+- `src/pages/SessionDetail.tsx` — renders payment screen as `fixed inset-0 flex-col` layout. QR width is `min(72vw, 280px)`. Middle `flex-1` zone. "Done" pinned in footer `shrink-0`. Bottom nav hidden because `fixed inset-0` sits above. Captures `finalGrandTotal` and `finalRoundedMs` BEFORE calling `stopSession()` to avoid post-stop value drift.
+- `src/pages/Settings.tsx` — `upiId` field inside "Club Info" collapsible section. Validated with `validateUpiId()`. Saves `undefined` (not empty string) to Dexie when cleared.
 - `src/lib/validation.ts` — `validateUpiId()`. If UPI format spec changes, update here AND in Settings error messages.
 - `src/types/index.ts` — `ClubSettings.upiId?: string` (optional)
 - `src/db/database.ts` — v4 bump documents the field (no index needed)
@@ -513,8 +513,21 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 - The QR encodes: `upi://pay?pa=<vpa>&pn=<clubName>&am=<grandTotal>&tn=<tableName>&cu=INR`
 - Amount in QR = grand total (table time + items). Never zero-pad or format; pass raw integer.
 - "Done — back to tables" navigates to `/tables` and clears payment screen state.
+- Payment screen has NO bottom nav — it is a `fixed inset-0` overlay that covers everything.
 
-**Discovered when:** Build Prompt 2, 27 May 2026
+**Discovered when:** Build Prompt 2, 27 May 2026; viewport fix Build Prompt 3, 27 May 2026
+
+---
+
+### If you change collapsible Settings sections
+
+**Affects:**
+- `src/pages/Settings.tsx` — `openSection: string` state. Only one section open at a time. Toggling an open section sets `openSection = ''` (closed). `SettingsSection` component (inline, not exported). Animation via `grid-rows-[1fr/0fr] opacity-100/0`.
+- `sessionStorage['ck_settings_section']` — UI persistence key. Cleared on tab/browser close (not localStorage, not Dexie). Safe to read/write without concern for data integrity.
+- If a section ID changes (e.g., `'club-info'`), the saved `sessionStorage` value becomes stale — harmless (falls back to no-section-open, then defaults to 'club-info' won't auto-open on that session).
+- Section order: `club-info`, `tables`, `subscription`, `data`, `about`, `account`. Adding a new section: add an `id` here and a `<SettingsSection>` block.
+
+**Discovered when:** Build Prompt 3, 27 May 2026
 
 ---
 

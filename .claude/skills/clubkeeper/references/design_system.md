@@ -147,6 +147,52 @@ Example back chevron:
 - `sm:` (640px+) for tablet enhancements only — content centers with `max-w-md mx-auto`
 - No desktop-specific layout in v1. Desktop users get the mobile layout in a centered column.
 
+### Collapsible Section Card (Settings page)
+
+Used in `src/pages/Settings.tsx` as the `SettingsSection` component. Added Build Prompt 3.
+
+```tsx
+function SettingsSection({ id, title, icon, badge, isOpen, onToggle, children }) {
+  return (
+    <div className="bg-bg-card border border-border rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={isOpen}
+        aria-controls={`section-${id}`}
+        className="w-full flex items-center gap-3 px-4 py-4 min-h-[56px] text-left"
+      >
+        <span className="text-text-dim shrink-0">{icon /* 20×20 SVG */}</span>
+        <span className="flex-1 text-[15px] font-semibold text-text">{title}</span>
+        {badge}
+        <svg ... className={`text-text-faint shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}>
+          <path d="M9 6l6 6-6 6" />
+        </svg>
+      </button>
+      <div
+        id={`section-${id}`}
+        className={`grid transition-all duration-200 ease-out ${
+          isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="px-4 pb-4 pt-1 border-t border-border">{children}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+```
+
+**Rules:**
+- Only ONE section open at a time — parent holds `openSection: string`.
+- Header tap target: `min-h-[56px]` (larger than standard 44px — intentional, it's the primary nav element).
+- Animation: `grid-rows-[1fr/0fr]` + `opacity` — no JS animation, no height calculation.
+- `openSection` persisted in `sessionStorage['ck_settings_section']` — UI flag only.
+- Icons: inline SVG 20×20, stroke-2, currentColor. No icon library.
+
+---
+
 ## Empty States
 
 When a list is empty, show:

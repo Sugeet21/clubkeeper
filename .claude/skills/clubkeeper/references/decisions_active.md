@@ -55,6 +55,8 @@ For rejected ideas, historical decisions that have been superseded, and full rea
 - **`handlePayNow` error handling: timeout + status checks + .json() try/catch.** 15s `AbortController` timeout, explicit 404 → "run `vercel dev`" message, try/catch around every `.json()`. Pattern applies to ALL fetches (see `bug_patterns.md` S1).
 - **Home FAB opens inline modal, not navigates.** `<TableFormModal>` in state. Settings's own Add Table button kept. Revisit if duplication becomes confusing.
 - **Settings shows "No active plan, Subscribe →" CTA when `status='none'`.** Never `null`-render a section based on async state — always show something meaningful.
+- **Settings page uses collapsible sections, one open at a time.** Order: Club Info, Tables, Subscription, Data & Backup, About, Account. Club Info open by default. `openSection: string` state — tapping an open section closes it (sets to `''`), tapping a closed section opens it (and closes whatever was open). Persisted in `sessionStorage` (UI flag only — not Dexie, not localStorage).
+- **Payment/QR screen uses `fixed inset-0 flex-col` with QR sized `min(72vw, 280px)`.** Fits any viewport without scroll. Middle `flex-1` zone centers QR + amount. "Done" button pinned at bottom via `shrink-0 footer`. Bottom nav is visually hidden because the screen sits above the layout as a `fixed inset-0` overlay.
 
 ---
 

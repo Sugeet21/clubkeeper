@@ -229,6 +229,11 @@ Files most affected: ALL UI components.
 ### Pattern U2 — Standardized page padding
 **Rule:** All page-level horizontal padding is `px-5`. Pick once, apply everywhere. Inconsistent padding makes the app feel amateur.
 
+### Pattern U6 — Settings collapse-toggle state must live in React, not URL hash
+**Symptom signature:** Closing the Settings page and re-opening resets all sections to closed (or unexpected open state); or back button changes the open section.
+**Root cause:** If open state were stored in URL hash (e.g. `#section=tables`), every toggle pushes a history entry — tapping back navigates through section states instead of going back to `/tables`.
+**Rule:** `openSection` lives in React component state (+ `sessionStorage` for same-tab persistence). Never encode it in the URL or browser history. `sessionStorage` is the correct level: it's per-tab, clears on close, and has no user-facing consequence if stale.
+
 ### Pattern U3 — Sweep the whole file for currency formatting (BUG-011)
 **Symptom signature:** Hero/aggregate amounts are formatted `1,500` but row-level renders show `1500`.
 **Rule:** When adding `toLocaleString('en-IN')` to one place, search the entire file for other `{currency}{amount}` patterns. Row-level displays are usually added later than the aggregate and miss the treatment.

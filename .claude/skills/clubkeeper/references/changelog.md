@@ -203,6 +203,26 @@ Phase 1–3.5 bug fixes, all in one commit, pushed to main, Vercel auto-deployed
 
 ---
 
+## 27 May 2026 — Settings redesign + Payment QR viewport fix (Build Prompt 3)
+
+**Settings redesigned with collapsible sections + plain-English copy:**
+- `src/pages/Settings.tsx`: full rewrite. Flat 6-section scroll replaced with collapsible section cards. Single `openSection: string` state — only one open at a time. "Club Info" open by default. Section order: Club Info, Tables, Subscription, Data & Backup, About, Account.
+- `SettingsSection` component (inline): icon + title + optional badge + chevron. `grid-rows-[1fr/0fr]` animation, no JS lib.
+- Subscription section header shows live status badge (Trialing/Active/Inactive/Subscribe) when collapsed.
+- Tables section header shows live non-disabled table count.
+- Account section shows logged-in email from `authStore.user.email`.
+- All existing actions preserved: UPI ID save, Time Rounding (with active-session warning modal), Add Table, Edit Table, Disable Table, Export, Clear sessions, Tidy player names, Reset, Sign out, Subscribe/Change/Cancel.
+- Copy updated to plain English — "Export everything", "Clear all sessions", "Tidy player names", "Reset everything".
+- `openSection` persisted in `sessionStorage` (UI flag; survives tab navigation, doesn't persist across tabs/devices).
+
+**Payment/QR screen converted to fixed-viewport no-scroll layout:**
+- `src/pages/SessionDetail.tsx`: payment screen now uses `fixed inset-0 flex-col` with `flex-1` middle zone. QR sized `min(72vw, 280px)`. "Done" button always pinned at bottom. Bottom nav not shown (screen is `fixed inset-0`, sits above layout).
+- Header compact: accent "Session ended" tag + single summary line `Table · Xm · Player` (player omitted if null).
+- Duration label: `<1 min` / `12 min` / `1h 12m`.
+- No-UPI path: plain amount card, no QR, "Done" still pinned.
+
+---
+
 ## Open future work (not yet started)
 
 - GST invoicing (Prompt 14)

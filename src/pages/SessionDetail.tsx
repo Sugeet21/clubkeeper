@@ -287,68 +287,98 @@ export default function SessionDetail() {
   const isActive = session.status !== 'completed'
 
   // ─── Payment screen (shown after session stop) ────────────────────────────
+  // Fixed-viewport, no-scroll layout. QR centered in flex-1 middle.
+  // Bottom nav is intentionally hidden — this is a payment moment.
 
   if (paymentScreenOpen) {
     const upiId = settings?.upiId?.trim()
     const clubName = settings?.clubName || 'ClubKeeper'
     const transactionNote = `${tableName} - ${formatDuration(finalRoundedMs)}`
 
-    return (
-      <div className="min-h-screen bg-bg pb-24 pt-safe">
-        <div className="px-5 pt-8 pb-32">
-          {/* Session ended header */}
-          <div className="text-center mb-6">
-            <div className="text-accent text-sm font-medium tracking-wider uppercase font-mono">
-              Session Ended
-            </div>
-            <div className="text-text text-[22px] font-bold tracking-tight mt-2">
-              {tableName} · {formatDuration(finalRoundedMs)}
-            </div>
-            {session.playerName && (
-              <div className="text-text-dim text-sm mt-1">{session.playerName}</div>
-            )}
-          </div>
+    // Duration label: <1m → "<1 min", 1-59m → "12 min", 60+m → "1h 12m"
+    function durationLabel(ms: number): string {
+      const totalMin = Math.floor(ms / 60000)
+      if (totalMin < 1) return '<1 min'
+      if (totalMin < 60) return `${totalMin} min`
+      const h = Math.floor(totalMin / 60)
+      const m = totalMin % 60
+      return m > 0 ? `${h}h ${m}m` : `${h}h`
+    }
 
+    const summaryLine = session.playerName
+      ? `${tableName} · ${durationLabel(finalRoundedMs)} · ${session.playerName}`
+      : `${tableName} · ${durationLabel(finalRoundedMs)}`
+
+    return (
+      <div
+        className="fixed inset-0 bg-bg flex flex-col px-5"
+        style={{
+          paddingTop: 'max(12px, env(safe-area-inset-top))',
+          paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
+        }}
+      >
+        {/* Compact header */}
+        <header className="flex flex-col items-center gap-1 shrink-0 pt-2">
+          <div className="flex items-center gap-2 text-accent">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+            <span className="text-sm font-semibold uppercase tracking-widest">Session ended</span>
+          </div>
+          <div className="text-text-dim text-xs">{summaryLine}</div>
+        </header>
+
+        {/* Hero — QR + amount, fills remaining vertical space */}
+        <main className="flex-1 flex flex-col items-center justify-center min-h-0 gap-4">
           {upiId ? (
             <>
-              <div className="bg-bg-card border border-border rounded-3xl p-6 flex flex-col items-center">
+              <div
+                className="bg-white rounded-2xl p-4"
+                style={{ width: 'min(72vw, 280px)' }}
+              >
                 <PaymentQR
                   upiId={upiId}
                   payeeName={clubName}
                   amount={finalGrandTotal}
                   transactionNote={transactionNote}
-                  size={240}
+                  size={224}
                 />
-                <div className="mt-5 text-text text-[32px] font-bold font-mono tabular-nums">
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <div className="text-3xl font-mono font-bold text-text tabular-nums">
                   ₹{finalGrandTotal.toLocaleString('en-IN')}
                 </div>
-                <div className="text-text-dim text-xs mt-1">Scan to pay exact amount</div>
+                <div className="text-xs text-text-dim">Scan to pay exact amount</div>
               </div>
-              <p className="text-center text-text-dim text-xs mt-4 px-6">
-                The QR includes the exact amount — no manual entry. Works with GPay, PhonePe, Paytm, BHIM.
-              </p>
             </>
           ) : (
-            <div className="bg-bg-card border border-border rounded-3xl p-6 text-center">
-              <div className="text-text text-[40px] font-bold font-mono tabular-nums">
+            <div className="bg-bg-card border border-border rounded-2xl p-8 flex flex-col items-center gap-2 w-full max-w-xs">
+              <div className="text-3xl font-mono font-bold text-text tabular-nums">
                 ₹{finalGrandTotal.toLocaleString('en-IN')}
               </div>
-              <div className="text-text-dim text-sm mt-2">to collect from player</div>
-              <p className="text-text-faint text-xs mt-3">
+              <div className="text-text-dim text-sm">to collect from player</div>
+              <p className="text-text-faint text-xs text-center mt-1">
                 Add your UPI ID in Settings to show a payment QR here.
               </p>
             </div>
           )}
+        </main>
 
-          <div className="mt-8">
-            <button
-              onClick={() => navigate('/tables', { replace: true })}
-              className="w-full min-h-[52px] bg-accent text-bg rounded-2xl font-semibold text-[15px] active:scale-[0.99] transition-transform"
-            >
-              Done — back to tables
-            </button>
-          </div>
-        </div>
+        {/* Footer — pinned at bottom */}
+        <footer className="shrink-0 flex flex-col gap-3">
+          {upiId && (
+            <p className="text-xs text-text-faint text-center max-w-xs mx-auto">
+              Works with GPay, PhonePe, Paytm, BHIM
+            </p>
+          )}
+          <button
+            onClick={() => navigate('/tables', { replace: true })}
+            className="w-full min-h-[44px] bg-accent text-bg font-bold py-4 rounded-2xl text-[15px] active:scale-[0.99] transition-transform"
+          >
+            Done — back to tables
+          </button>
+        </footer>
       </div>
     )
   }
