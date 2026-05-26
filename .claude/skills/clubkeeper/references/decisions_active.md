@@ -41,6 +41,13 @@ For rejected ideas, historical decisions that have been superseded, and full rea
 - **Auth-first app, no anonymous trial mode.** `/tables` requires auth + active subscription. Revisit if conversion is very low.
 - **`.env.local` never committed.** Supabase URL + anon key local-only. Service role key NEVER in client code.
 
+## IndexedDB / Dexie
+
+- **DB name is `ClubKeeperDB_<userId>` (Supabase UUID).** Schema stays v4. Two Google accounts on the same browser see isolated data. The old `ClubKeeperDB` (no suffix) is left untouched on disk for a future one-time migration if needed. Revisit when cloud sync is added — at that point, per-browser scoping becomes redundant.
+- **`db` export is a Proxy over a re-openable instance.** `initDbForUser(userId)` swaps the backing instance; `closeDb()` resets to placeholder. Never replace this with a static singleton — the whole point is that the backing DB can change when the user switches accounts. Pattern: `authStore` calls `initDbForUser` / `closeDb`, no one else does.
+- **Never query `db` before `dbReady === true`.** The Proxy forwards to a placeholder DB pre-auth; Dexie won't crash but writes go to the wrong store. `useAccessGuard` blocks all private routes with `'db_loading'` until `dbReady` is set (Pattern D6).
+- **Full cloud sync still pending.** Cross-device access requires Supabase sync layer — deferred until 3+ paying customers ask. Per-user IndexedDB is the bridge: it's now safe to add `userId`-keyed sync without a schema redesign.
+
 ## Operational patterns
 
 - **`authStore.refreshProfile` has 3000ms dedup window.** `_lastFetchedAt` timestamp prevents the `initialize() + onAuthStateChange(INITIAL_SESSION)` double-fire. `force=true` only after real server mutations (post-payment, post-cancel). **Permanent correctness fix — never revisit.**

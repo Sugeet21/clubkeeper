@@ -188,8 +188,24 @@ Phase 1–3.5 bug fixes, all in one commit, pushed to main, Vercel auto-deployed
 
 ---
 
+## 27 May 2026 — Per-user IndexedDB scoping (LIMIT-001 band-aid)
+
+**What shipped:**
+- `src/db/database.ts`: converted from fixed singleton (`ClubKeeperDB`) to a lazy, re-openable holder. Database name is now `ClubKeeperDB_<userId>` (Supabase UUID). Exports: `initDbForUser(userId)`, `closeDb()`, `isDbReadyForUser(userId)`, `getDbName(userId)`. `db` export is a `Proxy` that forwards all property accesses to the current live instance — all 30+ consumers keep `import { db }` unchanged.
+- `src/store/authStore.ts`: added `dbReady: boolean` to state. After `getSession()` / `onAuthStateChange` confirms a user, calls `initDbForUser(userId)` + `seedIfEmpty()` then sets `dbReady: true`. On sign-out, calls `closeDb()` + sets `dbReady: false`. `initDbForUser` is idempotent (no-ops if same DB is already open — Pattern A1 safe).
+- `src/hooks/useAccessGuard.ts`: added `'db_loading'` guard reason — blocks private routes while `dbReady === false` but auth `loading === false`.
+- `src/components/RequireAccess.tsx`: treats `'db_loading'` same as `'loading'` — shows spinner, prevents any Dexie query hitting placeholder DB.
+- `src/main.tsx`: removed `seedIfEmpty()` call (was module-load time, before any user is authenticated).
+
+**Result:** Two Gmail accounts on same browser now see isolated data. Account A creates "Pool A" → Account B signs in → sees only seed data. Account A signs back in → "Pool A" still there.
+
+**Not addressed:** cross-device sync (still per-browser-origin). Old `ClubKeeperDB` (no suffix) left on disk for future migration.
+
+---
+
 ## Open future work (not yet started)
 
 - GST invoicing (Prompt 14)
 - Email notifications (Prompt 14)
-- Existing offline data migration strategy when cloud sync arrives (deferred — needs user-scoping by `userId` first; Dexie version bump required)
+- One-time migration from old `ClubKeeperDB` → `ClubKeeperDB_<userId>` for users who had data before this change
+- Existing offline data migration strategy when cloud sync arrives (now unblocked — Dexie is already per-user)

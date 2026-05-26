@@ -76,7 +76,7 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 27 May 2026 (Session Items / POS + UPI QR sprint, commit `3c0ca58`)*
+*Last updated: 27 May 2026 (Per-user IndexedDB scoping — LIMIT-001 band-aid)*
 
 **Built and live on Vercel:**
 - 6 screens: Tables (home `/tables`), StartSession, SessionDetail, Settings, History, Summary
@@ -96,6 +96,7 @@ Read MULTIPLE files when the question spans domains.
 - Supabase project: `vkczmgzujpidbwtzulel.supabase.co`
 - Razorpay plan IDs: single source of truth in `src/lib/razorpayPlans.ts`
 - ✅ End-to-end payment verified on production (TEST mode)
+- Per-user IndexedDB: DB name is `ClubKeeperDB_<userId>`. Two Gmail accounts on same browser see isolated data. `db` export is a Proxy; `authStore` manages `initDbForUser` / `closeDb` lifecycle. `dbReady` flag gates all private routes via `useAccessGuard`.
 
 **Dexie version history:**
 - v1/v2: gameTables + sessions + settings
@@ -111,10 +112,11 @@ Read MULTIPLE files when the question spans domains.
 4. GST invoicing + email notifications (next sprint)
 5. PWA stale service worker on regular Chrome — needs "Update Available" banner so users get new deploys without hard-refresh
 6. Manual test of Build Prompt 2 validation checklist (items totals, UPI QR scan, rounding warning, recent chips)
+7. One-time migration from old `ClubKeeperDB` → `ClubKeeperDB_<userId>` for any existing user who had data before this change (write migration script when first customer reports missing data)
 
 **Known limitations:**
-- **LIMIT-001:** `/api/*` requires `vercel dev` locally, not `npm run dev`. Handled with friendly 404 error in `handlePayNow`.
-- IndexedDB is per-browser-origin, not per-user. Deferred until cloud sync. Warn Sugeet if he asks for multi-staff login on one phone.
+- **LIMIT-001 (partially fixed):** IndexedDB is now per-user per-browser (`ClubKeeperDB_<userId>`). Two Gmail accounts on the same browser see separate data. Cross-device sync is still not implemented — same account on Chrome vs Edge sees different data. Full fix requires cloud sync (Supabase). Warn Sugeet if he asks for multi-device access.
+- **LIMIT-002:** `/api/*` requires `vercel dev` locally, not `npm run dev`. Handled with friendly 404 error in `handlePayNow`.
 
 ## Updating This Skill
 

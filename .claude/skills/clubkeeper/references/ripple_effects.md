@@ -308,13 +308,33 @@ All 4 paths are guarded by `!paying` — cannot escape mid-payment.
 
 ---
 
+## Per-user IndexedDB — added 27 May 2026
+
+### If you change the auth init or sign-out flow
+
+**Affects:**
+- `src/store/authStore.ts` — must call `initDbForUser(userId)` + `seedIfEmpty()` after confirming user, then set `dbReady: true`. Must call `closeDb()` + set `dbReady: false` on sign-out.
+- `src/db/database.ts` — exports `initDbForUser`, `closeDb`, `isDbReadyForUser`, `getDbName`. The `_db` holder is swapped by these helpers only. No one else should mutate it.
+- `src/hooks/useAccessGuard.ts` — reads `dbReady` from authStore; returns `{ canAccess: false, reason: 'db_loading' }` while `dbReady === false` and user is authenticated.
+- `src/components/RequireAccess.tsx` — treats `'db_loading'` same as `'loading'` (spinner), so no Dexie query runs against the placeholder DB.
+
+**Rules:**
+- `initDbForUser` is idempotent — safe to call on every `INITIAL_SESSION` re-fire (Pattern A1).
+- `closeDb()` resets `_db` to a `ClubKeeperDB__pending` placeholder — never null.
+- Never call `initDbForUser` or `closeDb` from anywhere except `authStore`. Only one actor controls the DB lifecycle.
+- Public routes (Landing, Signup, AuthCallback) do NOT query Dexie — no `dbReady` check needed there.
+
+**Discovered when:** LIMIT-001 band-aid, 27 May 2026.
+
+---
+
 ## Authentication Changes (Prompt 9 — NOW LIVE)
 
 ### If you change the auth flow (authStore, RequireAccess, AuthCallback)
 
 **Affects:**
-- `src/store/authStore.ts` — central auth state (session, user, profile, subscription, loading, _lastFetchedAt)
-- `src/hooks/useAccessGuard.ts` — reads loading/session/subscription, returns typed guard result
+- `src/store/authStore.ts` — central auth state (session, user, profile, subscription, loading, dbReady, _lastFetchedAt)
+- `src/hooks/useAccessGuard.ts` — reads loading/session/subscription/dbReady, returns typed guard result
 - `src/components/RequireAccess.tsx` — uses useAccessGuard, redirects to /signup or /subscribe
 - `src/pages/AuthCallback.tsx` — reads loading + subscription to route after OAuth
 - `src/App.tsx` — AuthInitializer calls initialize(); AppLayout hides BottomNav on public paths

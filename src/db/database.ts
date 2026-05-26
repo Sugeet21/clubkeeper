@@ -1,14 +1,20 @@
 import Dexie, { type Table } from 'dexie'
 import type { GameTable, Session, ClubSettings, SessionItem } from '../types'
 
-class ClubKeeperDB extends Dexie {
+// ─── Per-user DB class ────────────────────────────────────────────────────────
+// Database name is `ClubKeeperDB_<userId>` so two different Google accounts
+// on the same browser never share IndexedDB data (LIMIT-001 band-aid).
+// The old `ClubKeeperDB` (no suffix) is intentionally left untouched on disk
+// so a one-time migration can be written later if needed.
+
+export class ClubKeeperDB extends Dexie {
   gameTables!: Table<GameTable, number>
   sessions!: Table<Session, number>
   settings!: Table<ClubSettings, number>
   sessionItems!: Table<SessionItem, number>
 
-  constructor() {
-    super('ClubKeeperDB')
+  constructor(dbName: string) {
+    super(dbName)
     // Version 1 kept for upgrade path (no migration callback needed)
     this.version(1).stores({
       gameTables: '++id, name, gameType, sortOrder, outOfService',
@@ -28,7 +34,8 @@ class ClubKeeperDB extends Dexie {
       settings: 'id',
       sessionItems: '++id, sessionId, addedAt',
     })
-    // Version 4: adds optional upiId field to settings (no index needed; auto-migrates)
+    // Version 4: same indexes as v3; documents optional upiId field on settings
+    // (no index needed — field is read-only from settings singleton row)
     this.version(4).stores({
       gameTables: '++id, name, gameType, sortOrder, outOfService',
       sessions: '++id, tableId, status, startedAt, endedAt',
@@ -38,4 +45,50 @@ class ClubKeeperDB extends Dexie {
   }
 }
 
-export const db = new ClubKeeperDB()
+// ─── Mutable holder ───────────────────────────────────────────────────────────
+// All consumers `import { db }` — the underlying instance swaps when the user
+// signs in / out / switches accounts. Starts as a "pending" placeholder so
+// the Proxy export always has something to forward to (no null-checks needed
+// in callers). The router gates rendering on `dbReady` (see authStore) so
+// real Dexie ops never hit the placeholder.
+
+let _db: ClubKeeperDB = new ClubKeeperDB('ClubKeeperDB__pending')
+
+// ─── Proxy export — `db` ─────────────────────────────────────────────────────
+// All 30+ consumers keep `import { db } from '@/db/database'` unchanged.
+// Property accesses (db.gameTables, db.sessions, etc.) forward to whatever
+// _db currently points at.
+
+export const db = new Proxy({} as ClubKeeperDB, {
+  get(_target, prop: string | symbol): unknown {
+    return _db[prop as keyof ClubKeeperDB]
+  },
+})
+
+// ─── Lifecycle helpers (called by authStore only) ─────────────────────────────
+
+export function getDbName(userId: string): string {
+  return `ClubKeeperDB_${userId}`
+}
+
+export async function initDbForUser(userId: string): Promise<void> {
+  const targetName = getDbName(userId)
+  // No-op if already open on the correct DB (Pattern A1: avoids INITIAL_SESSION
+  // re-fire from triggering a spurious close/reopen while a session is active).
+  if (_db.name === targetName && _db.isOpen()) return
+  if (_db.isOpen()) _db.close()
+  _db = new ClubKeeperDB(targetName)
+  await _db.open()
+}
+
+export async function closeDb(): Promise<void> {
+  if (_db.isOpen()) _db.close()
+  // Reset to placeholder so any accidental post-signout query hits a named,
+  // inspectable DB rather than crashing with "Cannot read property of null".
+  _db = new ClubKeeperDB('ClubKeeperDB__pending')
+}
+
+export function isDbReadyForUser(userId: string | null | undefined): boolean {
+  if (!userId) return false
+  return _db.name === getDbName(userId) && _db.isOpen()
+}

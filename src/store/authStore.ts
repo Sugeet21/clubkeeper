@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { supabase } from '../lib/supabase'
 import type { Session, User } from '@supabase/supabase-js'
 import type { UserProfile, Subscription } from '../types'
+import { initDbForUser, closeDb } from '../db/database'
+import { seedIfEmpty } from '../db/seed'
 
 interface AuthState {
   session: Session | null
@@ -9,7 +11,8 @@ interface AuthState {
   profile: UserProfile | null
   subscription: Subscription | null
   loading: boolean
-  _lastFetchedAt: number  // epoch ms; 0 = never fetched
+  dbReady: boolean           // true once initDbForUser + seed complete for current user
+  _lastFetchedAt: number     // epoch ms; 0 = never fetched
   initialize: () => Promise<void>
   signInWithGoogle: () => Promise<void>
   signOut: () => Promise<void>
@@ -22,12 +25,22 @@ interface AuthState {
 // Post-payment refresh (Subscribe.tsx) uses force=true to bypass this guard.
 const REFRESH_COOLDOWN_MS = 3000
 
+// ─── Helper: open per-user DB + seed ─────────────────────────────────────────
+// Called from both initialize() and onAuthStateChange. Idempotent:
+// initDbForUser no-ops if already open on the same DB (Pattern A1 safety).
+
+async function openAndSeed(userId: string): Promise<void> {
+  await initDbForUser(userId)
+  await seedIfEmpty()
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   session: null,
   user: null,
   profile: null,
   subscription: null,
   loading: true,
+  dbReady: false,
   _lastFetchedAt: 0,
 
   initialize: async () => {
@@ -39,15 +52,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (session?.user) {
         await get().refreshProfile()
+        await openAndSeed(session.user.id)
+        set({ dbReady: true })
       }
 
-      console.log('[authStore] refreshProfile done', {
+      console.log('[authStore] initialize done', {
         profile: !!get().profile,
         subscription: get().subscription?.status,
+        dbReady: get().dbReady,
       })
     } catch (err) {
       console.error('[authStore] initialize error', err)
     } finally {
+      // Pattern A5: loading flag MUST clear in finally — any throw above
+      // would leave the app frozen on the spinner without this.
       set({ loading: false })
       console.log('[authStore] initialize complete, loading=false')
     }
@@ -55,10 +73,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     supabase.auth.onAuthStateChange(async (_event, session) => {
       console.log('[authStore] onAuthStateChange', { event: _event, hasSession: !!session })
       set({ session, user: session?.user ?? null })
+
       if (session?.user) {
         await get().refreshProfile()
+        // initDbForUser is idempotent — safe to call on every INITIAL_SESSION
+        // re-fire without closing/reopening the connection (Pattern A1).
+        await openAndSeed(session.user.id)
+        set({ dbReady: true })
       } else {
-        set({ profile: null, subscription: null })
+        // Sign-out: close the per-user DB, reset state.
+        await closeDb()
+        set({ profile: null, subscription: null, dbReady: false })
       }
     })
   },
@@ -136,6 +161,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signOut: async () => {
     await supabase.auth.signOut()
-    set({ session: null, user: null, profile: null, subscription: null })
+    // closeDb() is also called by onAuthStateChange on null session (Step 2),
+    // but calling it here first is safe (idempotent) and ensures the DB is
+    // closed before any redirect clears component state.
+    await closeDb()
+    set({ session: null, user: null, profile: null, subscription: null, dbReady: false })
   },
 }))

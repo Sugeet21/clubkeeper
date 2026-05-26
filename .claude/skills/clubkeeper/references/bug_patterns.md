@@ -69,6 +69,11 @@ Files most affected: `src/db/*`, any component that mutates and re-renders.
 **Symptom signature:** Disabled-table edit pencil still clickable but looks ghostly.
 **Rule:** Apply `opacity-50` ONLY to text/info divs, NEVER to action buttons. Either disable an element properly (`pointer-events-none` + `aria-disabled`) or keep it at full opacity.
 
+### Pattern D6 — Never query `db` before `dbReady === true` (LIMIT-001 fix, 27 May 2026)
+**Symptom signature:** Dexie writes succeed but data appears to be lost; or two accounts see each other's data.
+**Root cause:** The `db` export is a Proxy over a mutable `_db` holder. Before `initDbForUser()` runs, `_db` points to a `ClubKeeperDB__pending` placeholder. Dexie ops against the placeholder are valid IndexedDB ops — they just write to the wrong database.
+**Rule:** `useAccessGuard` returns `{ canAccess: false, reason: 'db_loading' }` while `dbReady === false`. Private routes render a spinner, not their content. No Dexie query runs until `dbReady` is set to `true` in authStore after `initDbForUser(userId)` + `seedIfEmpty()` complete.
+
 ### Pattern D5 — Button labels must match behavior
 **Rule:** If "Delete" doesn't actually delete (it soft-deletes), call it "Disable". Context-aware labels are fine ("Enable Table" when editing a disabled one). Inherited misnomers from earlier prompts must be renamed.
 
