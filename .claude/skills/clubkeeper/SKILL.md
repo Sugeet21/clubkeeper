@@ -76,20 +76,31 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 25 May 2026 (post Razorpay+Auth bug session, commits `7ad20b1`–`b99388b`)*
+*Last updated: 27 May 2026 (Session Items / POS + UPI QR sprint, commit `3c0ca58`)*
 
 **Built and live on Vercel:**
 - 6 screens: Tables (home `/tables`), StartSession, SessionDetail, Settings, History, Summary
 - Landing → Signup → Subscribe → Tables flow, all wired with route guards
 - Auth: Supabase + Google OAuth (`prompt: 'select_account'` enforced)
 - Payment: REAL Razorpay (TEST mode). Serverless `/api/*`: create-subscription, razorpay-webhook, cancel-subscription
-- Settings has Subscription section (plan/status/next-charge/cancel/change-plan); `status='none'` shows Subscribe CTA card
+- Settings: Subscription section + UPI ID field (optional, for QR payments)
+- Session Items (POS): add snacks/drinks per session with Undo, bill split, grand total
+- Post-stop payment screen: UPI QR (via `qrcode` npm pkg) if `upiId` set in Settings
+- Stop Session confirm: shows rounded time preview + items + grand total before stopping
+- Recent-items chips: top 8 from last 30 days appear in AddItemBottomSheet
+- Summary + History: all row/day totals include items; CSV has Table Amount / Items / Total columns
+- Rounding change: warns when active sessions exist (change only affects future stops)
 - PWA install support
 - Playwright suite: 8 spec files × 3 viewports
 - GitHub: `github.com/Sugeet21/clubkeeper`
 - Supabase project: `vkczmgzujpidbwtzulel.supabase.co`
 - Razorpay plan IDs: single source of truth in `src/lib/razorpayPlans.ts`
-- ✅ End-to-end payment verified on production (TEST mode) — free trial subscription created successfully
+- ✅ End-to-end payment verified on production (TEST mode)
+
+**Dexie version history:**
+- v1/v2: gameTables + sessions + settings
+- v3: added sessionItems table (`++id, sessionId, addedAt`)
+- v4: documents `upiId` field on settings (no index)
 
 **⚠️ Razorpay key rotation warning:** If `VITE_RAZORPAY_KEY_ID` or `RAZORPAY_KEY_SECRET` is ever rotated, or LIVE mode is enabled, the 6 plan IDs in `razorpayPlans.ts` MUST be re-verified against the new account. Run: `curl -u KEY_ID:KEY_SECRET https://api.razorpay.com/v1/plans/PLAN_ID` — expect 200. See Pattern S5.
 
@@ -99,6 +110,7 @@ Read MULTIPLE files when the question spans domains.
 3. BUG-013 visual verification of `status='none'` card
 4. GST invoicing + email notifications (next sprint)
 5. PWA stale service worker on regular Chrome — needs "Update Available" banner so users get new deploys without hard-refresh
+6. Manual test of Build Prompt 2 validation checklist (items totals, UPI QR scan, rounding warning, recent chips)
 
 **Known limitations:**
 - **LIMIT-001:** `/api/*` requires `vercel dev` locally, not `npm run dev`. Handled with friendly 404 error in `handlePayNow`.

@@ -158,6 +158,36 @@ Phase 1–3.5 bug fixes, all in one commit, pushed to main, Vercel auto-deployed
 
 ---
 
+## 27 May 2026 — Session Items (POS) + UPI QR + Stop-Session improvements (commit `3c0ca58`)
+
+### Build Prompt 1 — Session Items (POS)
+**Shipped:**
+- `src/types/index.ts`: `SessionItem` interface; `ClubSettings.upiId?: string`
+- `src/db/database.ts`: Dexie v3 (`sessionItems: '++id, sessionId, addedAt'`); v4 documents `upiId` field
+- `src/lib/validation.ts`: `validateItemName()` (unicode regex, 1-50 chars); `validateUpiId()` (format `handle@provider`, optional)
+- `src/lib/money.ts`: `calculateItemsTotal(items: SessionItem[]): number`
+- `src/db/queries.ts`: `addSessionItem`, `updateSessionItem`, `deleteSessionItem`, `restoreSessionItem`; `RecentItem` interface + `getRecentItems(limit=8)` (last 30 days, sorted by useCount)
+- `src/hooks/useLiveData.ts`: `useSessionItems(sessionId)`, `SessionWithItems` type, `useSessionsInRange(startMs, endMs)`, `useRecentItems(limit=8)`
+- `src/components/AddItemBottomSheet.tsx`: full POS bottom sheet — add/edit/delete items, Undo toast, Pattern M1+M2, 44px touch targets, no maxLength, recent-items chips
+- `src/components/ToastContainer.tsx`: renders `actionLabel` Undo button (`z-[60]`); `toastStore` extended with `actionLabel?/onAction?/durationMs?`
+- `src/pages/SessionDetail.tsx`: bill split card (Table time + Items + Grand Total); rounding preview before stop; post-stop payment screen with QR
+- `src/pages/Home.tsx`: Today total includes items
+- `src/pages/Summary.tsx`: full rewrite — `useSessionsInRange`, row amounts include items, CSV has `Table Amount/Items/Total` columns
+- `src/pages/History.tsx`: full rewrite — `useSessionsInRange`, day subtotals include items, same CSV format
+
+### Build Prompt 2 — Items v2 + UPI QR + fixes
+**Shipped on top of Build Prompt 1:**
+- `src/components/PaymentQR.tsx`: new component using `qrcode` npm package — generates UPI deeplink QR as data URL; white bg; loading skeleton; error fallback
+- `src/pages/Settings.tsx`: UPI ID field in Club Info section (optional, `validateUpiId` on blur, Save button); rounding-change warning modal if active sessions exist
+- `src/pages/SessionDetail.tsx`: post-stop payment screen shows `PaymentQR` if `settings.upiId` set, otherwise plain amount card; "Done — back to tables" button
+- AddItemBottomSheet: recent-items chips visible above name input; placeholder changed from "Cigarette" → "Cold drink, Chips, Water bottle"
+- Summary + History: fixed row amounts to include items (were showing table-time only)
+- Stop confirm: shows rounded time + items + grand total preview before confirming stop
+
+**npm package added:** `qrcode` + `@types/qrcode`
+
+---
+
 ## Open future work (not yet started)
 
 - GST invoicing (Prompt 14)

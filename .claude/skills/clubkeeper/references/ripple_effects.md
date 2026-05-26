@@ -472,4 +472,41 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 - toastStore was extended to support `actionLabel`/`onAction`/`durationMs` for Undo — existing callers (string `show()`) still work unchanged
 - ToastContainer was updated to render the Undo action button
 
-**Discovered when:** Session Items (POS) feature, 26 May 2026
+**Discovered when:** Session Items (POS) feature, 26–27 May 2026
+
+---
+
+## UPI QR / Payment Screen — added 27 May 2026
+
+### If you change the UPI QR or post-stop payment screen
+
+**Affects:**
+- `src/components/PaymentQR.tsx` — generates UPI deeplink QR via `qrcode` package. Props: `upiId`, `payeeName`, `amount`, `transactionNote`, `size?`. If UPI URI format changes, update here.
+- `src/pages/SessionDetail.tsx` — renders `<PaymentQR>` on payment screen only when `settings?.upiId` is set. Captures `finalGrandTotal` and `finalRoundedMs` BEFORE calling `stopSession()` to avoid post-stop value drift.
+- `src/pages/Settings.tsx` — `upiId` field in Club Info section. Validated with `validateUpiId()`. Saves `undefined` (not empty string) to Dexie when cleared.
+- `src/lib/validation.ts` — `validateUpiId()`. If UPI format spec changes, update here AND in Settings error messages.
+- `src/types/index.ts` — `ClubSettings.upiId?: string` (optional)
+- `src/db/database.ts` — v4 bump documents the field (no index needed)
+
+**Key behaviour:**
+- `upiId` is OPTIONAL. If not set, payment screen shows plain amount card, no QR.
+- The QR encodes: `upi://pay?pa=<vpa>&pn=<clubName>&am=<grandTotal>&tn=<tableName>&cu=INR`
+- Amount in QR = grand total (table time + items). Never zero-pad or format; pass raw integer.
+- "Done — back to tables" navigates to `/tables` and clears payment screen state.
+
+**Discovered when:** Build Prompt 2, 27 May 2026
+
+---
+
+## Stop Session confirm modal — added 27 May 2026
+
+### If you change the stop-session flow (rounding preview, confirm modal, final amount)
+
+**Affects:**
+- `src/pages/SessionDetail.tsx` — calls `applyRounding` + `calculateAmount` with live `rawElapsedMs` to preview rounded time and grand total BEFORE user confirms. Captures snapshot into `finalRoundedMs` + `finalGrandTotal` state at confirm time so payment screen values don't drift after Dexie writes.
+- `src/db/queries.ts` → `stopSession()` — actual rounding happens here; must use same logic as preview or values will differ.
+- `src/lib/money.ts` → `applyRounding()` + `calculateAmount()` — both called in preview AND in stopSession. If either changes, the preview and the stored value will diverge. Always update both callsites.
+
+**Rule:** Never change `applyRounding` or `calculateAmount` without verifying the stop-confirm preview still matches the final stored amount.
+
+**Discovered when:** Build Prompt 2 stop-session improvements, 27 May 2026
