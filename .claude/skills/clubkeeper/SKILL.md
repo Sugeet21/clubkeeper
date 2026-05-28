@@ -76,7 +76,7 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 29 May 2026 (V1-LAUNCH plan filter — Standard Monthly only)*
+*Last updated: 29 May 2026 (payment overlay z-50 + QR aspect-square fix; Pattern U7 + U8 added)*
 
 **Built and live on Vercel:**
 - 6 screens: Tables (home `/tables`), StartSession, SessionDetail, Settings, History, Summary

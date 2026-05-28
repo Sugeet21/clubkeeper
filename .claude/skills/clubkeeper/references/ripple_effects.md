@@ -514,8 +514,8 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 ### If you change the UPI QR or post-stop payment screen
 
 **Affects:**
-- `src/components/PaymentQR.tsx` — generates UPI deeplink QR via `qrcode` package. Props: `upiId`, `payeeName`, `amount`, `transactionNote`, `size?`. If UPI URI format changes, update here.
-- `src/pages/SessionDetail.tsx` — renders payment screen as `fixed inset-0 flex-col` layout. QR width is `min(72vw, 280px)`. Middle `flex-1` zone. "Done" pinned in footer `shrink-0`. Bottom nav hidden because `fixed inset-0` sits above. Captures `finalGrandTotal` and `finalRoundedMs` BEFORE calling `stopSession()` to avoid post-stop value drift.
+- `src/components/PaymentQR.tsx` — generates UPI deeplink QR via `qrcode` package. Props: `upiId`, `payeeName`, `amount`, `transactionNote`, `size?`. `size` is INTERNAL render resolution (default 560, 2× of 280 cap), NOT displayed CSS size. Output element uses `width:100%; height:auto; display:block` so it scales to parent (see Pattern U7). If UPI URI format changes, update here.
+- `src/pages/SessionDetail.tsx` — renders payment screen as `fixed inset-0 z-50 flex-col` layout (z-50 REQUIRED to cover bottom nav — see bug_patterns Pattern U8). QR width is `min(72vw, 280px)`. White card is `aspect-square flex items-center justify-center p-3` for equal borders (see Pattern U7). Middle `flex-1` zone. "Done" pinned in footer `shrink-0`. Overlay padding uses `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)` for notch/home-indicator safety. Captures `finalGrandTotal` and `finalRoundedMs` BEFORE calling `stopSession()` to avoid post-stop value drift.
 - `src/pages/Settings.tsx` — `upiId` field inside "Club Info" collapsible section. Validated with `validateUpiId()`. Saves `undefined` (not empty string) to Dexie when cleared.
 - `src/lib/validation.ts` — `validateUpiId()`. If UPI format spec changes, update here AND in Settings error messages.
 - `src/types/index.ts` — `ClubSettings.upiId?: string` (optional)

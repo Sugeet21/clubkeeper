@@ -267,6 +267,16 @@ Files most affected: ALL UI components.
 **Symptom signature:** Hero/aggregate amounts are formatted `1,500` but row-level renders show `1500`.
 **Rule:** When adding `toLocaleString('en-IN')` to one place, search the entire file for other `{currency}{amount}` patterns. Row-level displays are usually added later than the aggregate and miss the treatment.
 
+### Pattern U7 — Fluid card with fixed-size child
+**Symptom signature:** Asymmetric whitespace inside a responsive card — thicker border on one side, thinner on the other. Often noticed with QR codes, images, or canvases inside cards sized with `min()`, `%`, or `vw`.
+**Root cause:** Parent container is fluid (e.g. `width: min(72vw, 280px)`) but the child element (canvas, img, SVG) has a fixed pixel size. Browser centers the child but the parent's padding becomes uneven as the parent resizes.
+**Rule:** Any child of a fluid-width card must use `style={{ width: '100%', height: 'auto', display: 'block' }}`. For raster outputs like QR canvases, render at 2× the max display size internally (e.g. 560 for a 280px cap) for retina crispness, then let CSS scale it down. Also wrap the card in `aspect-square flex items-center justify-center` when the child should be a perfect square — guarantees equal borders on all 4 sides regardless of viewport width.
+
+### Pattern U8 — Full-screen overlay must be z-50 to cover bottom nav
+**Symptom signature:** A `fixed inset-0` overlay is set up to cover the whole screen, but the bottom nav (or other fixed elements) still bleeds through at the bottom. Buttons in the overlay's footer are invisible or untappable.
+**Root cause:** `fixed inset-0` positions the overlay full-screen but does not set a stacking context. The bottom nav has its own z-index (or sits later in DOM order) and renders on top of the overlay's footer.
+**Rule:** Any full-screen overlay that must cover the bottom nav uses `z-50` (same tier as Modal Pattern M1's sheet). Also: the footer inside the overlay must use `paddingBottom: 'max(16px, env(safe-area-inset-bottom))'` so the action button clears the iOS/Android home indicator. Do NOT raise above z-50 (conflicts with Modal Pattern M1) and do NOT hide the bottom nav via `display:none` — the overlay covering it is the correct approach.
+
 ---
 
 ## Modals & Overlays (z-index, escape paths)
