@@ -223,6 +223,24 @@ Phase 1–3.5 bug fixes, all in one commit, pushed to main, Vercel auto-deployed
 
 ---
 
+## 29 May 2026 — V1-LAUNCH plan filter (display-only)
+
+**What shipped:**
+- `src/components/subscribe/PlanSelection.tsx`: added `VISIBLE_PLAN_IDS = ['standard']` filter constant. `visiblePlans` derived via `.filter()` before `.map()` — PLANS array (all 3 entries) left fully intact. `BillingToggle` commented out (import also commented) since only monthly is shown. Welcome copy updated from "Pick a plan" to "Start your 7-day free trial".
+- `src/components/landing/PricingSection.tsx`: Starter and Pro cards hidden (replaced with `{/* hidden for V1-LAUNCH */}` comments). Only Standard ₹599 featured card renders. Footer tagline updated to "7-day free trial · cancel anytime before day 8." Removed now-unused `STARTER_FEATURES`, `PRO_FEATURES`, `Circle` declarations to prevent TS errors.
+
+**What was NOT changed (by design):**
+- `src/lib/razorpayPlans.ts` — all 6 plan IDs intact (Pattern S5 preserved)
+- `api/create-subscription.ts`, `api/razorpay-webhook.ts` — no serverless changes
+- `PlanId` TypeScript type union — unchanged
+- `Subscribe.tsx` — `selectedPlan` already defaulted to `'standard'`; no change needed
+
+**Revert path:** Remove `VISIBLE_PLAN_IDS` filter + `visiblePlans` variable from PlanSelection.tsx, uncomment `BillingToggle`, restore Starter/Pro cards + their data in PricingSection.tsx.
+
+**Build:** ✅ Zero TS errors. `razorpayPlans.ts` git diff = empty.
+
+---
+
 ## Open future work (not yet started)
 
 - GST invoicing (Prompt 14)

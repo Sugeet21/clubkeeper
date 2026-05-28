@@ -1,4 +1,4 @@
-import { BillingToggle } from './BillingToggle'
+// import { BillingToggle } from './BillingToggle' // V1-LAUNCH: re-enable with toggle when annual plans are live
 import { PlanCard } from './PlanCard'
 
 type PlanId = 'starter' | 'standard'
@@ -68,7 +68,12 @@ const PLANS = [
   },
 ]
 
+// V1-LAUNCH: showing only Standard Monthly. Revert this block to re-enable tiering (see SKILL.md "scope gating deferred").
+const VISIBLE_PLAN_IDS = ['standard'] as const
+
 export function PlanSelection({ billing, onBillingChange, selectedPlan, onPlanSelect, displayName }: Props) {
+  const visiblePlans = PLANS.filter((p) => (VISIBLE_PLAN_IDS as readonly string[]).includes(p.id))
+
   return (
     <div className="px-5 pt-5 pb-40">
       {/* Welcome */}
@@ -77,16 +82,16 @@ export function PlanSelection({ billing, onBillingChange, selectedPlan, onPlanSe
           Welcome, <span className="text-accent">{displayName}</span> 👋
         </h1>
         <p className="text-[14.5px] text-text-dim">
-          Pick a plan to start your 7-day free trial. You won't be charged until day 8.
+          Start your 7-day free trial. You won't be charged until day 8.
         </p>
       </div>
 
-      {/* Billing toggle */}
-      <BillingToggle billing={billing} onChange={onBillingChange} />
+      {/* Billing toggle hidden — V1-LAUNCH: only monthly plan shown. Re-enable when annual plans are live. */}
+      {/* <BillingToggle billing={billing} onChange={onBillingChange} /> */}
 
       {/* Plan cards */}
       <div className="flex flex-col gap-3.5">
-        {PLANS.map((plan) => (
+        {visiblePlans.map((plan) => (
           <PlanCard
             key={plan.id}
             id={plan.id}

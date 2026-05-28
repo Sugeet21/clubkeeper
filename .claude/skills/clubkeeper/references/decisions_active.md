@@ -28,6 +28,7 @@ For rejected ideas, historical decisions that have been superseded, and full rea
 
 ## Pricing & billing
 
+- **V1-LAUNCH: only Standard Monthly (₹599) shown in UI.** Starter and Pro cards hidden in PricingSection.tsx and PlanSelection.tsx via `VISIBLE_PLAN_IDS` filter. All plan data and Razorpay plan IDs intact — display-only change, trivially reversible. Revisit when tiering is re-enabled (remove filter + restore hidden cards).
 - **Tiers: ₹299 / ₹599 / ₹999 monthly. ₹599 is target.** ₹599 hits the ROI math sweet spot (18× return at ₹10k/month leakage). ₹999 leaves room for Pro v2 features. Revisit at 3 months: <5% conversion → lower entry; >20% → raise.
 - **Razorpay for payments.** Dominant Indian provider, best NACH auto-debit support. 2% fee accepted. Revisit at 500+ customers — negotiate enterprise pricing.
 - **Razorpay Subscription API, not Orders API.** Recurring billing requires Subscription API. Orders API is one-time only.

@@ -76,20 +76,21 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 27 May 2026 (Per-user IndexedDB scoping — LIMIT-001 band-aid)*
+*Last updated: 29 May 2026 (V1-LAUNCH plan filter — Standard Monthly only)*
 
 **Built and live on Vercel:**
 - 6 screens: Tables (home `/tables`), StartSession, SessionDetail, Settings, History, Summary
 - Landing → Signup → Subscribe → Tables flow, all wired with route guards
 - Auth: Supabase + Google OAuth (`prompt: 'select_account'` enforced)
 - Payment: REAL Razorpay (TEST mode). Serverless `/api/*`: create-subscription, razorpay-webhook, cancel-subscription
-- Settings: Subscription section + UPI ID field (optional, for QR payments)
+- Settings: **collapsible section cards** — Club Info (default open), Tables, Subscription, Data & Backup, About, Account. Only one section open at a time. `openSection` in React state + `sessionStorage`. Subscription header shows live status badge. Tables header shows live non-disabled count. Account section shows logged-in email.
 - Session Items (POS): add snacks/drinks per session with Undo, bill split, grand total
-- Post-stop payment screen: UPI QR (via `qrcode` npm pkg) if `upiId` set in Settings
+- Post-stop payment screen: **fixed-viewport no-scroll layout** — `fixed inset-0 flex-col`, QR sized `min(72vw,280px)`, Done button always pinned. UPI QR (via `qrcode` npm pkg) if `upiId` set; plain amount card if not.
 - Stop Session confirm: shows rounded time preview + items + grand total before stopping
 - Recent-items chips: top 8 from last 30 days appear in AddItemBottomSheet
 - Summary + History: all row/day totals include items; CSV has Table Amount / Items / Total columns
 - Rounding change: warns when active sessions exist (change only affects future stops)
+- **V1-LAUNCH plan filter:** Subscribe page and landing `/pricing` show ONLY Standard Monthly (₹599). Starter and Pro hidden via `VISIBLE_PLAN_IDS` filter in `PlanSelection.tsx` + hidden cards in `PricingSection.tsx`. All 6 Razorpay plan IDs and `PLANS` array untouched. Revert = remove filter + restore cards.
 - PWA install support
 - Playwright suite: 8 spec files × 3 viewports
 - GitHub: `github.com/Sugeet21/clubkeeper`
@@ -111,8 +112,9 @@ Read MULTIPLE files when the question spans domains.
 3. BUG-013 visual verification of `status='none'` card
 4. GST invoicing + email notifications (next sprint)
 5. PWA stale service worker on regular Chrome — needs "Update Available" banner so users get new deploys without hard-refresh
-6. Manual test of Build Prompt 2 validation checklist (items totals, UPI QR scan, rounding warning, recent chips)
+6. Manual test of Build Prompt 3 validation checklist (Settings collapsibles, payment QR fits viewport, all actions still work)
 7. One-time migration from old `ClubKeeperDB` → `ClubKeeperDB_<userId>` for any existing user who had data before this change (write migration script when first customer reports missing data)
+8. Playwright specs may need updating — selectors looking for old Settings labels (e.g. "CLUB INFO" allcaps) need to target "Club Info" and the new collapsible structure
 
 **Known limitations:**
 - **LIMIT-001 (partially fixed):** IndexedDB is now per-user per-browser (`ClubKeeperDB_<userId>`). Two Gmail accounts on the same browser see separate data. Cross-device sync is still not implemented — same account on Chrome vs Edge sees different data. Full fix requires cloud sync (Supabase). Warn Sugeet if he asks for multi-device access.

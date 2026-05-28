@@ -1,12 +1,6 @@
 import { Eyebrow } from './Eyebrow'
 
-const STARTER_FEATURES = [
-  'Up to 3 tables',
-  'Live timer + pause/resume',
-  'Daily revenue summary',
-  'Works offline (no WiFi needed)',
-  'Setup support via WhatsApp',
-]
+// V1-LAUNCH: STARTER_FEATURES and PRO_FEATURES kept in PlanSelection.tsx (subscribe flow). Removed from landing to avoid TS unused-var errors. Restore when tiering re-enabled.
 
 const STANDARD_FEATURES = [
   'Up to 8 tables',
@@ -15,19 +9,6 @@ const STANDARD_FEATURES = [
   'Export data to Excel / CSV',
   'Time rounding (15min / 30min)',
   'Priority WhatsApp support',
-]
-
-const PRO_FEATURES: { text: string; soon: boolean }[] = [
-  { text: 'Unlimited tables', soon: false },
-  { text: 'Everything in Standard', soon: false },
-  { text: 'Multi-staff login (coming soon)', soon: true },
-  { text: 'WhatsApp bill sharing (coming soon)', soon: true },
-  { text: 'Monthly P&L report (coming soon)', soon: true },
-  {
-    text: 'Live owner dashboard — peak hours, top tables, today vs. yesterday (coming soon)',
-    soon: true,
-  },
-  { text: 'Multi-location support (coming soon)', soon: true },
 ]
 
 function TrialPill() {
@@ -45,12 +26,6 @@ function TrialPill() {
 function Check() {
   return (
     <span className="font-mono font-bold text-accent flex-shrink-0 mt-[1px]">✓</span>
-  )
-}
-
-function Circle() {
-  return (
-    <span className="font-mono text-text-faint flex-shrink-0 mt-[1px]">○</span>
   )
 }
 
@@ -81,35 +56,9 @@ export function PricingSection({ onCTA }: { onCTA: () => void }) {
         </span>
       </div>
 
+      {/* V1-LAUNCH: showing only Standard Monthly. Revert this block to re-enable tiering (see SKILL.md "scope gating deferred"). */}
       <div className="flex flex-col gap-3.5">
-        {/* ── Starter ── */}
-        <div className="bg-bg-card border border-border rounded-[20px] p-[22px]">
-          <span className="font-mono text-[11px] uppercase tracking-[.22em] text-text-faint font-semibold">
-            Starter
-          </span>
-          <div className="flex items-baseline gap-2 mt-2.5">
-            <span className="font-mono font-bold text-[44px] tracking-[-0.03em] text-text leading-none">
-              ₹299
-            </span>
-            <span className="text-[14px] text-text-dim">/ month</span>
-          </div>
-          <TrialPill />
-          <p className="mt-1.5 text-[14px] text-text-dim">Perfect for small clubs</p>
-          <ul className="mt-[18px] mb-5 flex flex-col gap-2.5">
-            {STARTER_FEATURES.map((f) => (
-              <li key={f} className="flex gap-2.5 items-start text-[14px] text-text leading-[1.4]">
-                <Check />
-                {f}
-              </li>
-            ))}
-          </ul>
-          <button
-            onClick={onCTA}
-            className="w-full min-h-[54px] py-4 rounded-2xl text-[16px] font-bold text-text border border-border active:scale-[0.99] transition-transform"
-          >
-            Start free trial
-          </button>
-        </div>
+        {/* ── Starter hidden for V1-LAUNCH ── */}
 
         {/* ── Standard (featured) ── */}
         <div
@@ -158,46 +107,11 @@ export function PricingSection({ onCTA }: { onCTA: () => void }) {
           </button>
         </div>
 
-        {/* ── Pro (coming soon) ── */}
-        <div className="bg-bg-card border border-border rounded-[20px] p-[22px] opacity-[.92]">
-          <span className="font-mono text-[11px] uppercase tracking-[.22em] text-text-faint font-semibold">
-            Pro
-          </span>
-          <div className="flex items-baseline gap-2 mt-2.5">
-            <span className="font-mono font-bold text-[44px] tracking-[-0.03em] text-text leading-none">
-              ₹999
-            </span>
-            <span className="text-[14px] text-text-dim">/ month</span>
-          </div>
-          <div className="inline-flex items-center gap-1.5 mt-2.5 px-2.5 py-1.5 rounded-full bg-[#0f1411] border border-border font-mono text-[10.5px] uppercase tracking-[.14em] font-semibold text-text-faint">
-            <span className="w-1.5 h-1.5 rounded-full bg-text-faint" />
-            Coming soon
-          </div>
-          <p className="mt-1.5 text-[14px] text-text-dim">For large clubs &amp; chains</p>
-          <ul className="mt-[18px] mb-5 flex flex-col gap-2.5">
-            {PRO_FEATURES.map((f) => (
-              <li
-                key={f.text}
-                className={`flex gap-2.5 items-start text-[14px] leading-[1.4] ${
-                  f.soon ? 'text-text-dim' : 'text-text'
-                }`}
-              >
-                {f.soon ? <Circle /> : <Check />}
-                {f.text}
-              </li>
-            ))}
-          </ul>
-          <button
-            disabled
-            className="w-full min-h-[54px] py-4 rounded-2xl text-[16px] font-bold text-text-dim border border-dashed border-border cursor-not-allowed"
-          >
-            Notify me when ready
-          </button>
-        </div>
+        {/* ── Pro hidden for V1-LAUNCH ── */}
       </div>
 
       <p className="mt-[18px] text-center text-[12px] text-text-dim">
-        Annual billing saves you 2 months. Trial applies to both plans.
+        7-day free trial · cancel anytime before day 8.
       </p>
     </section>
   )
