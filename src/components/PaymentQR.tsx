@@ -6,10 +6,13 @@ interface PaymentQRProps {
   payeeName: string       // club name
   amount: number          // integer rupees
   transactionNote: string // e.g. "Pool 1 - 8m"
-  size?: number           // px, default 240
+  size?: number           // internal render resolution only — NOT the displayed CSS size
 }
 
-export function PaymentQR({ upiId, payeeName, amount, transactionNote, size = 240 }: PaymentQRProps) {
+// Render at 2× for retina sharpness. Displayed size is controlled by the parent container.
+const RENDER_SIZE = 560
+
+export function PaymentQR({ upiId, payeeName, amount, transactionNote }: PaymentQRProps) {
   const [dataUrl, setDataUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -28,7 +31,7 @@ export function PaymentQR({ upiId, payeeName, amount, transactionNote, size = 24
     const uri = `upi://pay?${params.toString()}`
 
     QRCode.toDataURL(uri, {
-      width: size,
+      width: RENDER_SIZE,
       margin: 1,
       color: {
         dark: '#0a0e0c',  // QR dots — dark
@@ -38,26 +41,21 @@ export function PaymentQR({ upiId, payeeName, amount, transactionNote, size = 24
     })
       .then((url) => setDataUrl(url))
       .catch((e: Error) => setError(e.message))
-  }, [upiId, payeeName, amount, transactionNote, size])
+  }, [upiId, payeeName, amount, transactionNote])
 
   if (error) {
     return <div className="text-busy text-sm">QR generation failed: {error}</div>
   }
   if (!dataUrl) {
-    return (
-      <div
-        style={{ width: size, height: size }}
-        className="bg-bg-card rounded-2xl animate-pulse"
-      />
-    )
+    // Skeleton fills parent container via width/height 100%
+    return <div className="w-full aspect-square bg-bg-card animate-pulse rounded-xl" />
   }
   return (
     <img
       src={dataUrl}
       alt={`UPI payment QR for ₹${amount.toLocaleString('en-IN')}`}
-      width={size}
-      height={size}
-      className="rounded-2xl bg-white p-3"
+      // Let the parent container control display size — no hardcoded px width/height
+      style={{ width: '100%', height: 'auto', display: 'block' }}
     />
   )
 }

@@ -311,7 +311,7 @@ export default function SessionDetail() {
 
     return (
       <div
-        className="fixed inset-0 bg-bg flex flex-col px-5"
+        className="fixed inset-0 z-50 bg-bg flex flex-col px-5"
         style={{
           paddingTop: 'max(12px, env(safe-area-inset-top))',
           paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
@@ -333,8 +333,9 @@ export default function SessionDetail() {
         <main className="flex-1 flex flex-col items-center justify-center min-h-0 gap-4">
           {upiId ? (
             <>
+              {/* White card: aspect-square + flex centering = equal border on all 4 sides */}
               <div
-                className="bg-white rounded-2xl p-4"
+                className="bg-white rounded-2xl p-3 aspect-square flex items-center justify-center"
                 style={{ width: 'min(72vw, 280px)' }}
               >
                 <PaymentQR
@@ -342,7 +343,6 @@ export default function SessionDetail() {
                   payeeName={clubName}
                   amount={finalGrandTotal}
                   transactionNote={transactionNote}
-                  size={224}
                 />
               </div>
               <div className="flex flex-col items-center gap-1">
@@ -365,8 +365,8 @@ export default function SessionDetail() {
           )}
         </main>
 
-        {/* Footer — pinned at bottom */}
-        <footer className="shrink-0 flex flex-col gap-3">
+        {/* Footer — pinned at bottom, z-50 overlay guarantees it's above BottomNav */}
+        <footer className="shrink-0 flex flex-col gap-3 pt-2">
           {upiId && (
             <p className="text-xs text-text-faint text-center max-w-xs mx-auto">
               Works with GPay, PhonePe, Paytm, BHIM
@@ -374,7 +374,7 @@ export default function SessionDetail() {
           )}
           <button
             onClick={() => navigate('/tables', { replace: true })}
-            className="w-full min-h-[44px] bg-accent text-bg font-bold py-4 rounded-2xl text-[15px] active:scale-[0.99] transition-transform"
+            className="w-full min-h-[48px] rounded-xl bg-accent text-bg font-semibold text-base active:scale-[0.98] transition-transform"
           >
             Done — back to tables
           </button>
