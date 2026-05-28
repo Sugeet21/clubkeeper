@@ -67,8 +67,10 @@ export default function Home() {
   const totalTables = tables.filter((t) => !t.outOfService).length
   const runningCount = activeSessions.filter((s) => s.status === 'running').length
 
-  // Today total: sessions + items combined (live query for reactivity)
-  const todayTotals = useLiveQuery(async () => {
+  // Today total — split into two parts so useTick() can drive the running portion:
+  // 1. DB-static: completed session amounts + all today's items (re-fires only on DB write)
+  // 2. Live: running/paused session amounts computed in render body (recalculates every tick)
+  const todayStaticTotals = useLiveQuery(async () => {
     const start = startOfDay(new Date()).getTime()
     const end = endOfDay(new Date()).getTime()
     const todaySessions = await db.sessions
@@ -81,16 +83,21 @@ export default function Home() {
       ? await db.sessionItems.where('sessionId').anyOf(sessionIds).toArray()
       : []
 
-    const sessionsAmount = todaySessions.reduce((sum, s) => {
-      if (s.status === 'completed') return sum + s.amount
-      return sum + calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
-    }, 0)
+    const completedAmount = todaySessions
+      .filter((s) => s.status === 'completed')
+      .reduce((sum, s) => sum + s.amount, 0)
     const itemsAmount = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
 
-    return { sessions: sessionsAmount, items: itemsAmount, total: sessionsAmount + itemsAmount }
-  }, [], { sessions: 0, items: 0, total: 0 })
+    return { completed: completedAmount, items: itemsAmount }
+  }, [], { completed: 0, items: 0 })
 
-  const todayTotal = todayTotals?.total ?? 0
+  // Running/paused sessions recalculate on every useTick() re-render
+  const runningAmount = activeSessions.reduce(
+    (sum, s) => sum + calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed),
+    0,
+  )
+
+  const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.items ?? 0) + runningAmount
 
   const currency = settings?.currency ?? '₹'
 
