@@ -14,6 +14,35 @@ Files most affected: `src/pages/SessionDetail.tsx`, `src/db/sessions.ts`, `src/l
 **Symptom signature:** Elapsed time resets on refresh / drifts / loses state on tab close.
 **Rule:** Always derive elapsed as `Date.now() - startedAt - pausedTotalMs`, recomputed every render via a `useTick()` hook. NEVER `setInterval(() => setElapsed(e+1))`. The timestamp survives anything because it's persisted in Dexie; a counter does not.
 
+### Pattern T4 — Never put `calculateAmount`/`getElapsedMs` inside `useLiveQuery` (BUG-022)
+**Symptom signature:** An aggregate amount (e.g. "Today ₹X,XXX") is frozen on page load and only updates on route change or a DB write — even though `useTick()` is called in the same component.
+**Root cause:** `useLiveQuery` runs its async callback only when IndexedDB rows change — it is NOT re-triggered by React re-renders from `useTick()`. Any `Date.now()`-derived calculation (e.g. `getElapsedMs(s)`) placed inside the callback is computed once at DB-write time and then cached, making the displayed total stale until the next DB write.
+**Rule:** Split the query into two parts:
+1. **`useLiveQuery`** — compute only DB-static values: `completed` session `amount` fields + `sessionItems`. These only change on DB writes, so the cached value is always correct.
+2. **Render body** — compute running/paused session amounts from `activeSessions` (already a live hook) using `calculateAmount(getElapsedMs(s))`. Because this runs on every render, `useTick()` drives it every second.
+3. **Combine** in the render body: `total = completedFromQuery + itemsFromQuery + runningFromRender`
+
+`useTick()` alone is not enough if the ticking value is computed inside a live query. The ticking value must be computed in the render body.
+
+**Canonical example (Home.tsx, fixed 29 May 2026):**
+```ts
+// DB-static part — only re-fires on DB write
+const todayStaticTotals = useLiveQuery(async () => {
+  const completed = todaySessions.filter(s => s.status === 'completed').reduce((sum, s) => sum + s.amount, 0)
+  const items = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
+  return { completed, items }
+}, [])
+
+// Live part — recalculates every useTick() re-render
+const runningAmount = activeSessions.reduce(
+  (sum, s) => sum + calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed), 0
+)
+
+const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.items ?? 0) + runningAmount
+```
+
+**Check this pattern anywhere:** aggregate totals on Home (`todayTotal`), any future dashboard widget showing live revenue. Summary.tsx already uses the correct pattern — its aggregates are computed in the render body, not inside a live query.
+
 ### Pattern T2 — Settings flags must be plumbed into actions
 **Symptom signature:** A Settings toggle exists but does nothing.
 **Root cause:** Action code never reads the setting.

@@ -409,6 +409,19 @@ useEffect(() => {
 
 ---
 
+### 29 May 2026 — BUG-022: "Today" pill on /tables frozen — live amount not ticking
+
+**Symptom:** The "Today ₹X,XXX" aggregate pill on the Tables page (`/tables`) showed a stale amount that only updated when the user navigated away and back, or when a session was stopped (a DB write). Running sessions were not contributing their live elapsed amount. Summary page worked fine (ticked every second).
+**Root cause:** `calculateAmount(getElapsedMs(s))` for running sessions was placed inside the `useLiveQuery` async callback. `useLiveQuery` re-executes its callback only when IndexedDB rows change — it is not triggered by React re-renders. `useTick()` was already called in the component, causing a re-render every second, but React simply returned the same cached value from the live query. The live calculation never ran between DB writes.
+**Fix:** Split `todayTotals` into two parts in `src/pages/Home.tsx`:
+1. `todayStaticTotals` (`useLiveQuery`) — computes only completed session `amount` fields + sessionItems totals. These are DB-static and only need to update on writes.
+2. `runningAmount` — computed in the render body from `activeSessions` (already a live subscribed hook). `useTick()` re-renders every second → `getElapsedMs()` recalculates → running total ticks live.
+3. `todayTotal = completed + items + runningAmount`.
+**Files changed:** `src/pages/Home.tsx` only.
+**Lesson:** `useTick()` drives re-renders, but it cannot force a `useLiveQuery` callback to re-execute. Any `Date.now()`-derived value that needs to update every second must be computed in the render body, not inside a live query. See Pattern T4.
+
+---
+
 ## Open Issues / Not Yet Reproduced
 
 (Move here when Sugeet reports something but it can't be reproduced. Revisit later.)

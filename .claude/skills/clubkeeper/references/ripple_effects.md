@@ -150,6 +150,18 @@ If a change isn't documented here yet, pause and trace dependencies first.
 - History page — duration display
 - **EXTREMELY high blast radius. Touch with extreme care.**
 
+### If you add a new aggregate total that includes running sessions (e.g. a dashboard widget, a revenue pill)
+
+**Rule (Pattern T4):** Never compute `calculateAmount(getElapsedMs(s))` inside a `useLiveQuery` callback. Live queries re-fire only on DB writes — the result is cached between writes. `useTick()` re-renders won't re-execute it.
+**Required pattern:**
+1. `useLiveQuery` → sum only `s.amount` for completed sessions + items (DB-static).
+2. Render body → sum `calculateAmount(getElapsedMs(s))` for `activeSessions` (already a live hook).
+3. Combine: `total = completedFromQuery + itemsFromQuery + runningFromRender`.
+**Current consumers using this pattern correctly:** `Home.tsx` (`todayTotal`), `Summary.tsx` (render-body aggregation).
+**Discovered when:** BUG-022 — "Today" pill on /tables was frozen; `useTick()` was present but the live calc was trapped inside `useLiveQuery`.
+
+---
+
 ### If you change `calculateAmount()` in money.ts
 
 **Affects:**
@@ -159,6 +171,7 @@ If a change isn't documented here yet, pause and trace dependencies first.
 - Summary page — today's revenue
 - History page — per-session amount
 - CSV export amount column
+- `Home.tsx` `runningAmount` — computed in render body (post BUG-022 fix)
 
 ### If you change `applyRounding()` or rounding logic
 
