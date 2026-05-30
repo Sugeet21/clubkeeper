@@ -631,6 +631,24 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 
 ---
 
+### If you change `customerDisplay.ts` (display name helper)
+
+**Affects (5+ render sites — change the helper, all update automatically):**
+- `src/components/wallet/CustomerListRow.tsx` — uses `customerFullLabel` + `formattedPhone`
+- `src/pages/CustomerProfile.tsx` — uses `customerDisplayName` + `formattedPhone`
+- `src/pages/WalletTopup.tsx` — uses `customerDisplayName` (header + success screen)
+- `src/lib/whatsapp.ts` — uses `customerDisplayName` for WhatsApp greeting
+- `src/components/wallet/EditCustomerModal.tsx` — uses `customerDisplayName` for modal subtitle
+
+**Rules:**
+- Never add a new inline `customer.name ?? ... ?? 'Customer'` chain in any component. Always import from this helper (Pattern F8).
+- The three-way distinction (named / unnamed-with-phone / anonymous) is the canonical contract. Do not collapse it back to two cases.
+- `phoneTail` is a display-only helper — never use it for identity checks or sorting.
+
+**Discovered when:** Wallet Phase 1.5 — "Walk-in" label appeared for customers who had a phone but no name.
+
+---
+
 ### If you change `customerStore.ts` phone uniqueness check
 
 **Rule (load-bearing):** Phone uniqueness is enforced in the store, NOT via a Dexie `&phone` unique index. Multiple `null` phone values (walk-ins) would violate a unique index in some browsers. The pre-check + `DuplicatePhoneError` pattern is the only enforcement. Do NOT "fix" this by adding `&phone` to the Dexie schema string.
@@ -638,8 +656,8 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 **Affects if removed or weakened:**
 - `createCustomerWithPhone()` — pre-check before `db.customers.add()`
 - `updateCustomerPhone()` — pre-check before `db.customers.update()`
-- `src/pages/WalletNewCustomer.tsx` — catches `DuplicatePhoneError`, shows toast + profile link
-- `src/components/wallet/EditPhoneModal.tsx` — same catch pattern
+- `src/pages/WalletNewCustomer.tsx` — catches `DuplicatePhoneError`, inline error + "View profile →" link (Pattern F7)
+- `src/components/wallet/EditCustomerModal.tsx` — same catch pattern (renamed from EditPhoneModal in Phase 1.5)
 
 **Discovered when:** Wallet Phase 1 design decision, 30 May 2026
 

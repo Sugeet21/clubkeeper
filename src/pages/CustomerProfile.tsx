@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { formatDistanceToNow } from 'date-fns'
+import Dexie from 'dexie'
 import { db } from '../db/database'
 import type { WalletTransaction } from '../types/walletTransaction'
+import { customerDisplayName, formattedPhone } from '../lib/customerDisplay'
 import ManualAdjustmentModal from '../components/wallet/ManualAdjustmentModal'
-import EditPhoneModal from '../components/wallet/EditPhoneModal'
+import EditCustomerModal from '../components/wallet/EditCustomerModal'
 import TransactionRow from '../components/wallet/TransactionRow'
 
 export default function CustomerProfile() {
@@ -13,7 +15,7 @@ export default function CustomerProfile() {
   const navigate = useNavigate()
 
   const [adjustOpen, setAdjustOpen] = useState(false)
-  const [editPhoneOpen, setEditPhoneOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
 
   const customer = useLiveQuery(
     () => (customerId ? db.customers.get(customerId) : undefined),
@@ -52,10 +54,8 @@ export default function CustomerProfile() {
     )
   }
 
-  const displayName = customer.name ?? customer.walkInCode ?? 'Customer'
-  const phoneDisplay = customer.phone
-    ? `+91 ${customer.phone.slice(3, 8)} ${customer.phone.slice(8)}`
-    : null
+  const displayName = customerDisplayName(customer)
+  const phoneDisplay = formattedPhone(customer)
 
   return (
     <div className="bg-bg min-h-screen pb-24">
@@ -71,40 +71,26 @@ export default function CustomerProfile() {
               <path d="M15 18l-6-6 6-6" />
             </svg>
           </button>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-[20px] font-bold text-text truncate">{displayName}</h1>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              {phoneDisplay ? (
-                <>
-                  <span className="text-[13px] text-text-dim font-mono">{phoneDisplay}</span>
-                  <button
-                    onClick={() => setEditPhoneOpen(true)}
-                    className="min-w-[28px] min-h-[28px] flex items-center justify-center text-text-faint"
-                    aria-label="Edit phone"
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                    </svg>
-                  </button>
-                </>
-              ) : (
-                <>
-                  {customer.walkInCode && (
-                    <span className="text-[11px] font-mono text-text-faint bg-bg-card border border-border px-2 py-0.5 rounded-md">
-                      {customer.walkInCode}
-                    </span>
-                  )}
-                  <button
-                    onClick={() => setEditPhoneOpen(true)}
-                    className="text-[12px] text-accent underline underline-offset-2 min-h-[28px] flex items-center"
-                  >
-                    + Add phone
-                  </button>
-                </>
-              )}
+
+          {/* Tappable name+phone block — entire area opens EditCustomerModal */}
+          <button
+            onClick={() => setEditOpen(true)}
+            className="flex-1 min-w-0 min-h-[44px] flex flex-col justify-center text-left"
+            aria-label="Edit customer"
+          >
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-[20px] font-bold text-text truncate">{displayName}</h1>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-faint shrink-0">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
             </div>
-          </div>
+            {phoneDisplay ? (
+              <span className="text-[13px] text-text-dim font-mono mt-0.5">{phoneDisplay}</span>
+            ) : customer.walkInCode ? (
+              <span className="text-[11px] font-mono text-text-faint mt-0.5">{customer.walkInCode}</span>
+            ) : null}
+          </button>
         </div>
 
         {/* Balance card */}
@@ -175,15 +161,12 @@ export default function CustomerProfile() {
         />
       )}
 
-      {editPhoneOpen && (
-        <EditPhoneModal
+      {editOpen && (
+        <EditCustomerModal
           customer={customer}
-          onClose={() => setEditPhoneOpen(false)}
+          onClose={() => setEditOpen(false)}
         />
       )}
     </div>
   )
 }
-
-// Dexie needed for minKey/maxKey in the compound index query
-import Dexie from 'dexie'

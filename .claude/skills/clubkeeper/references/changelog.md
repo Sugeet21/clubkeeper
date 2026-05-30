@@ -302,6 +302,42 @@ Phase 1–3.5 bug fixes, all in one commit, pushed to main, Vercel auto-deployed
 
 ---
 
+## 30 May 2026 — Wallet Phase 1.5: display name helper + EditCustomerModal
+
+**What shipped:**
+
+**New helper — `src/lib/customerDisplay.ts`:**
+- `customerDisplayName(c)` — "Rahul" / "Customer" (unnamed+phone) / "Walk-in" (no phone no name). Never conflates anonymous vs unnamed-but-contactable.
+- `phoneTail(c)` — " ·4523" or "" for disambiguation
+- `customerFullLabel(c)` — list-view label: "Rahul ·4523" / "Customer ·7474" / "Walk-in #WALK-001" / "Walk-in"
+- `formattedPhone(c)` — "+91 99219 67474" or null
+
+**Bug fix — "Walk-in" label for customers who have a phone:**
+Every inline `customer.name ?? customer.walkInCode ?? 'Customer'` chain replaced with `customerDisplayName(c)` or `customerFullLabel(c)`. Files: `CustomerListRow.tsx`, `CustomerProfile.tsx`, `WalletTopup.tsx`, `whatsapp.ts`.
+
+**New modal — `src/components/wallet/EditCustomerModal.tsx`** (replaces `EditPhoneModal.tsx`):
+- Name field (optional, max 40 chars) + phone field (optional, 10 digits)
+- Duplicate phone check + inline "View profile →" error (Pattern F7)
+- Save disabled if: nothing changed, phone partially entered, would leave customer with neither name/phone AND no walkInCode
+- `updateCustomer(id, {name, phone})` — new store method, single Dexie write with phone uniqueness check
+
+**Store update — `customerStore.ts`:**
+- Added `updateCustomer(customerId, {name, phone})` — atomically updates both fields + `lastVisitAt` in one Dexie call. Phone duplicate check included.
+
+**CustomerProfile.tsx — expanded tap target:**
+- Entire name+phone header block is now a `<button>` that opens `EditCustomerModal`
+- Pencil icon stays visible as affordance; tapping name OR phone OR pencil all work
+- Import updated from `EditPhoneModal` → `EditCustomerModal`
+
+**whatsapp.ts — signature change:**
+- `buildWhatsAppReceiptUrl` now takes `{ customer: Customer, ... }` instead of `{ phone, customerName, ... }`
+- Uses `customerDisplayName(c)` for greeting — no more hardcoded `customerName ?? 'Customer'`
+- WalletTopup.tsx call site updated to pass `customer: updatedCustomer`
+
+**Build:** ✅ Zero TS errors.
+
+---
+
 ## Open future work (not yet started)
 
 - GST invoicing (Prompt 14)

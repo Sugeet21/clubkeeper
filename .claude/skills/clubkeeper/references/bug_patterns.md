@@ -57,6 +57,15 @@ const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.ite
 
 Files most affected: `src/pages/StartSession.tsx`, `src/components/TableFormModal.tsx`, anywhere with `<input>`.
 
+### Pattern F8 — Display fallback labels MUST distinguish anonymous from unnamed-but-contactable (30 May 2026)
+**Symptom signature:** A customer with a saved phone number is shown as "Walk-in" in the UI. Staff are confused — the customer has contact info.
+**Root cause:** Inline fallback chain `customer.name ?? customer.walkInCode ?? 'Customer'` treats "has walkInCode" as the only non-name case. A customer with `phone` set but `name === null` and `walkInCode === null` falls through to 'Customer', which is correct — but the same chain used with `walkInCode` first produces "Walk-in" label for customers who DO have a phone.
+**Rule:** Use `customerDisplayName(c)` from `src/lib/customerDisplay.ts` everywhere. The three cases are:
+- `c.name` set → use the name
+- `c.phone` set, no name → "Customer" (contactable, unnamed)
+- neither name nor phone → "Walk-in" (truly anonymous)
+Never hard-code these fallback chains inline in components. Centralize in the helper so the rule only needs updating in one place.
+
 ### Pattern F7 — Validation errors must be inline-only; toasts are the wrong channel for actionable errors (30 May 2026)
 **Symptom signature:** An error appears in two places — once as a system toast at the top of the screen AND once as an inline message below the input. The toast visually overlaps fixed UI (headers, nav bars). The user sees the error but can't act on it (e.g., the "View profile" link is in the toast, which auto-dismisses in 3 seconds).
 **Root cause:** Both `showToast()` AND `setPhoneError()` were called in the same catch block. The toast rendered over the header, making it look like the error was "in the header".

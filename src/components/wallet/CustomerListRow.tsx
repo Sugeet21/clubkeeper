@@ -1,3 +1,4 @@
+import { customerFullLabel, formattedPhone } from '../../lib/customerDisplay'
 import type { Customer } from '../../types/customer'
 
 interface Props {
@@ -7,18 +8,15 @@ interface Props {
 }
 
 export default function CustomerListRow({ customer, distanceLabel, onClick }: Props) {
-  // If two customers share the same name but different phones, show last 4 digits
-  // as disambiguator: "Rahul · 4523"
-  const phoneSuffix = customer.phone ? ` · ${customer.phone.slice(-4)}` : ''
-  const primaryLabel = customer.name
-    ? `${customer.name}${phoneSuffix}`
-    : customer.walkInCode ?? 'Walk-in'
+  const primaryLabel = customerFullLabel(customer)
+  const secondaryLabel = formattedPhone(customer)
 
-  const secondaryLabel = customer.phone
-    ? `+91 ${customer.phone.slice(3, 8)} ${customer.phone.slice(8)}`
+  // Avatar initial: first char of name, walk-in code, or "C" for unnamed-with-phone
+  const avatarChar = customer.name
+    ? customer.name[0].toUpperCase()
     : customer.walkInCode
-    ? 'Walk-in customer'
-    : ''
+    ? 'W'
+    : 'C'
 
   return (
     <button
@@ -27,9 +25,7 @@ export default function CustomerListRow({ customer, distanceLabel, onClick }: Pr
     >
       {/* Avatar circle */}
       <div className="w-10 h-10 rounded-full bg-accent/15 border border-accent/20 flex items-center justify-center shrink-0">
-        <span className="text-accent font-bold text-[15px]">
-          {(customer.name ?? customer.walkInCode ?? 'W')[0].toUpperCase()}
-        </span>
+        <span className="text-accent font-bold text-[15px]">{avatarChar}</span>
       </div>
 
       {/* Info */}

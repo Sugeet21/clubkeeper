@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useCustomerStore } from '../../store/customerStore'
 import { useToastStore } from '../../store/toastStore'
+import { customerDisplayName } from '../../lib/customerDisplay'
 import type { Customer } from '../../types/customer'
 
 interface Props {
@@ -48,7 +49,7 @@ export default function ManualAdjustmentModal({ customer, onClose }: Props) {
     }
   }
 
-  const displayName = customer.name ?? customer.walkInCode ?? 'Customer'
+  const displayName = customerDisplayName(customer)
 
   return (
     <>

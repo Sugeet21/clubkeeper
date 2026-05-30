@@ -8,6 +8,7 @@ import { useToastStore } from '../store/toastStore'
 import { buildWhatsAppReceiptUrl } from '../lib/whatsapp'
 import { UpiQrCard } from '../components/UpiQrCard'
 import type { Customer } from '../types/customer'
+import { customerDisplayName } from '../lib/customerDisplay'
 
 type PaymentMode = 'cash' | 'upi' | 'card'
 
@@ -93,7 +94,7 @@ export default function WalletTopup() {
     )
   }
 
-  const displayName = customer.name ?? customer.walkInCode ?? 'Customer'
+  const displayName = customerDisplayName(customer)
 
   // ── Success screen ─────────────────────────────────────────────────────────
   if (success) {
@@ -101,8 +102,7 @@ export default function WalletTopup() {
     const whatsappUrl =
       updatedCustomer.phone
         ? buildWhatsAppReceiptUrl({
-            phone: updatedCustomer.phone,
-            customerName: updatedCustomer.name,
+            customer: updatedCustomer,
             amountPaid: amount,
             bonus,
             totalCredited: credited,

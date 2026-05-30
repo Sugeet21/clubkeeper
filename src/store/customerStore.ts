@@ -16,6 +16,8 @@ interface CustomerStore {
   createWalkIn: (name: string | null) => Promise<Customer>
   updateCustomerPhone: (customerId: string, phone: string) => Promise<void>
   updateCustomerName: (customerId: string, name: string | null) => Promise<void>
+  // Combined edit — updates name and/or phone atomically. Phone uniqueness checked.
+  updateCustomer: (customerId: string, fields: { name: string | null; phone: string | null }) => Promise<void>
   getCustomer: (customerId: string) => Promise<Customer | undefined>
 
   // Queries
@@ -90,6 +92,25 @@ export const useCustomerStore = create<CustomerStore>(() => ({
 
   async updateCustomerName(customerId, name) {
     await db.customers.update(customerId, { name: name?.trim() || null })
+  },
+
+  async updateCustomer(customerId, { name, phone }) {
+    // Phone duplicate check — skip if phone unchanged or being cleared
+    if (phone !== null) {
+      const existing = await db.customers.where('phone').equals(phone).first()
+      if (existing && existing.id !== customerId) {
+        throw new DuplicatePhoneError(
+          `This number is already saved as ${existing.name ?? existing.walkInCode ?? 'a customer'}`,
+          existing,
+        )
+      }
+    }
+    const trimmedName = name?.trim() || null
+    await db.customers.update(customerId, {
+      name: trimmedName,
+      phone,
+      lastVisitAt: Date.now(),
+    })
   },
 
   async getCustomer(customerId) {

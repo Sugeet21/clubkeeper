@@ -1,19 +1,21 @@
+import { customerDisplayName } from './customerDisplay'
+import type { Customer } from '../types/customer'
+
 // Builds a WhatsApp receipt URL for wallet topup confirmation.
 // Only call when customer.phone is non-null.
 export function buildWhatsAppReceiptUrl(params: {
-  phone: string        // "+91XXXXXXXXXX" format
-  customerName: string | null
+  customer: Customer
   amountPaid: number   // rupees (what the customer physically paid)
   bonus: number        // rupees bonus credited
   totalCredited: number
   newBalance: number
   clubName: string
 }): string {
-  const { phone, customerName, amountPaid, bonus, totalCredited, newBalance, clubName } = params
+  const { customer, amountPaid, bonus, totalCredited, newBalance, clubName } = params
   // Strip leading + for wa.me URL format
-  const digits = phone.replace(/^\+/, '')
+  const digits = (customer.phone ?? '').replace(/^\+/, '')
 
-  const name = customerName ?? 'Customer'
+  const name = customerDisplayName(customer)
   const lines = [
     `*${clubName} — Wallet Receipt*`,
     ``,
