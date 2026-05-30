@@ -241,6 +241,67 @@ Phase 1–3.5 bug fixes, all in one commit, pushed to main, Vercel auto-deployed
 
 ---
 
+## 30 May 2026 — Wallet / Prepaid Credit (Phase 1)
+
+**What shipped:**
+
+**New types:**
+- `src/types/customer.ts` — `Customer` interface (id UUID, phone, name, walkInCode, walletBalance integer rupees, createdAt, lastVisitAt)
+- `src/types/walletTransaction.ts` — `WalletTransaction` interface + `WalletTransactionType`, `WalletPaymentMode`, `WalletReferenceType` union types
+
+**DB migration — Dexie v5 (additive only, no `.upgrade()`):**
+- `src/db/database.ts`: `customers: 'id, phone, walkInCode, lastVisitAt'` + `walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]'`
+- `src/types/index.ts`: `ClubSettings.walkInCounter?: number` added
+
+**Store:**
+- `src/store/customerStore.ts` — Zustand store with CRUD, search, topUp, applyManualAdjustment, getTransactionHistory. Phone uniqueness enforced in store layer (not Dexie index). Atomic Dexie transactions for balance + transaction row. `DuplicatePhoneError` custom class with `existingCustomer` payload.
+
+**Lib utilities:**
+- `src/lib/walkInCode.ts` — `createWalkInCustomer()`: increments `settings.walkInCounter` + inserts customer in one `db.transaction('rw', settings, customers)` block — crash-safe
+- `src/lib/whatsapp.ts` — `buildWhatsAppReceiptUrl()`: builds URL-encoded WhatsApp receipt link
+
+**Pages (4 new):**
+- `src/pages/Wallet.tsx` → `/wallet` — search + recent list, live query, "+ New" button
+- `src/pages/WalletNewCustomer.tsx` → `/wallet/new` — phone (+91 prefix) or walk-in mode; duplicate phone blocked with toast + profile link
+- `src/pages/WalletTopup.tsx` → `/wallet/topup/:customerId` — amount/bonus chips, 3 payment modes, live summary card, inline success screen with WhatsApp receipt link
+- `src/pages/CustomerProfile.tsx` → `/customer/:customerId` — live balance, transaction history (compound index), Add Credit + Adjust buttons, inline modals
+
+**Components (4 new):**
+- `src/components/wallet/CustomerListRow.tsx` — avatar circle, name+phone-suffix disambiguation, balance in accent, relative date
+- `src/components/wallet/TransactionRow.tsx` — icon (↑ free / ↓ busy / ⚙ paused), expandable notes + WhatsApp receipt link
+- `src/components/wallet/ManualAdjustmentModal.tsx` — credit/debit toggle, amount, mandatory notes (min 3 chars), Pattern M1+M2, debit > balance blocked
+- `src/components/wallet/EditPhoneModal.tsx` — promote walk-in to phone customer (clears walkInCode), duplicate check, Pattern M1+M2
+
+**Wiring:**
+- `src/App.tsx` — 4 new routes under `<RequireAccess>`: `/wallet`, `/wallet/new`, `/wallet/topup/:customerId`, `/customer/:customerId`
+- `src/components/TopBar.tsx` — wallet icon button added between online dot and gear (`w-9 h-9`, right side); accepts optional `onWalletPress` prop
+
+**Build:** ✅ Zero TS errors. `npm run build` passes.
+
+**Phase 2 (not built):** Session-end "Pay from Wallet" deduction. Data model is ready — `WalletTransaction.referenceType: 'session'` + `referenceId: sessionId` is the pattern.
+**Phase 3 (not built):** Refund UI. Pattern: new debit transaction, `referenceType: 'refund'`, mandatory notes.
+
+---
+
+## 30 May 2026 — Wallet Phase 1 Polish (3 fixes + correction)
+
+**Fix 1 — Duplicate phone error overlap on `/wallet/new`:**
+- `src/pages/WalletNewCustomer.tsx`: added `phoneErrorCustomerId` state. On `DuplicatePhoneError`, no longer shows a toast — instead renders an inline row below the phone input: error text (left) + "View profile →" button (right). Input border switches to `border-busy` via Tailwind class (was inline `style`). Header stays clean: back button + title only.
+
+**Fix 2 — Manual adjustment rows showing plain number without ₹ or sign:**
+- `src/store/customerStore.ts`: `applyManualAdjustment` now writes `type: 'credit'` or `type: 'debit'` (the parameter value), not the hardcoded `'adjustment'`. `referenceType: 'manual'` carries the category.
+- `src/components/wallet/TransactionRow.tsx`: added `isDebit` derived boolean; `signedAmount` and `amountColor` branch on `isCredit`/`isDebit`; legacy `'adjustment'` type rows fall through to `₹amount` (no sign, paused color) as a safety net.
+- `src/db/database.ts` + `src/types/index.ts`: **Dexie v6** with `.upgrade()` backfill — finds all rows where `type === 'adjustment'`, infers direction by comparing `balanceAfter` to preceding row's `balanceAfter` (or 0 for first row), writes `type: 'credit'/'debit'` + `referenceType: 'manual'`. Sets `settings.legacyAdjustmentsBackfilled = true` as audit flag. Runs exactly once on v5→v6 upgrade.
+
+**Fix 3 — UPI QR component extraction + WalletTopup QR:**
+- `src/components/UpiQrCard.tsx` (NEW): shared wrapper around `PaymentQR` — `bg-white rounded-2xl p-3 aspect-square`, `width: min(72vw, 280px)`. Props: `amount`, `upiId`, `payeeName`, `transactionNote`. No store access.
+- `src/pages/SessionDetail.tsx`: replaced inline white-card + `<PaymentQR>` with `<UpiQrCard>`.
+- `src/pages/WalletTopup.tsx`: replaced inline block with `<UpiQrCard>`. Label changed to "Show this QR to the customer". No-upiId hint: "Set UPI ID in Settings to show QR". Cash/Card: no QR block.
+
+**Build:** ✅ Zero TS errors. `npm run build` passes.
+
+---
+
 ## Open future work (not yet started)
 
 - GST invoicing (Prompt 14)

@@ -61,6 +61,17 @@ For rejected ideas, historical decisions that have been superseded, and full rea
 
 ---
 
+## Wallet / Prepaid Credit
+
+- **Wallet data lives in Dexie, not Supabase.** Customers and wallet_transactions are IndexedDB tables — fully offline-first, same as sessions. Supabase remains auth + payments only. Revisit when cloud sync ships.
+- **Phone is the public customer identity, UUID is the DB primary key.** Phone is indexed but NOT unique in Dexie (null walk-ins would violate a unique index). Uniqueness enforced in `customerStore` pre-check. UUID key means promoting a walk-in to a phone customer is an update, not a delete+insert.
+- **Walk-in codes are sequential per club, stored in `settings.walkInCounter`.** Format: `WALK-001`, `WALK-002`… Counter + new customer row inserted in a single `db.transaction('rw', settings, customers)` — crash-safe. No separate counter table.
+- **WalletTransaction rows are immutable.** Corrections are new rows. `balanceAfter` snapshot on every row is the audit trail. Enforced in `customerStore` — there is no `updateTransaction()` method, only `add`.
+- **Manual debit cannot make balance negative (Phase 1).** `applyManualAdjustment()` throws if `newBalance < 0`. Phase 2+ may allow overdraft with owner override — decision deferred.
+- **WhatsApp receipt link is shown only when `customer.phone !== null`.** Not disabled — hidden entirely. Walk-in customers never see a WhatsApp button.
+
+---
+
 ## Decisions Pending (Open)
 
 ### How to bill: per-table or flat tier?

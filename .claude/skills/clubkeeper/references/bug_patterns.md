@@ -57,6 +57,25 @@ const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.ite
 
 Files most affected: `src/pages/StartSession.tsx`, `src/components/TableFormModal.tsx`, anywhere with `<input>`.
 
+### Pattern F7 — Validation errors must be inline-only; toasts are the wrong channel for actionable errors (30 May 2026)
+**Symptom signature:** An error appears in two places — once as a system toast at the top of the screen AND once as an inline message below the input. The toast visually overlaps fixed UI (headers, nav bars). The user sees the error but can't act on it (e.g., the "View profile" link is in the toast, which auto-dismisses in 3 seconds).
+**Root cause:** Both `showToast()` AND `setPhoneError()` were called in the same catch block. The toast rendered over the header, making it look like the error was "in the header".
+**Rule:** For validation errors on form inputs, use ONLY the inline error below the input. If the error has an actionable follow-up (e.g., "View profile →"), render it as a button in the same inline row — right-aligned, `min-h-[36px]`. Do NOT show a toast for the same error. Toasts are for transient success/failure confirmations (e.g., "Top-up done"), not for blocking validation that the user needs to read and act on.
+**Correct pattern (WalletNewCustomer.tsx):**
+```tsx
+{phoneError && (
+  <div className="flex items-center justify-between gap-2 mt-2">
+    <p className="text-[13px] text-busy">{phoneError}</p>
+    {phoneErrorCustomerId && (
+      <button onClick={() => navigate(`/customer/${phoneErrorCustomerId}`)}
+        className="text-[13px] text-accent font-semibold shrink-0 min-h-[36px] flex items-center">
+        View profile →
+      </button>
+    )}
+  </div>
+)}
+```
+
 ### Pattern F1 — Adversarial input always
 **Rule:** Every text input gets explicit validation + an error message. Plan for 10,000-char paste, emoji, special chars, SQL-injection-shaped strings.
 

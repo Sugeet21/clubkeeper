@@ -422,6 +422,28 @@ useEffect(() => {
 
 ---
 
+### 29 May 2026 — BUG-023: Payment screen QR card had uneven white borders
+
+**Symptom:** After stopping a session with a UPI ID set, the white QR card showed asymmetric padding — the border was visibly thicker on some sides than others. Looked broken on all screen widths.
+**Root cause:** The white card `div` had `style={{ width: 'min(72vw, 280px)' }}` (fluid CSS width) but `PaymentQR` rendered a fixed-pixel `<img width={224} height={224}>` inside it. The fixed img didn't stretch to fill the fluid container, so the remaining space around it was distributed unevenly by the browser, producing asymmetric white padding.
+**Fix:**
+- `PaymentQR.tsx`: removed hardcoded `width`/`height` attributes from `<img>`. Added `style={{ width: '100%', height: 'auto', display: 'block' }}` so the img fills whatever the parent provides. Internal render resolution bumped to `560px` (2× retina) — the `size` prop now only controls internal QR resolution, not CSS display size.
+- `SessionDetail.tsx` white card: added `aspect-square flex items-center justify-center` classes. `aspect-square` makes the card a perfect square; `flex centering` ensures the img sits exactly in the middle. Changed `p-4` → `p-3` for uniform 12px padding on all sides.
+**Files changed:** `src/components/PaymentQR.tsx`, `src/pages/SessionDetail.tsx`
+**Lesson:** Never mix a fluid CSS container with a fixed-pixel child element and expect even margins. Either both are fluid (child `width: 100%`) or both are fixed. See Pattern U7.
+
+---
+
+### 29 May 2026 — BUG-024: "Done" button on payment screen hidden behind bottom nav
+
+**Symptom:** After stopping a session, the "Done — back to tables" button at the bottom of the payment screen was visually hidden behind the bottom navigation bar and could not be tapped. The bottom nav tabs (Tables / Summary / History / Settings) remained visible on top of the overlay.
+**Root cause:** The payment screen root div used `fixed inset-0` but had no `z-index` set. BottomNav (`src/components/BottomNav.tsx`) is also `fixed` with no explicit z-index. Both ended up in the same stacking context, and DOM order determined paint order — BottomNav (rendered later in the tree via `App.tsx`) painted on top.
+**Fix:** Added `z-50` to the payment screen root overlay div in `SessionDetail.tsx`. BottomNav has no explicit z-index (browser default `auto`), so `z-50` reliably places the payment overlay above it on all browsers. Also bumped Done button to `min-h-[48px]` for a larger tap target, and added `pt-2` to the footer for breathing room.
+**Files changed:** `src/pages/SessionDetail.tsx`
+**Lesson:** Any `fixed inset-0` overlay that is meant to cover the bottom nav MUST have an explicit z-index higher than the nav. BottomNav has no z-index (`auto`) — `z-50` is sufficient and stays within the Modal tier (Pattern M1: scrim z-40, sheet z-50). See Pattern U8.
+
+---
+
 ## Open Issues / Not Yet Reproduced
 
 (Move here when Sugeet reports something but it can't be reproduced. Revisit later.)

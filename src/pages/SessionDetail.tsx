@@ -16,7 +16,7 @@ import { getElapsedMs, formatHMS, formatDuration } from '../lib/time'
 import { calculateAmount, calculateItemsTotal, applyRounding } from '../lib/money'
 import { Modal } from '../components/Modal'
 import { AddItemBottomSheet } from '../components/AddItemBottomSheet'
-import { PaymentQR } from '../components/PaymentQR'
+import { UpiQrCard } from '../components/UpiQrCard'
 import type { Session } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -333,18 +333,12 @@ export default function SessionDetail() {
         <main className="flex-1 flex flex-col items-center justify-center min-h-0 gap-4">
           {upiId ? (
             <>
-              {/* White card: aspect-square + flex centering = equal border on all 4 sides */}
-              <div
-                className="bg-white rounded-2xl p-3 aspect-square flex items-center justify-center"
-                style={{ width: 'min(72vw, 280px)' }}
-              >
-                <PaymentQR
-                  upiId={upiId}
-                  payeeName={clubName}
-                  amount={finalGrandTotal}
-                  transactionNote={transactionNote}
-                />
-              </div>
+              <UpiQrCard
+                upiId={upiId}
+                payeeName={clubName}
+                amount={finalGrandTotal}
+                transactionNote={transactionNote}
+              />
               <div className="flex flex-col items-center gap-1">
                 <div className="text-3xl font-mono font-bold text-text tabular-nums">
                   ₹{finalGrandTotal.toLocaleString('en-IN')}

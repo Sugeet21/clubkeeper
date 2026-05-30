@@ -2,14 +2,29 @@
 
 ## Database: ClubKeeperDB (Dexie / IndexedDB)
 
-### Schema Version 2 (current, after Prompt 7)
+Database name is `ClubKeeperDB_<userId>` (Supabase UUID) for per-user isolation. The `db` export is a Proxy over a re-openable instance — see `database.ts`.
+
+### Schema Version History
+
+| Version | When | What changed |
+|---|---|---|
+| v1 | Prompts 0–6 | `gameTables`, `sessions`, `settings` |
+| v2 | Prompt 7 | Same stores; adds optional `roundedDurationMs` field on sessions (no index change) |
+| v3 | 26 May 2026 | Adds `sessionItems: '++id, sessionId, addedAt'` |
+| v4 | 27 May 2026 | Documents `upiId` field on settings (no index needed) |
+| **v5** | **30 May 2026** | **Adds `customers` + `walletTransactions` tables** |
+
+### Schema Version 5 (current)
 
 ```ts
-this.version(2).stores({
-  tables: '++id, name, gameType, sortOrder, outOfService',
+this.version(5).stores({
+  gameTables: '++id, name, gameType, sortOrder, outOfService',
   sessions: '++id, tableId, status, startedAt, endedAt',
   settings: 'id',
-});
+  sessionItems: '++id, sessionId, addedAt',
+  customers: 'id, phone, walkInCode, lastVisitAt',
+  walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+})
 ```
 
 ### Tables Store
@@ -48,6 +63,47 @@ interface Session {
   roundedDurationMs?: number; // NEW in v2: stores rounded duration if rounding applied
 }
 ```
+
+### Customers Store (v5+)
+
+```ts
+// src/types/customer.ts
+interface Customer {
+  id: string               // UUID v4, primary key (string, not auto-increment)
+  phone: string | null     // "+91XXXXXXXXXX" (12 chars), null for walk-ins
+  name: string | null      // optional
+  walkInCode: string | null // "WALK-001" etc., only when phone === null
+  walletBalance: number    // integer rupees (matches existing money convention)
+  createdAt: number        // Date.now()
+  lastVisitAt: number      // updated on any topup or adjustment
+}
+```
+
+**Phone uniqueness:** enforced in `customerStore` layer (pre-check before write), NOT via Dexie `&phone` index. Reason: multiple `null` values (walk-ins) would violate a unique index in some browsers.
+
+**Walk-in counter:** stored as `ClubSettings.walkInCounter?: number`. Treat missing as `0`. Counter increment + customer insert happen in one `db.transaction('rw', settings, customers)` — crash-safe.
+
+### WalletTransactions Store (v5+)
+
+```ts
+// src/types/walletTransaction.ts
+interface WalletTransaction {
+  id: string                            // UUID v4
+  customerId: string
+  type: 'credit' | 'debit' | 'adjustment'
+  amount: number                        // always positive; type indicates direction
+  balanceAfter: number                  // balance snapshot after this tx (audit trail)
+  paymentMode: 'cash' | 'upi' | 'card' | null  // null for debit/adjustment
+  referenceType: 'topup' | 'session' | 'item' | 'manual' | 'refund' | null
+  referenceId: string | null            // sessionId.toString() / itemId / null
+  notes: string | null                  // mandatory for 'adjustment' and 'refund'
+  createdAt: number
+}
+```
+
+**Immutability rule:** WalletTransaction rows are NEVER updated. Corrections are new rows with `type: 'adjustment'` or `type: 'debit'` + `referenceType: 'refund'`. There is intentionally no `updateTransaction()` in `customerStore`.
+
+**Compound index:** `[customerId+createdAt]` enables efficient reverse-chronological history queries per customer: `db.walletTransactions.where('[customerId+createdAt]').between([id, Dexie.minKey], [id, Dexie.maxKey]).reverse()`.
 
 ### Settings Store (Singleton)
 

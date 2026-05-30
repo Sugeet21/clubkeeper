@@ -65,7 +65,9 @@ export interface ClubSettings {
   clubName: string
   currency: string
   rounding: 'none' | '15min' | '30min'
-  upiId?: string  // optional — if set, show payment QR after session stop
+  upiId?: string        // optional — if set, show payment QR after session stop
+  walkInCounter?: number // incremented when a walk-in customer is created; treat missing as 0
+  legacyAdjustmentsBackfilled?: boolean // set true by v6 migration; never write false
 }
 
 export interface SessionItem {

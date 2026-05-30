@@ -15,8 +15,15 @@ import Landing from './pages/Landing'
 import Signup from './pages/Signup'
 import Subscribe from './pages/Subscribe'
 import { AuthCallback } from './pages/AuthCallback'
+import Wallet from './pages/Wallet'
+import WalletNewCustomer from './pages/WalletNewCustomer'
+import WalletTopup from './pages/WalletTopup'
+import CustomerProfile from './pages/CustomerProfile'
 
 const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback']
+// Wallet routes are private but not in BottomNav — they are deep-linked pages.
+// They must NOT be in PUBLIC_PATHS (would hide BottomNav on /tables if added).
+// The BottomNav hides on any path in PUBLIC_PATHS — wallet paths are not in it.
 
 // Initializes Supabase auth once on mount
 function AuthInitializer() {
@@ -50,6 +57,11 @@ function AppLayout() {
             <Route path="/summary" element={<Summary />} />
             <Route path="/history" element={<History />} />
             <Route path="/settings" element={<Settings />} />
+            {/* ── Wallet routes ── */}
+            <Route path="/wallet" element={<Wallet />} />
+            <Route path="/wallet/new" element={<WalletNewCustomer />} />
+            <Route path="/wallet/topup/:customerId" element={<WalletTopup />} />
+            <Route path="/customer/:customerId" element={<CustomerProfile />} />
           </Route>
         </Routes>
       </div>

@@ -1,5 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import type { GameTable, Session, ClubSettings, SessionItem } from '../types'
+import type { Customer } from '../types/customer'
+import type { WalletTransaction } from '../types/walletTransaction'
 
 // ─── Per-user DB class ────────────────────────────────────────────────────────
 // Database name is `ClubKeeperDB_<userId>` so two different Google accounts
@@ -12,6 +14,8 @@ export class ClubKeeperDB extends Dexie {
   sessions!: Table<Session, number>
   settings!: Table<ClubSettings, number>
   sessionItems!: Table<SessionItem, number>
+  customers!: Table<Customer, string>
+  walletTransactions!: Table<WalletTransaction, string>
 
   constructor(dbName: string) {
     super(dbName)
@@ -41,6 +45,67 @@ export class ClubKeeperDB extends Dexie {
       sessions: '++id, tableId, status, startedAt, endedAt',
       settings: 'id',
       sessionItems: '++id, sessionId, addedAt',
+    })
+    // Version 5: adds customers + walletTransactions tables for wallet/prepaid feature.
+    // No .upgrade() callback — purely additive, existing rows untouched.
+    // Phone uniqueness is enforced in customerStore layer, NOT via Dexie &phone index,
+    // because IndexedDB unique index behaviour with multiple null values is not
+    // guaranteed across browsers. The store checks for duplicates before write.
+    // walkInCounter is stored on the settings singleton (no separate table).
+    // Existing settings rows missing walkInCounter are treated as 0 at read time.
+    this.version(5).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+    })
+    // Version 6: one-time backfill of legacy walletTransaction rows where type='adjustment'.
+    // Before this fix, manual adjustments were stored with type:'adjustment' instead of
+    // type:'credit' or type:'debit', so TransactionRow couldn't determine sign or color.
+    // The .upgrade() callback runs exactly once per user (only v5→v6 upgrade path).
+    // Direction is inferred by comparing each row's balanceAfter to the preceding row's
+    // balanceAfter for the same customer (ordered by createdAt). If it's the first row
+    // for a customer, compare to 0 (starting balance before any transaction).
+    // settings.legacyAdjustmentsBackfilled is set as an observable audit flag.
+    // No store string changes — same schema as v5.
+    this.version(6).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+    }).upgrade(async (tx) => {
+      const txTable = tx.table<WalletTransaction, string>('walletTransactions')
+      const settingsTable = tx.table<ClubSettings, number>('settings')
+
+      // Find all legacy adjustment rows
+      const legacyRows = await txTable
+        .filter((row) => (row.type as string) === 'adjustment')
+        .toArray()
+
+      for (const row of legacyRows) {
+        // Get all prior transactions for this customer, ordered by createdAt ascending
+        const preceding = await txTable
+          .where('[customerId+createdAt]')
+          .below([row.customerId, row.createdAt])
+          .filter((r) => r.customerId === row.customerId)
+          .last()
+
+        const previousBalance = preceding?.balanceAfter ?? 0
+        const inferredType: 'credit' | 'debit' =
+          row.balanceAfter >= previousBalance ? 'credit' : 'debit'
+
+        await txTable.update(row.id, {
+          type: inferredType,
+          referenceType: 'manual',
+        })
+      }
+
+      // Mark migration complete (audit trail — .upgrade() already guarantees once-only)
+      await settingsTable.update(1, { legacyAdjustmentsBackfilled: true })
     })
   }
 }

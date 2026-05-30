@@ -76,10 +76,10 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 29 May 2026 (payment overlay z-50 + QR aspect-square fix; Pattern U7 + U8 added)*
+*Last updated: 30 May 2026 (Wallet Phase 1 Polish: error fix, adjustment backfill, UpiQrCard extracted)*
 
 **Built and live on Vercel:**
-- 6 screens: Tables (home `/tables`), StartSession, SessionDetail, Settings, History, Summary
+- 10 screens: Tables (`/tables`), StartSession, SessionDetail, Settings, History, Summary + **Wallet (`/wallet`), WalletNewCustomer (`/wallet/new`), WalletTopup (`/wallet/topup/:id`), CustomerProfile (`/customer/:id`)**
 - Landing → Signup → Subscribe → Tables flow, all wired with route guards
 - Auth: Supabase + Google OAuth (`prompt: 'select_account'` enforced)
 - Payment: REAL Razorpay (TEST mode). Serverless `/api/*`: create-subscription, razorpay-webhook, cancel-subscription
@@ -90,6 +90,7 @@ Read MULTIPLE files when the question spans domains.
 - Recent-items chips: top 8 from last 30 days appear in AddItemBottomSheet
 - Summary + History: all row/day totals include items; CSV has Table Amount / Items / Total columns
 - Rounding change: warns when active sessions exist (change only affects future stops)
+- **Wallet / Prepaid Credit (Phase 1 + polish):** Customers table (UUID PK, phone, walkInCode, walletBalance), WalletTransactions table (compound index `[customerId+createdAt]`). TopUp with amount/bonus chips + payment mode + UPI QR (`<UpiQrCard>`). Manual adjustment (credit/debit, mandatory notes). Walk-in codes (WALK-001…). WhatsApp receipt link. Duplicate phone blocked (inline error + "View profile →" link, no toast). Transaction history with correct ₹ sign and color for all row types. Dexie v6 backfill migration for legacy `type:'adjustment'` rows. `<UpiQrCard>` shared between WalletTopup and SessionDetail post-stop screen. TopBar has wallet icon (right side, between online dot and gear).
 - **V1-LAUNCH plan filter:** Subscribe page and landing `/pricing` show ONLY Standard Monthly (₹599). Starter and Pro hidden via `VISIBLE_PLAN_IDS` filter in `PlanSelection.tsx` + hidden cards in `PricingSection.tsx`. All 6 Razorpay plan IDs and `PLANS` array untouched. Revert = remove filter + restore cards.
 - PWA install support
 - Playwright suite: 8 spec files × 3 viewports
@@ -103,6 +104,7 @@ Read MULTIPLE files when the question spans domains.
 - v1/v2: gameTables + sessions + settings
 - v3: added sessionItems table (`++id, sessionId, addedAt`)
 - v4: documents `upiId` field on settings (no index)
+- **v5 (current): adds `customers` + `walletTransactions` tables; `ClubSettings.walkInCounter?` field**
 
 **⚠️ Razorpay key rotation warning:** If `VITE_RAZORPAY_KEY_ID` or `RAZORPAY_KEY_SECRET` is ever rotated, or LIVE mode is enabled, the 6 plan IDs in `razorpayPlans.ts` MUST be re-verified against the new account. Run: `curl -u KEY_ID:KEY_SECRET https://api.razorpay.com/v1/plans/PLAN_ID` — expect 200. See Pattern S5.
 
@@ -115,6 +117,8 @@ Read MULTIPLE files when the question spans domains.
 6. Manual test of Build Prompt 3 validation checklist (Settings collapsibles, payment QR fits viewport, all actions still work)
 7. One-time migration from old `ClubKeeperDB` → `ClubKeeperDB_<userId>` for any existing user who had data before this change (write migration script when first customer reports missing data)
 8. Playwright specs may need updating — selectors looking for old Settings labels (e.g. "CLUB INFO" allcaps) need to target "Club Info" and the new collapsible structure
+9. **Wallet Phase 2:** Session-end "Pay from Wallet" deduction UI. Data model ready — `WalletTransaction.referenceType: 'session'` is the pattern.
+10. **Wallet Phase 3:** Refund UI. New debit row with `referenceType: 'refund'` + mandatory notes.
 
 **Known limitations:**
 - **LIMIT-001 (partially fixed):** IndexedDB is now per-user per-browser (`ClubKeeperDB_<userId>`). Two Gmail accounts on the same browser see separate data. Cross-device sync is still not implemented — same account on Chrome vs Edge sees different data. Full fix requires cloud sync (Supabase). Warn Sugeet if he asks for multi-device access.

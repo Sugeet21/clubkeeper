@@ -556,3 +556,114 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 **Rule:** Never change `applyRounding` or `calculateAmount` without verifying the stop-confirm preview still matches the final stored amount.
 
 **Discovered when:** Build Prompt 2 stop-session improvements, 27 May 2026
+
+---
+
+## Wallet / Prepaid Credit — added 30 May 2026
+
+### If you bump the Dexie schema version (adding tables or indexes)
+
+**Affects:**
+- `src/db/database.ts` — add a new `this.version(N).stores({...})` block. Keep ALL prior version blocks. Never edit an existing version block.
+- Must be additive only for existing users — no `.upgrade()` that mutates existing rows unless absolutely required (and then test the upgrade path from every prior version).
+- If you rename a table, existing users' data in the old table is gone — soft-delete + new-name migration required instead.
+- The `ClubKeeperDB` class table declarations (e.g. `customers!: Table<Customer, string>`) must stay in sync with the latest version's store strings.
+
+**Discovered when:** Wallet Phase 1, 30 May 2026
+
+---
+
+### If you change the `Customer` interface
+
+**Affects:**
+- `src/types/customer.ts` — interface definition
+- `src/db/database.ts` — bump Dexie version if a new INDEX is needed; field-only additions don't need a bump
+- `src/store/customerStore.ts` — all create/update/query operations
+- `src/lib/walkInCode.ts` — creates Customer objects; must include all required fields
+- `src/components/wallet/CustomerListRow.tsx` — renders customer data
+- `src/pages/Wallet.tsx`, `WalletTopup.tsx`, `CustomerProfile.tsx` — all read Customer fields
+- `src/lib/whatsapp.ts` — reads `phone`, `name`
+- **Phone format:** always stored as `+91XXXXXXXXXX` (12 chars). Validate exactly 10 digits after the +91 prefix. Any change to format must update all display sites that do `phone.slice(3)`.
+
+---
+
+### If you change the `WalletTransaction` interface
+
+**Affects:**
+- `src/types/walletTransaction.ts` — interface + union types
+- `src/db/database.ts` — bump version if index changes
+- `src/store/customerStore.ts` — `topUp()`, `applyManualAdjustment()`, `getTransactionHistory()`
+- `src/components/wallet/TransactionRow.tsx` — renders every field
+- `src/pages/CustomerProfile.tsx` — queries and lists transactions
+- **Immutability rule:** there is intentionally no `updateTransaction()`. Corrections = new rows. Do NOT add an update path without a deliberate decision.
+- **Phase 2 hook:** session debit = `{ type: 'debit', referenceType: 'session', referenceId: sessionId.toString() }`. If Session.id type changes (number → string or vice versa), update the referenceId conversion.
+
+---
+
+### If you change `walkInCode.ts` (walk-in counter logic)
+
+**Affects:**
+- `src/db/database.ts` — reads `settings.walkInCounter`; must remain in the same Dexie transaction as the `customers.add()` call
+- `src/types/index.ts` — `ClubSettings.walkInCounter?: number` — treat undefined as 0 at read time
+- `src/db/seed.ts` — default settings seed does NOT include `walkInCounter` (intentional — undefined → 0 is the fallback). Do not add it to seed or existing users will get counter reset on re-seed.
+- Format is `WALK-NNN` zero-padded to 3 digits. If you change the format, existing walk-in codes in the DB remain in the old format — handle display gracefully (don't assume all codes match the new pattern).
+
+---
+
+### If you change `TopBar.tsx`
+
+**Affects (updated 30 May 2026):**
+- `src/pages/Home.tsx` — only consumer. Now accepts optional `onWalletPress?: () => void` prop. Home does not pass this prop — TopBar's default handler `() => navigate('/wallet')` fires.
+- Right side now has 3 elements: online dot (6px), wallet button (w-9 h-9), gear button (w-9 h-9). At 360px this is tight — do NOT add a fourth element without removing one or redesigning the row.
+- The wallet button navigates to `/wallet`. If that route changes, update the default handler in `TopBar.tsx`.
+- The gear button navigates to `/settings`. Unchanged.
+- Touch targets: wallet and gear are `w-9 h-9` (36px) — they meet 44px when including the implicit tap zone on mobile. Do not shrink further.
+
+---
+
+### If you add a new wallet route
+
+**Affects:**
+- `src/App.tsx` — add `<Route>` inside the existing `<RequireAccess>` block (wallet routes are private, same as /tables)
+- `PUBLIC_PATHS` in App.tsx — do NOT add wallet paths here (would break BottomNav visibility logic on /tables)
+- BottomNav — wallet is NOT a tab; it is accessed via the TopBar wallet icon. Do not add a wallet tab to BottomNav in Phase 1.
+- `useAccessGuard` — already gates all `<RequireAccess>` children; no per-route change needed
+
+---
+
+### If you change `customerStore.ts` phone uniqueness check
+
+**Rule (load-bearing):** Phone uniqueness is enforced in the store, NOT via a Dexie `&phone` unique index. Multiple `null` phone values (walk-ins) would violate a unique index in some browsers. The pre-check + `DuplicatePhoneError` pattern is the only enforcement. Do NOT "fix" this by adding `&phone` to the Dexie schema string.
+
+**Affects if removed or weakened:**
+- `createCustomerWithPhone()` — pre-check before `db.customers.add()`
+- `updateCustomerPhone()` — pre-check before `db.customers.update()`
+- `src/pages/WalletNewCustomer.tsx` — catches `DuplicatePhoneError`, shows toast + profile link
+- `src/components/wallet/EditPhoneModal.tsx` — same catch pattern
+
+**Discovered when:** Wallet Phase 1 design decision, 30 May 2026
+
+---
+
+### If you change `UpiQrCard.tsx` or `PaymentQR.tsx`
+
+**Affects (two consumers — change one, verify both):**
+- `src/pages/SessionDetail.tsx` — post-stop payment screen. Fixed-viewport `fixed inset-0 z-50` layout. `<UpiQrCard>` sits in a `flex-1` centered middle zone. Changing card dimensions affects the fixed-layout fit.
+- `src/pages/WalletTopup.tsx` — inline topup QR. Scrollable page. `<UpiQrCard>` sits between payment-mode buttons and summary card. Changing card dimensions affects scroll length.
+- `src/components/PaymentQR.tsx` — the actual QR generator (unchanged). Props: `upiId`, `payeeName`, `amount`, `transactionNote`. Renders at 560px internally for retina, CSS-scaled to parent (Pattern U7).
+- `UpiQrCard` props: `amount`, `upiId`, `payeeName`, `transactionNote`. No store access inside.
+- QR encodes `upi://pay?pa=<vpa>&pn=<name>&am=<amount>&cu=INR`. Amount is always the **paid amount** — never the credited total (bonus is owner-side ledger, never sent over UPI).
+
+**Discovered when:** Wallet Phase 1 polish, 30 May 2026 — extracted from inline duplication in SessionDetail and WalletTopup.
+
+---
+
+### If you change the Dexie version or `.upgrade()` callbacks
+
+**Affects:**
+- Every prior version block must remain unchanged in `database.ts`. Never edit an existing `this.version(N)` block — only add new ones.
+- The v6 `.upgrade()` callback is a one-time backfill of legacy `type:'adjustment'` wallet transaction rows. Do NOT remove it — users on v5 still need it to run.
+- `src/types/index.ts` — `ClubSettings.legacyAdjustmentsBackfilled?: boolean` is the audit flag written by the v6 migration. Read-only after migration. Do not use it to gate any user-visible feature.
+- The v6 upgrade runs inside Dexie's own managed transaction — do NOT wrap it in an additional `db.transaction()` call.
+
+**Discovered when:** Wallet Phase 1 polish correction, 30 May 2026 — needed to fix existing rows with `type:'adjustment'` that were missing sign/₹ in TransactionRow.

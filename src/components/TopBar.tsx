@@ -2,7 +2,11 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 
-export default function TopBar() {
+interface Props {
+  onWalletPress?: () => void
+}
+
+export default function TopBar({ onWalletPress }: Props) {
   const navigate = useNavigate()
   const subtitle = format(new Date(), "EEE · d MMM · h:mm a")
   const [online, setOnline] = useState(navigator.onLine)
@@ -24,19 +28,31 @@ export default function TopBar() {
         <h1 className="text-[22px] font-bold tracking-tight text-text leading-tight">Today</h1>
         <p className="text-[12px] text-text-dim font-mono mt-0.5">{subtitle}</p>
       </div>
-      <div className="flex items-center gap-1.5 mt-0.5">
+      <div className="flex items-center gap-1 mt-0.5">
         {!online && (
-          <span className="flex items-center gap-1 text-[10px] font-mono text-text-faint">
+          <span className="flex items-center gap-1 text-[10px] font-mono text-text-faint mr-1">
             <span className="w-1.5 h-1.5 rounded-full bg-text-faint shrink-0" />
             Offline
           </span>
         )}
         {online && (
-          <span className="w-1.5 h-1.5 rounded-full bg-free shrink-0" />
+          <span className="w-1.5 h-1.5 rounded-full bg-free shrink-0 mr-1" />
         )}
+        {/* Wallet button — between online dot and gear */}
+        <button
+          onClick={onWalletPress ?? (() => navigate('/wallet'))}
+          className="w-9 h-9 flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors"
+          aria-label="Wallet"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+            <rect x="1" y="4" width="22" height="16" rx="3" ry="3" />
+            <path d="M1 10h22" />
+            <circle cx="17" cy="15" r="1.5" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
         <button
           onClick={() => navigate('/settings')}
-          className="w-11 h-11 flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors -mr-1"
+          className="w-9 h-9 flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors -mr-0.5"
           aria-label="Settings"
         >
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
