@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/database'
 import { getActiveSessionForTable, startSession, getRecentPlayerNames } from '../db/queries'
 import { validatePlayerName, validateNote, NOTE_MAX } from '../lib/validation'
+import { NOTIFY_PRESETS } from '../lib/notifyPresets'
 import type { BillingMode } from '../types'
 
 // ─── Icon ─────────────────────────────────────────────────────────────────────
@@ -41,6 +42,10 @@ export default function StartSession() {
   const [recentNames, setRecentNames] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // Alarm: number of minutes, null = no alarm
+  const [notifyAfterMinutes, setNotifyAfterMinutes] = useState<number | null>(null)
+  const [customNotifyMinutes, setCustomNotifyMinutes] = useState('')
+  const [showCustomNotify, setShowCustomNotify] = useState(false)
 
   useEffect(() => {
     getRecentPlayerNames().then(setRecentNames)
@@ -109,15 +114,23 @@ export default function StartSession() {
       const rateSnapshot = billingMode === 'per_frame' ? t.ratePerFrame! : t.ratePerHour
       const clampedCount = Math.max(1, Math.min(20, playerCount))
 
-      const newId = await startSession({
-        tableId: tid,
-        billingMode,
-        rateSnapshot,
-        playerName: playerName.trim() || null,
-        playerCount: clampedCount,
-        note: note.trim() || null,
-        framesPlayed: null,
-      })
+      const notifyMs =
+        typeof notifyAfterMinutes === 'number' && notifyAfterMinutes > 0
+          ? notifyAfterMinutes * 60_000
+          : null
+
+      const newId = await startSession(
+        {
+          tableId: tid,
+          billingMode,
+          rateSnapshot,
+          playerName: playerName.trim() || null,
+          playerCount: clampedCount,
+          note: note.trim() || null,
+          framesPlayed: null,
+        },
+        notifyMs,
+      )
 
       navigate(`/session/${newId}`, { replace: true })
     } catch (err) {
@@ -266,6 +279,72 @@ export default function StartSession() {
           />
           {noteError && (
             <p className="text-[12px] text-busy mt-1">{noteError}</p>
+          )}
+        </Field>
+
+        {/* Notify me at */}
+        <Field label="Notify me at" hint="optional">
+          <div className="flex flex-wrap gap-2">
+            {NOTIFY_PRESETS.map((preset) => {
+              const presetMinutes = preset.ms === null ? null : preset.ms / 60_000
+              const isSelected =
+                presetMinutes === null
+                  ? notifyAfterMinutes === null && !showCustomNotify
+                  : notifyAfterMinutes === presetMinutes && !showCustomNotify
+              return (
+                <button
+                  key={preset.label}
+                  onClick={() => {
+                    setNotifyAfterMinutes(presetMinutes)
+                    setShowCustomNotify(false)
+                    setCustomNotifyMinutes('')
+                  }}
+                  className={`min-h-[44px] px-4 rounded-xl border text-[13px] font-semibold transition-colors ${
+                    isSelected
+                      ? 'bg-accent text-bg border-accent'
+                      : 'bg-bg-elevated border-border text-text-dim'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              )
+            })}
+            <button
+              onClick={() => {
+                setShowCustomNotify(true)
+                setNotifyAfterMinutes(null)
+              }}
+              className={`min-h-[44px] px-4 rounded-xl border text-[13px] font-semibold transition-colors ${
+                showCustomNotify
+                  ? 'bg-accent text-bg border-accent'
+                  : 'bg-bg-elevated border-border text-text-dim'
+              }`}
+            >
+              Custom
+            </button>
+          </div>
+          {showCustomNotify && (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={600}
+                value={customNotifyMinutes}
+                onChange={(e) => {
+                  setCustomNotifyMinutes(e.target.value)
+                  const v = parseInt(e.target.value, 10)
+                  setNotifyAfterMinutes(!isNaN(v) && v >= 1 && v <= 600 ? v : null)
+                }}
+                placeholder="Minutes (1–600)"
+                className="flex-1 bg-bg-elevated border border-border rounded-xl px-4 py-3 text-text text-[15px] placeholder-text-faint focus:border-accent focus:outline-none transition-colors"
+              />
+            </div>
+          )}
+          {notifyAfterMinutes !== null && (
+            <p className="text-[12px] text-accent mt-1.5">
+              Alert fires after {notifyAfterMinutes < 60 ? `${notifyAfterMinutes} min` : `${notifyAfterMinutes / 60} hr`}
+            </p>
           )}
         </Field>
 

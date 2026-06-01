@@ -1,6 +1,6 @@
 ---
 name: clubkeeper
-description: ClubKeeper is Sugeet's offline-first PWA for managing indoor games clubs in India (pool, snooker, carrom, PlayStation). Use this skill whenever Sugeet mentions ClubKeeper, club app, indoor games, pool table app, carrom app, table timer, session timer, or anything related to building, debugging, or extending his SaaS product. Also trigger when he discusses pricing strategy, subscription plans, payment integration (Razorpay/UPI), customer acquisition for the app, signup/auth flows, deployment to Vercel, or shares screenshots from localhost:5173 / clubkeeper.vercel.app. Trigger even when he just shares an error or asks "what should I do next" inside this project context. This skill carries the project's full architecture, design system, code conventions, all bugs found and fixed, business context, and decision history — consult it BEFORE answering anything about the app so advice stays consistent with prior decisions.
+description: ClubKeeper is Sugeet's offline-first PWA for managing indoor games clubs in India (pool, snooker, carrom, PlayStation). Use this skill whenever Sugeet mentions ClubKeeper, club app, indoor games, pool table app, carrom app, table timer, session timer, or anything related to building, debugging, or extending his SaaS product. Also trigger when he discusses pricing strategy, subscription plans, payment integration (Razorpay/UPI), customer acquisition for the app, signup/auth flows, deployment to Vercel, or shares screenshots from localhost:5173 / app.handbookhq.in (or clubkeeper.vercel.app backup). Trigger even when he just shares an error or asks "what should I do next" inside this project context. This skill carries the project's full architecture, design system, code conventions, all bugs found and fixed, business context, and decision history — consult it BEFORE answering anything about the app so advice stays consistent with prior decisions.
 ---
 
 # ClubKeeper — Project Memory
@@ -76,9 +76,9 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 30 May 2026 (Wallet Phase 1.5: customerDisplay.ts helper, EditCustomerModal supports name, Walk-in label scoped correctly)*
+*Last updated: 1 Jun 2026 (Alarm Phase 1+2: sound loop + iOS unlock + snooze math fix + bell icon + mid-session edit pill; custom domain app.handbookhq.in live)*
 
-**Built and live on Vercel:**
+**Built and live on app.handbookhq.in (primary) / clubkeeper.vercel.app (backup):**
 - 10 screens: Tables (`/tables`), StartSession, SessionDetail, Settings, History, Summary + **Wallet (`/wallet`), WalletNewCustomer (`/wallet/new`), WalletTopup (`/wallet/topup/:id`), CustomerProfile (`/customer/:id`)**
 - Landing → Signup → Subscribe → Tables flow, all wired with route guards
 - Auth: Supabase + Google OAuth (`prompt: 'select_account'` enforced)
@@ -92,6 +92,7 @@ Read MULTIPLE files when the question spans domains.
 - Rounding change: warns when active sessions exist (change only affects future stops)
 - **Wallet / Prepaid Credit (Phase 1 + polish + Phase 1.5):** Customers table (UUID PK, phone, walkInCode, walletBalance), WalletTransactions table (compound index `[customerId+createdAt]`). TopUp with amount/bonus chips + payment mode + UPI QR (`<UpiQrCard>`). Manual adjustment (credit/debit, mandatory notes). Walk-in codes (WALK-001…). WhatsApp receipt link. Duplicate phone blocked (inline error + "View profile →" link, no toast). Transaction history with correct ₹ sign and color for all row types. Dexie v6 backfill migration for legacy `type:'adjustment'` rows. `<UpiQrCard>` shared between WalletTopup and SessionDetail post-stop screen. TopBar has wallet icon (right side, between online dot and gear). **Phase 1.5:** `src/lib/customerDisplay.ts` centralizes display name logic — `customerDisplayName` / `phoneTail` / `customerFullLabel` / `formattedPhone`. "Walk-in" label now only for truly anonymous (no name + no phone). `EditCustomerModal.tsx` (renamed from `EditPhoneModal`) supports editing both name and phone. Entire name+phone block in CustomerProfile header is tappable. `buildWhatsAppReceiptUrl` takes `Customer` directly.
 - **V1-LAUNCH plan filter:** Subscribe page and landing `/pricing` show ONLY Standard Monthly (₹599). Starter and Pro hidden via `VISIBLE_PLAN_IDS` filter in `PlanSelection.tsx` + hidden cards in `PricingSection.tsx`. All 6 Razorpay plan IDs and `PLANS` array untouched. Revert = remove filter + restore cards.
+- **Alarm / Notify-at (Phase 2):** Per-session optional alarm. Threshold persisted on `Session.notifyAtMs` (Dexie v7, absolute Unix ms). Settable from BOTH `StartSession` (duration from session start) AND `SessionDetail` edit pill (duration from now). Chip presets in `src/lib/notifyPresets.ts` — 30 min / 1 hr / 1.5 hr / 2 hr / custom 1–600 min. Detection: `useSessionAlarm` — Pattern T1 timestamp comparison, `status === 'running'` only, paused sessions deferred, completed sessions excluded via `activeSessions`. Visibility: passive bell icon on table card (`Home.tsx`) when armed + unacknowledged; pulsing on running sessions. Edit pill on `SessionDetail` shows armed time + opens Modal to change/remove. Snooze anchors to original `notifyAtMs` (Pattern T6) with `Date.now()` fallback if past. Sound via `src/lib/alarm.ts` (gain 1.0, looped, 60-sec cap, iOS unlock). Wall-clock semantics — pause does NOT shift `notifyAtMs`.
 - PWA install support
 - Playwright suite: 8 spec files × 3 viewports
 - GitHub: `github.com/Sugeet21/clubkeeper`
@@ -104,7 +105,9 @@ Read MULTIPLE files when the question spans domains.
 - v1/v2: gameTables + sessions + settings
 - v3: added sessionItems table (`++id, sessionId, addedAt`)
 - v4: documents `upiId` field on settings (no index)
-- **v5 (current): adds `customers` + `walletTransactions` tables; `ClubSettings.walkInCounter?` field**
+- v5: adds `customers` + `walletTransactions` tables; `ClubSettings.walkInCounter?` field
+- v6: one-time `.upgrade()` backfill of legacy `type:'adjustment'` wallet transaction rows
+- **v7 (current): adds optional `notifyAtMs` + `notifyAcknowledgedAt` fields on sessions (alarm feature, no new index)**
 
 **⚠️ Razorpay key rotation warning:** If `VITE_RAZORPAY_KEY_ID` or `RAZORPAY_KEY_SECRET` is ever rotated, or LIVE mode is enabled, the 6 plan IDs in `razorpayPlans.ts` MUST be re-verified against the new account. Run: `curl -u KEY_ID:KEY_SECRET https://api.razorpay.com/v1/plans/PLAN_ID` — expect 200. See Pattern S5.
 

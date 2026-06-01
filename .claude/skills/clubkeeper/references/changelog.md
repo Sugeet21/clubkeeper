@@ -4,6 +4,29 @@ Chronological record of what shipped, when, and what manual setup was done. Read
 
 ---
 
+## 1 Jun 2026 — Alarm Phase 2 (snooze math, bell icon, edit-on-running)
+
+Three real-world bugs from Sugeet's test scenarios fixed:
+1. **Snooze math drifted forward** by user reaction time → now anchors to original `notifyAtMs` (Pattern T6).
+2. **No visibility that alarm was armed** → added passive bell icon (lime, `w-4 h-4`, pulsing on running) on table card when notify is armed and unacknowledged.
+3. **Couldn't add/edit/cancel alarm mid-session** → added `⏰ Alarm at <time> · Edit` pill on SessionDetail, opens Modal with `NOTIFY_PRESETS` chips + Custom. "None" clears alarm.
+
+Also: refactored `NOTIFY_PRESETS` into `src/lib/notifyPresets.ts` (single source of truth for StartSession + SessionDetail). Added `updateSessionNotify()` to `queries.ts`.
+
+---
+
+## 1 Jun 2026 — Alarm volume + loop + iOS audio unlock (Pattern T5)
+
+Fixed alarm sound quality: gain 0.3 → 1.0, tone duration 200ms → 500ms with attack/decay envelope, replaced 2-fire pattern with 3-sec loop capped at 60 sec. Extracted to `src/lib/alarm.ts` (eliminates `Settings.tsx` duplication). Added silent iOS audio unlock via global `pointerdown` listener in `App.tsx`. Test alert button plays single-beep preview (`playBeepOnce`), not full loop.
+
+---
+
+## 1 Jun 2026 — Custom domain live: app.handbookhq.in
+
+Primary production URL is now `app.handbookhq.in` (Cloudflare DNS → Vercel). Old `clubkeeper.vercel.app` still resolves as backup. No code changed; this is a Vercel + DNS config change only. Future share links, marketing material, and customer-facing references should use the custom domain.
+
+---
+
 ## Prompts 0–8 — Foundations and polish
 
 - **Prompts 0–6:** Project setup, data layer, all 4 main screens, Add/Edit Table modal, PWA install support.
@@ -333,6 +356,44 @@ Every inline `customer.name ?? customer.walkInCode ?? 'Customer'` chain replaced
 - `buildWhatsAppReceiptUrl` now takes `{ customer: Customer, ... }` instead of `{ phone, customerName, ... }`
 - Uses `customerDisplayName(c)` for greeting — no more hardcoded `customerName ?? 'Customer'`
 - WalletTopup.tsx call site updated to pass `customer: updatedCustomer`
+
+**Build:** ✅ Zero TS errors.
+
+---
+
+## 31 May 2026 — Per-session alarm / notification feature (Dexie v7)
+
+**What shipped:**
+
+**DB migration — Dexie v7 (additive, no `.upgrade()`):**
+- `src/db/database.ts`: v7 block — same store strings as v6. Optional fields `notifyAtMs` and `notifyAcknowledgedAt` on sessions default to `undefined` on existing rows (= no alarm).
+
+**Type updates:**
+- `src/types/index.ts`: `Session.notifyAtMs?: number | null`, `Session.notifyAcknowledgedAt?: number | null`, `ClubSettings.alarmSoundEnabled?: boolean`, `ClubSettings.alarmVibrationEnabled?: boolean`
+
+**Queries — `src/db/queries.ts`:**
+- `startSession()` now accepts optional `notifyAfterMs` param. Writes `notifyAtMs = startedAt + notifyAfterMs` (absolute, not relative). `startedAt` is captured once and used for both fields.
+- `acknowledgeNotify(sessionId)` — writes `notifyAcknowledgedAt: Date.now()`
+- `snoozeNotify(sessionId, snoozeMs)` — writes `notifyAtMs: Date.now() + snoozeMs`, clears `notifyAcknowledgedAt`
+
+**New hook — `src/hooks/useSessionAlarm.ts`:**
+- Returns the first `status === 'running'` session whose `notifyAtMs` has passed and is unacknowledged. Calls `useTick()` for 1s re-renders. Pattern T1 + T4 compliant.
+
+**New component — `src/components/SessionAlarmModal.tsx`:**
+- Fullscreen `fixed inset-0 z-50` overlay (Pattern U8). Two-tone Web Audio beep + vibration on mount and again after 30s. No backdrop/ESC dismiss. "Stop session" navigates to session detail. "Snooze" shows preset chips (5/10/15 min) + custom minutes input. Players: Walk-in label for unnamed sessions.
+
+**Home.tsx updated:**
+- Imports `useSessionAlarm`, `acknowledgeNotify`, `snoozeNotify`, `SessionAlarmModal`
+- `alarmSession = useSessionAlarm(activeSessions)` in render body (Pattern T4)
+- Alarm modal rendered when `alarmSession !== null`. Stop handler calls `acknowledgeNotify` then navigates to `/session/:id`.
+
+**StartSession.tsx updated:**
+- "Notify me at" field: chip row [None] [30 min] [1 hr] [1.5 hr] [2 hr] [Custom]. Default: None. Custom expands a number input (1–600 min). 44px touch targets. Passes `notifyAfterMs` to `startSession()`.
+
+**Settings.tsx updated:**
+- New "Alerts" section between Tables and Subscription. Two toggles: Alarm sound + Vibration (bound to Dexie settings, NOT localStorage). "Test alert" button plays beep + vibrates inline. New `IconAlerts` SVG. `Toggle` component imported.
+
+**References updated:** `data_model.md` (v7 schema table + Session fields + ClubSettings fields), `ripple_effects.md` (alarm files added to Session change list), `decisions_active.md` (alarm pattern + updated Settings section order).
 
 **Build:** ✅ Zero TS errors.
 

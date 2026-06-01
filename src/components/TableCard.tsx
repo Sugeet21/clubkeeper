@@ -59,6 +59,12 @@ export default function TableCard({ table, session, onStartTap }: Props) {
     )
   }
 
+  // Bell icon — passive indicator when alarm is armed and unacknowledged
+  const alarmArmed =
+    session != null &&
+    session.notifyAtMs != null &&
+    !session.notifyAcknowledgedAt
+
   // BUSY — session running
   if (session?.status === 'running') {
     return (
@@ -71,13 +77,26 @@ export default function TableCard({ table, session, onStartTap }: Props) {
             <h3 className="text-[17px] font-bold tracking-tight text-text">{table.name}</h3>
             <MetaLine table={table} />
           </div>
-          <div className="text-right shrink-0 ml-3 min-w-0 flex-shrink">
-            <p className="text-[13px] font-semibold text-text leading-tight max-w-[140px] truncate">
-              {session.playerName || '—'}
-            </p>
-            <p className="text-[11px] text-text-dim font-mono mt-0.5">
-              Started {format(session.startedAt, 'h:mm a')}
-            </p>
+          <div className="text-right shrink-0 ml-3 flex items-start gap-2">
+            {alarmArmed && (
+              <svg
+                width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                className="text-accent animate-pulse mt-0.5 shrink-0"
+                aria-label="Alarm set"
+              >
+                <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 01-3.46 0" />
+              </svg>
+            )}
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-text leading-tight max-w-[140px] truncate">
+                {session.playerName || '—'}
+              </p>
+              <p className="text-[11px] text-text-dim font-mono mt-0.5">
+                Started {format(session.startedAt, 'h:mm a')}
+              </p>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2 mb-2">
@@ -103,13 +122,26 @@ export default function TableCard({ table, session, onStartTap }: Props) {
             <h3 className="text-[17px] font-bold tracking-tight text-text">{table.name}</h3>
             <MetaLine table={table} />
           </div>
-          <div className="text-right shrink-0 ml-3 min-w-0 flex-shrink">
-            <p className="text-[13px] font-semibold text-text leading-tight max-w-[140px] truncate">
-              {session.playerName || '—'}
-            </p>
-            <p className="text-[11px] text-text-dim font-mono mt-0.5">
-              Paused {format(session.pausedAt!, 'h:mm a')}
-            </p>
+          <div className="text-right shrink-0 ml-3 flex items-start gap-2">
+            {alarmArmed && (
+              <svg
+                width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                className="text-accent mt-0.5 shrink-0"
+                aria-label="Alarm set"
+              >
+                <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 01-3.46 0" />
+              </svg>
+            )}
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-text leading-tight max-w-[140px] truncate">
+                {session.playerName || '—'}
+              </p>
+              <p className="text-[11px] text-text-dim font-mono mt-0.5">
+                Paused {format(session.pausedAt!, 'h:mm a')}
+              </p>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2 mb-2">

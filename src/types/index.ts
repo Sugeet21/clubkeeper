@@ -58,6 +58,8 @@ export interface Session {
   status: 'running' | 'paused' | 'completed'
   amount: number
   roundedDurationMs?: number  // set when rounding applied; undefined = raw elapsed used
+  notifyAtMs?: number | null          // absolute Unix ms when alarm should fire; undefined/null = no alarm
+  notifyAcknowledgedAt?: number | null // Unix ms when owner tapped Stop or Snooze; null = alarm pending
 }
 
 export interface ClubSettings {
@@ -68,6 +70,8 @@ export interface ClubSettings {
   upiId?: string        // optional — if set, show payment QR after session stop
   walkInCounter?: number // incremented when a walk-in customer is created; treat missing as 0
   legacyAdjustmentsBackfilled?: boolean // set true by v6 migration; never write false
+  alarmSoundEnabled?: boolean    // default true; stored in Dexie, NOT localStorage
+  alarmVibrationEnabled?: boolean // default true; stored in Dexie, NOT localStorage
 }
 
 export interface SessionItem {

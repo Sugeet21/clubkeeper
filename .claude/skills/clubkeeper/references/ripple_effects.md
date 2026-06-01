@@ -41,10 +41,13 @@ If a change isn't documented here yet, pause and trace dependencies first.
 - `src/lib/time.ts` — `getElapsedMs` reads startedAt/endedAt/pausedAt/pausedTotalMs/status
 - `src/lib/money.ts` — `calculateAmount` reads billingMode/rateSnapshot/framesPlayed
 - `src/pages/SessionDetail.tsx` — displays everything
-- `src/pages/Home.tsx` — needs active session for each table
+- `src/pages/Home.tsx` — needs active session for each table; mounts `<SessionAlarmModal>` when alarm fires
 - `src/pages/Summary.tsx` — today's sessions list
 - `src/pages/History.tsx` — date-range sessions list
 - `src/components/TableCard.tsx` — shows player/timer/status
+- `src/hooks/useSessionAlarm.ts` — reads `notifyAtMs`, `notifyAcknowledgedAt`, `status` fields
+- `src/components/SessionAlarmModal.tsx` — receives `Session` as prop; uses `getElapsedMs`
+- `src/pages/StartSession.tsx` — passes `notifyAfterMs` to `startSession()` which writes `notifyAtMs`
 - **CSV export** in Summary and History — column structure
 - **Migration:** bump Dexie version if changing indexes
 
@@ -538,7 +541,7 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 - `src/pages/Settings.tsx` — `openSection: string` state. Only one section open at a time. Toggling an open section sets `openSection = ''` (closed). `SettingsSection` component (inline, not exported). Animation via `grid-rows-[1fr/0fr] opacity-100/0`.
 - `sessionStorage['ck_settings_section']` — UI persistence key. Cleared on tab/browser close (not localStorage, not Dexie). Safe to read/write without concern for data integrity.
 - If a section ID changes (e.g., `'club-info'`), the saved `sessionStorage` value becomes stale — harmless (falls back to no-section-open, then defaults to 'club-info' won't auto-open on that session).
-- Section order: `club-info`, `tables`, `subscription`, `data`, `about`, `account`. Adding a new section: add an `id` here and a `<SettingsSection>` block.
+- Section order: `club-info`, `tables`, `alerts`, `subscription`, `data`, `about`, `account`. Adding a new section: add an `id` here and a `<SettingsSection>` block.
 
 **Discovered when:** Build Prompt 3, 27 May 2026
 
@@ -685,3 +688,33 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 - The v6 upgrade runs inside Dexie's own managed transaction — do NOT wrap it in an additional `db.transaction()` call.
 
 **Discovered when:** Wallet Phase 1 polish correction, 30 May 2026 — needed to fix existing rows with `type:'adjustment'` that were missing sign/₹ in TransactionRow.
+
+---
+
+## Alarm Audio — added 1 Jun 2026
+
+### If you change `src/lib/alarm.ts`
+
+**Affects:**
+- `src/components/SessionAlarmModal.tsx` — imports `startAlarmLoop` + `triggerVibration`. If `startAlarmLoop` signature changes (e.g. takes options), update the modal call site.
+- `src/pages/Settings.tsx` — Test alert button imports `playBeepOnce` + `triggerVibration` + `unlockAudio`. Keep Test as ONE beep (`playBeepOnce`), not the full loop.
+- `src/App.tsx` — global unlock listener calls `unlockAudio()`. If unlock semantics change, update the listener.
+- The 60-second auto-stop cap in `startAlarmLoop` is load-bearing for battery safety — do not remove without explicit decision.
+
+**Discovered when:** Alarm volume + loop + iOS audio unlock fix, 1 Jun 2026 (Pattern T5).
+
+### If you change `notifyAtMs` semantics
+
+**Affects:**
+- `src/db/queries.ts` — `snoozeNotify` (anchor-to-original logic, Pattern T6), `updateSessionNotify` (set/clear on running session from now)
+- `src/hooks/useSessionAlarm.ts` — detection uses wall-clock `now >= notifyAtMs`. Do NOT compensate for `pausedTotalMs` (deliberate: wall-clock semantics match how phone alarms work)
+- `src/pages/StartSession.tsx` — sets alarm at session creation; duration is FROM session start
+- `src/pages/SessionDetail.tsx` — sets/edits on running session via alarm pill; duration is FROM NOW
+- `src/components/TableCard.tsx` — bell icon shown when `notifyAtMs != null && !notifyAcknowledgedAt`
+- `src/components/SessionAlarmModal.tsx` — fires when threshold met on `/tables`
+
+### If you change `NOTIFY_PRESETS` in `src/lib/notifyPresets.ts`
+
+**Affects:** `src/pages/StartSession.tsx` alarm chips AND `src/pages/SessionDetail.tsx` edit bottom sheet. Both import from this file — change once, both screens update.
+
+**Discovered when:** Alarm Phase 2, 1 Jun 2026.

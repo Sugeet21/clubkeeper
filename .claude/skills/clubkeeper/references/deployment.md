@@ -3,9 +3,22 @@
 ## Current Setup
 
 - **Code repo:** `github.com/Sugeet21/clubkeeper`
-- **Live URL:** `clubkeeper.vercel.app` (Vercel-assigned subdomain)
+- **Live URL (primary):** `app.handbookhq.in` (custom domain on Vercel)
+- **Live URL (backup):** `clubkeeper.vercel.app` (Vercel-assigned subdomain, still active)
 - **Hosting:** Vercel free tier
 - **Branch:** `main` is production. Every push auto-deploys.
+
+> Custom domain went live 1 Jun 2026. DNS managed via Cloudflare. Both URLs serve the same deployment — no separate branch.
+
+## DNS & Domain
+
+| | |
+|---|---|
+| **Primary** | `app.handbookhq.in` |
+| **DNS provider** | Cloudflare |
+| **Vercel project domain** | `clubkeeper` (auto-assigns `clubkeeper.vercel.app`) |
+| **SSL** | Auto via Vercel |
+| **To revert** | Remove custom domain from Vercel dashboard; `clubkeeper.vercel.app` continues working. |
 
 ## Pushing Changes (Sugeet's workflow)
 

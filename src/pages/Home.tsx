@@ -5,9 +5,10 @@ import { startOfDay, endOfDay } from 'date-fns'
 import { useTables, useActiveSessions, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { useInstallPrompt } from '../hooks/useInstallPrompt'
+import { useSessionAlarm } from '../hooks/useSessionAlarm'
 import { getElapsedMs } from '../lib/time'
 import { calculateAmount } from '../lib/money'
-import { stopSession } from '../db/queries'
+import { stopSession, acknowledgeNotify, snoozeNotify } from '../db/queries'
 import { db } from '../db/database'
 import TopBar from '../components/TopBar'
 import SummaryStrip from '../components/SummaryStrip'
@@ -16,6 +17,7 @@ import TableCard from '../components/TableCard'
 import { Modal } from '../components/Modal'
 import { TableFormModal } from '../components/TableFormModal'
 import { SubscriptionStatusBanner } from '../components/SubscriptionStatusBanner'
+import { SessionAlarmModal } from '../components/SessionAlarmModal'
 import type { GameType, Session } from '../types'
 
 type FilterValue = 'all' | GameType
@@ -35,6 +37,9 @@ export default function Home() {
   const [addTableOpen, setAddTableOpen] = useState(false)
   const [orphanedOpen, setOrphanedOpen] = useState(false)
   const [endingId, setEndingId] = useState<number | null>(null)
+
+  // Alarm — checked every useTick() re-render (Pattern T1, Pattern T4)
+  const alarmSession = useSessionAlarm(activeSessions)
 
   const sessionMap = useMemo(() => {
     const map = new Map<number, Session>()
@@ -114,6 +119,18 @@ export default function Home() {
     } finally {
       setEndingId(null)
     }
+  }
+
+  async function handleAlarmStop() {
+    if (!alarmSession?.id) return
+    // Acknowledge first so alarm doesn't refire while navigating
+    await acknowledgeNotify(alarmSession.id)
+    navigate(`/session/${alarmSession.id}`)
+  }
+
+  async function handleAlarmSnooze(ms: number) {
+    if (!alarmSession?.id) return
+    await snoozeNotify(alarmSession.id, ms)
   }
 
   return (
@@ -199,6 +216,18 @@ export default function Home() {
         onClose={() => setAddTableOpen(false)}
         existingTables={tables}
       />
+
+      {/* Session alarm modal — fullscreen, covers bottom nav (z-50) */}
+      {alarmSession && (
+        <SessionAlarmModal
+          session={alarmSession}
+          tableName={tables.find((t) => t.id === alarmSession.tableId)?.name ?? `Table ${alarmSession.tableId}`}
+          onStopSession={() => void handleAlarmStop()}
+          onSnooze={(ms) => void handleAlarmSnooze(ms)}
+          soundEnabled={settings?.alarmSoundEnabled ?? true}
+          vibrationEnabled={settings?.alarmVibrationEnabled ?? true}
+        />
+      )}
 
       {/* Orphaned sessions modal */}
       <Modal

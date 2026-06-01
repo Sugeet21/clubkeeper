@@ -5,6 +5,7 @@ import BottomNav from './components/BottomNav'
 import { ToastContainer } from './components/ToastContainer'
 import { RequireAccess } from './components/RequireAccess'
 import { useAuthStore } from './store/authStore'
+import { unlockAudio } from './lib/alarm'
 import Home from './pages/Home'
 import Summary from './pages/Summary'
 import History from './pages/History'
@@ -29,6 +30,26 @@ const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback']
 function AuthInitializer() {
   useEffect(() => {
     useAuthStore.getState().initialize()
+  }, [])
+  return null
+}
+
+// Unlocks Web Audio API on the first user gesture anywhere in the app.
+// iOS Safari suspends AudioContext until a user gesture — this fires once
+// on the first tap or keypress, then removes itself.
+function AudioUnlocker() {
+  useEffect(() => {
+    const handler = () => {
+      unlockAudio()
+      window.removeEventListener('pointerdown', handler)
+      window.removeEventListener('keydown', handler)
+    }
+    window.addEventListener('pointerdown', handler, { passive: true })
+    window.addEventListener('keydown', handler)
+    return () => {
+      window.removeEventListener('pointerdown', handler)
+      window.removeEventListener('keydown', handler)
+    }
   }, [])
   return null
 }
@@ -75,6 +96,7 @@ export default function App() {
     <ErrorBoundary>
       <BrowserRouter>
         <AuthInitializer />
+        <AudioUnlocker />
         <AppLayout />
       </BrowserRouter>
     </ErrorBoundary>

@@ -107,6 +107,18 @@ export class ClubKeeperDB extends Dexie {
       // Mark migration complete (audit trail — .upgrade() already guarantees once-only)
       await settingsTable.update(1, { legacyAdjustmentsBackfilled: true })
     })
+    // Version 7: adds optional alarm fields to sessions — notifyAtMs and notifyAcknowledgedAt.
+    // No .upgrade() needed — optional fields default to undefined on existing rows,
+    // which is treated as "no alarm set". No new index needed — alarm check filters
+    // in memory from already-loaded active sessions (never more than a handful at once).
+    this.version(7).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+    })
   }
 }
 

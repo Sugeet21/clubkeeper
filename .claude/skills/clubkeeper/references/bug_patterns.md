@@ -51,6 +51,18 @@ const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.ite
 ### Pattern T3 — Rate snapshot per session
 **Rule:** Each session stores its own `rateSnapshot` at start. Editing a table's rate later does NOT change in-progress sessions. This is load-bearing — never use the live table rate for an active session.
 
+### Pattern T5 — Web Audio alarm output must be loud, looped, capped, and iOS-unlocked
+**Symptom signature:** Alarm "works" — modal appears, vibration fires — but sound is silent or barely audible, especially on iPhone PWA. Or sound plays once and stops while modal stays open.
+**Root cause:** Multiple compounding issues common to Web Audio on mobile: (a) default GainNode value too low, (b) tones too short to perceive, (c) no loop = single missed beep = feature failure, (d) iOS Safari suspends AudioContext until user gesture.
+**Rule:** All alarm sound MUST go through `src/lib/alarm.ts`. Gain = 1.0. Tone duration ≥ 500ms with attack/decay envelope to avoid clicks. Loop every 3 sec via `setInterval` cleaned up in `useEffect` return. 60-sec auto-stop cap. iOS unlock via global `pointerdown` listener in `App.tsx` + on-tap unlock in Settings Test button. Never copy-paste alarm code — always import from the shared lib.
+**Files affected:** `src/lib/alarm.ts` (single source), `src/components/SessionAlarmModal.tsx`, `src/pages/Settings.tsx`, `src/App.tsx`.
+
+### Pattern T6 — Snooze must anchor to original fire time, not to user tap time
+**Symptom signature:** "I set snooze for 15 min but it took 16 min." Player gets called at wrong intervals. Drift accumulates over multiple snoozes.
+**Root cause:** `notifyAtMs = Date.now() + snoozeMs` adds the user's reaction time (seconds between alarm ringing and user tapping Snooze) onto every snooze cycle.
+**Rule:** Snooze offsets from the ORIGINAL `notifyAtMs`, not from `Date.now()`. Fallback to `Date.now() + snoozeMs` only when the resulting time would already be in the past (user snoozed long after alarm rang).
+**Files affected:** `src/db/queries.ts` (`snoozeNotify`).
+
 ---
 
 ## Forms & Inputs (validation, adversarial input)

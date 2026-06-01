@@ -5,11 +5,13 @@ import { useTables, useSettings } from '../hooks/useLiveData'
 import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport } from '../db/queries'
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
+import { Toggle } from '../components/Toggle'
 import { useToastStore } from '../store/toastStore'
 import { useAuthStore } from '../store/authStore'
 import { validatePlayerName, validateUpiId } from '../lib/validation'
 import { db } from '../db/database'
 import { supabase } from '../lib/supabase'
+import { playBeepOnce, triggerVibration, unlockAudio } from '../lib/alarm'
 import type { GameTable } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -86,6 +88,15 @@ function IconAccount() {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
       <circle cx="12" cy="7" r="4" />
+    </svg>
+  )
+}
+
+function IconAlerts() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 01-3.46 0" />
     </svg>
   )
 }
@@ -556,7 +567,52 @@ export default function Settings() {
           </div>
         </SettingsSection>
 
-        {/* ── 3: Subscription ────────────────────────────────────────────── */}
+        {/* ── 3: Alerts ──────────────────────────────────────────────────── */}
+        <SettingsSection
+          id="alerts"
+          title="Alerts"
+          icon={<IconAlerts />}
+          isOpen={openSection === 'alerts'}
+          onToggle={() => toggleSection('alerts')}
+        >
+          <div className="mt-3 space-y-4">
+            <div className="flex items-center justify-between min-h-[44px]">
+              <div>
+                <p className="text-[14px] font-semibold text-text">Alarm sound</p>
+                <p className="text-[11px] text-text-faint mt-0.5">Two-tone beep when timer alert fires</p>
+              </div>
+              <Toggle
+                value={settings?.alarmSoundEnabled ?? true}
+                onChange={(v) => void updateSettings({ alarmSoundEnabled: v })}
+                aria-label="Toggle alarm sound"
+              />
+            </div>
+            <div className="flex items-center justify-between min-h-[44px]">
+              <div>
+                <p className="text-[14px] font-semibold text-text">Vibration</p>
+                <p className="text-[11px] text-text-faint mt-0.5">Phone vibrates when alert fires</p>
+              </div>
+              <Toggle
+                value={settings?.alarmVibrationEnabled ?? true}
+                onChange={(v) => void updateSettings({ alarmVibrationEnabled: v })}
+                aria-label="Toggle alarm vibration"
+              />
+            </div>
+            <button
+              onClick={() => {
+                unlockAudio()
+                if (settings?.alarmSoundEnabled ?? true) playBeepOnce()
+                if (settings?.alarmVibrationEnabled ?? true) triggerVibration()
+              }}
+              className="w-full min-h-[44px] flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-bg border border-border active:bg-bg-card transition-colors"
+            >
+              <span className="text-[14px] text-text font-semibold">Test alert</span>
+              <span className="text-[14px]">🔔</span>
+            </button>
+          </div>
+        </SettingsSection>
+
+        {/* ── 4: Subscription ─────────────────────────────────────────────── */}
         <SettingsSection
           id="subscription"
           title="Subscription"
@@ -655,7 +711,7 @@ export default function Settings() {
           </div>
         </SettingsSection>
 
-        {/* ── 4: Data & Backup ───────────────────────────────────────────── */}
+        {/* ── 5: Data & Backup ───────────────────────────────────────────── */}
         <SettingsSection
           id="data"
           title="Data & Backup"
@@ -695,7 +751,7 @@ export default function Settings() {
           </div>
         </SettingsSection>
 
-        {/* ── 5: About ───────────────────────────────────────────────────── */}
+        {/* ── 6: About ───────────────────────────────────────────────────── */}
         <SettingsSection
           id="about"
           title="About"
@@ -723,7 +779,7 @@ export default function Settings() {
           </div>
         </SettingsSection>
 
-        {/* ── 6: Account ─────────────────────────────────────────────────── */}
+        {/* ── 7: Account ─────────────────────────────────────────────────── */}
         <SettingsSection
           id="account"
           title="Account"

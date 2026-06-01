@@ -9,11 +9,13 @@ import {
   stopSession,
   editSessionStart,
   updateSession,
+  updateSessionNotify,
 } from '../db/queries'
 import { useTable, useSessionItems, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatHMS, formatDuration } from '../lib/time'
 import { calculateAmount, calculateItemsTotal, applyRounding } from '../lib/money'
+import { NOTIFY_PRESETS } from '../lib/notifyPresets'
 import { Modal } from '../components/Modal'
 import { AddItemBottomSheet } from '../components/AddItemBottomSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
@@ -90,6 +92,36 @@ function DetailRow({
   )
 }
 
+// ─── Alarm pill ───────────────────────────────────────────────────────────────
+
+function AlarmPill({
+  notifyAtMs,
+  notifyAcknowledgedAt,
+  onOpen,
+}: {
+  notifyAtMs: number | null
+  notifyAcknowledgedAt: number | null
+  onOpen: () => void
+}) {
+  const armed = notifyAtMs != null && !notifyAcknowledgedAt
+  return (
+    <button
+      onClick={onOpen}
+      className="mt-4 inline-flex items-center gap-1.5 px-4 min-h-[36px] rounded-full border border-border bg-bg-elevated text-[13px] font-semibold text-text-dim active:bg-bg-card transition-colors"
+    >
+      <span>⏰</span>
+      {armed ? (
+        <>
+          <span className="text-text">Alarm at {format(notifyAtMs!, 'h:mm a')}</span>
+          <span className="text-accent">· Edit</span>
+        </>
+      ) : (
+        <span>Set alarm</span>
+      )}
+    </button>
+  )
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatPlayers(s: Session): string {
@@ -127,6 +159,10 @@ export default function SessionDetail() {
   const [editError, setEditError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [alarmSheetOpen, setAlarmSheetOpen] = useState(false)
+  const [customAlarmMinutes, setCustomAlarmMinutes] = useState('')
+  const [customAlarmError, setCustomAlarmError] = useState<string | null>(null)
+  const [showCustomAlarm, setShowCustomAlarm] = useState(false)
 
   // Payment screen state — values cached BEFORE stopSession() so they don't
   // change when the DB record flips to completed (pattern from the build prompt)
@@ -282,6 +318,23 @@ export default function SessionDetail() {
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Failed to update.')
     }
+  }
+
+  async function handleSetAlarm(notifyAfterMs: number | null) {
+    await updateSessionNotify(session.id!, notifyAfterMs)
+    setAlarmSheetOpen(false)
+    setCustomAlarmMinutes('')
+    setCustomAlarmError(null)
+    setShowCustomAlarm(false)
+  }
+
+  async function handleCustomAlarmSave() {
+    const mins = parseInt(customAlarmMinutes, 10)
+    if (isNaN(mins) || mins < 1 || mins > 600) {
+      setCustomAlarmError('Enter 1–600 minutes')
+      return
+    }
+    await handleSetAlarm(mins * 60_000)
   }
 
   const isActive = session.status !== 'completed'
@@ -452,6 +505,20 @@ export default function SessionDetail() {
         <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint mt-3">
           Elapsed Time
         </p>
+
+        {/* Alarm pill — only for active sessions */}
+        {isActive && (
+          <AlarmPill
+            notifyAtMs={session.notifyAtMs ?? null}
+            notifyAcknowledgedAt={session.notifyAcknowledgedAt ?? null}
+            onOpen={() => {
+              setCustomAlarmMinutes('')
+              setCustomAlarmError(null)
+              setShowCustomAlarm(false)
+              setAlarmSheetOpen(true)
+            }}
+          />
+        )}
       </div>
 
       {/* Detail rows */}
@@ -706,6 +773,102 @@ export default function SessionDetail() {
         sessionId={session.id!}
         sessionStatus={session.status}
       />
+
+      {/* ── Set Alarm bottom sheet ─────────────────────────────────────── */}
+      <Modal
+        open={alarmSheetOpen}
+        onClose={() => {
+          setAlarmSheetOpen(false)
+          setCustomAlarmMinutes('')
+          setCustomAlarmError(null)
+          setShowCustomAlarm(false)
+        }}
+        title="Set Alarm"
+      >
+        <div className="mt-1 space-y-4">
+          {/* Preset chips */}
+          <div className="flex flex-wrap gap-2">
+            {NOTIFY_PRESETS.map((preset) => {
+              const armed = session.notifyAtMs != null && !session.notifyAcknowledgedAt
+              const isActive_ =
+                preset.ms === null
+                  ? !armed && !showCustomAlarm
+                  : false
+              return (
+                <button
+                  key={preset.label}
+                  onClick={() => {
+                    setShowCustomAlarm(false)
+                    setCustomAlarmMinutes('')
+                    setCustomAlarmError(null)
+                    void handleSetAlarm(preset.ms)
+                  }}
+                  className={`min-h-[44px] px-4 rounded-xl border text-[13px] font-semibold transition-colors ${
+                    isActive_
+                      ? 'bg-accent text-bg border-accent'
+                      : 'bg-bg-elevated border-border text-text-dim active:bg-bg-card'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              )
+            })}
+            {/* Custom chip */}
+            <button
+              onClick={() => setShowCustomAlarm((v) => !v)}
+              className={`min-h-[44px] px-4 rounded-xl border text-[13px] font-semibold transition-colors ${
+                showCustomAlarm
+                  ? 'bg-accent text-bg border-accent'
+                  : 'bg-bg-elevated border-border text-text-dim active:bg-bg-card'
+              }`}
+            >
+              Custom
+            </button>
+          </div>
+
+          {/* Custom input */}
+          {showCustomAlarm && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={600}
+                  value={customAlarmMinutes}
+                  onChange={(e) => {
+                    setCustomAlarmMinutes(e.target.value)
+                    setCustomAlarmError(null)
+                  }}
+                  placeholder="Minutes from now (1–600)"
+                  className="flex-1 bg-bg-elevated border border-border rounded-xl px-4 py-3 text-text text-[15px] placeholder-text-faint focus:border-accent focus:outline-none transition-colors"
+                />
+                <button
+                  onClick={() => void handleCustomAlarmSave()}
+                  className="min-h-[44px] px-5 bg-accent text-bg rounded-xl text-[14px] font-bold active:scale-[0.98] transition-transform"
+                >
+                  Set
+                </button>
+              </div>
+              {customAlarmError && (
+                <p className="text-busy text-[12px]">{customAlarmError}</p>
+              )}
+            </div>
+          )}
+
+          {/* Live hint — shows when custom minutes are entered or after a preset hover */}
+          {(() => {
+            const mins = parseInt(customAlarmMinutes, 10)
+            if (!showCustomAlarm || isNaN(mins) || mins < 1 || mins > 600) return null
+            const fireAt = new Date(Date.now() + mins * 60_000)
+            return (
+              <p className="text-[12px] text-accent">
+                Alarm fires in {mins} min (at {format(fireAt, 'h:mm a')})
+              </p>
+            )
+          })()}
+        </div>
+      </Modal>
     </div>
   )
 }

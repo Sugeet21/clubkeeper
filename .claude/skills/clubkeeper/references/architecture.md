@@ -114,4 +114,4 @@ Do NOT implement this until Sugeet has paying customers asking for multi-device 
 - Production build: `npm run build` → `dist/` folder
 - Deploy: Push to `main` branch on GitHub → Vercel auto-deploys
 - Hosting: Vercel free tier
-- Domain: subdomain on vercel.app for now. Custom domain (e.g. clubkeeper.in) costs ~₹800/year, add when first paying customer signs.
+- Domain: `app.handbookhq.in` (primary, custom domain via Cloudflare → Vercel, live 1 Jun 2026). `clubkeeper.vercel.app` remains active as backup.

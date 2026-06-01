@@ -12,12 +12,14 @@ Database name is `ClubKeeperDB_<userId>` (Supabase UUID) for per-user isolation.
 | v2 | Prompt 7 | Same stores; adds optional `roundedDurationMs` field on sessions (no index change) |
 | v3 | 26 May 2026 | Adds `sessionItems: '++id, sessionId, addedAt'` |
 | v4 | 27 May 2026 | Documents `upiId` field on settings (no index needed) |
-| **v5** | **30 May 2026** | **Adds `customers` + `walletTransactions` tables** |
+| v5 | 30 May 2026 | Adds `customers` + `walletTransactions` tables |
+| v6 | 30 May 2026 | `.upgrade()` backfill of legacy `type:'adjustment'` wallet tx rows |
+| **v7** | **31 May 2026** | **Adds optional alarm fields on sessions: `notifyAtMs`, `notifyAcknowledgedAt`; adds `alarmSoundEnabled`/`alarmVibrationEnabled` to ClubSettings** |
 
-### Schema Version 5 (current)
+### Schema Version 7 (current)
 
 ```ts
-this.version(5).stores({
+this.version(7).stores({
   gameTables: '++id, name, gameType, sortOrder, outOfService',
   sessions: '++id, tableId, status, startedAt, endedAt',
   settings: 'id',
@@ -61,6 +63,8 @@ interface Session {
   status: 'running' | 'paused' | 'completed';
   amount: number;           // calculated when stopped (integer rupees)
   roundedDurationMs?: number; // NEW in v2: stores rounded duration if rounding applied
+  notifyAtMs?: number | null;          // v7: absolute Unix ms when alarm should fire; undefined/null = no alarm
+  notifyAcknowledgedAt?: number | null; // v7: Unix ms when owner tapped Stop or Snooze; null = pending
 }
 ```
 
@@ -113,6 +117,11 @@ interface ClubSettings {
   clubName: string;
   currency: '₹';            // locked for v1
   rounding: 'none' | '15min' | '30min';
+  upiId?: string;           // optional UPI ID for payment QR
+  walkInCounter?: number;   // treat missing as 0
+  legacyAdjustmentsBackfilled?: boolean; // v6 migration audit flag
+  alarmSoundEnabled?: boolean;    // v7: default true; stored in Dexie, NOT localStorage
+  alarmVibrationEnabled?: boolean; // v7: default true; stored in Dexie, NOT localStorage
 }
 ```
 

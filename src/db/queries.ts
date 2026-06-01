@@ -64,15 +64,62 @@ export async function startSession(
     | 'note'
     | 'framesPlayed'
   >,
+  notifyAfterMs?: number | null,
 ): Promise<number> {
+  const startedAt = Date.now()
+  const alarmFields =
+    typeof notifyAfterMs === 'number' && notifyAfterMs > 0
+      ? { notifyAtMs: startedAt + notifyAfterMs, notifyAcknowledgedAt: null }
+      : {}
   return db.sessions.add({
     ...data,
-    startedAt: Date.now(),
+    startedAt,
     endedAt: null,
     pausedTotalMs: 0,
     pausedAt: null,
     status: 'running',
     amount: 0,
+    ...alarmFields,
+  })
+}
+
+export async function acknowledgeNotify(sessionId: number): Promise<void> {
+  await db.sessions.update(sessionId, { notifyAcknowledgedAt: Date.now() })
+}
+
+export async function snoozeNotify(sessionId: number, snoozeMs: number): Promise<void> {
+  const session = await db.sessions.get(sessionId)
+  if (!session) return
+  const original = session.notifyAtMs ?? Date.now()
+  const candidate = original + snoozeMs
+  // Anchor to original fire time so "snooze 15 min" means exactly 15 min from fire,
+  // not 15 min from when the user tapped (Pattern T6). Fall back to now + snoozeMs
+  // if user took so long that the anchored time is already in the past.
+  const newNotifyAt = candidate > Date.now() ? candidate : Date.now() + snoozeMs
+  await db.sessions.update(sessionId, {
+    notifyAtMs: newNotifyAt,
+    notifyAcknowledgedAt: null,
+  })
+}
+
+/**
+ * Set or replace alarm on an existing (running or paused) session.
+ * notifyAfterMs = duration FROM NOW. Pass null to clear the alarm entirely.
+ */
+export async function updateSessionNotify(
+  sessionId: number,
+  notifyAfterMs: number | null,
+): Promise<void> {
+  if (notifyAfterMs === null) {
+    await db.sessions.update(sessionId, {
+      notifyAtMs: null,
+      notifyAcknowledgedAt: null,
+    })
+    return
+  }
+  await db.sessions.update(sessionId, {
+    notifyAtMs: Date.now() + notifyAfterMs,
+    notifyAcknowledgedAt: null,
   })
 }
 
