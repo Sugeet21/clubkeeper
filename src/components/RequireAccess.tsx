@@ -1,8 +1,17 @@
 import { Navigate, Outlet } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import { useAccessGuard } from '../hooks/useAccessGuard'
 
 export function RequireAccess() {
   const guard = useAccessGuard()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!guard.canAccess && guard.reason === 'trial_expired') {
+      navigate('/subscribe', { replace: true, state: { reason: 'trial_expired' } })
+    }
+  }, [guard, navigate])
 
   if (!guard.canAccess) {
     if (guard.reason === 'loading' || guard.reason === 'db_loading') {
@@ -17,7 +26,11 @@ export function RequireAccess() {
     if (guard.reason === 'not_authenticated') {
       return <Navigate to="/signup" replace />
     }
-    // needs_subscription | trial_ended | subscription_ended
+    if (guard.reason === 'trial_expired') {
+      // Navigated imperatively in useEffect above (with state); render null while redirecting.
+      return null
+    }
+    // no_subscription | subscription_ended
     return <Navigate to="/subscribe" replace />
   }
 

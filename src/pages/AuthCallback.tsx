@@ -27,12 +27,25 @@ export function AuthCallback() {
     }
 
     // Route based on subscription state after OAuth completes
-    if (!subscription || subscription.status === 'none') {
-      console.log('[AuthCallback effect] navigating → /subscribe')
+    const sub = subscription
+    if (!sub || sub.status === 'none' || sub.status === 'cancelled' || sub.status === 'expired') {
+      console.log('[AuthCallback effect] navigating → /subscribe (no active sub)')
       navigate('/subscribe', { replace: true })
-    } else {
+    } else if (sub.status === 'trialing') {
+      const trialActive = sub.trialEndsAt ? sub.trialEndsAt > Date.now() : false
+      if (trialActive) {
+        console.log('[AuthCallback effect] navigating → /tables (trialing)')
+        navigate('/tables', { replace: true })
+      } else {
+        console.log('[AuthCallback effect] navigating → /subscribe (trial_expired)')
+        navigate('/subscribe', { replace: true, state: { reason: 'trial_expired' } })
+      }
+    } else if (sub.status === 'active' || sub.status === 'past_due') {
       console.log('[AuthCallback effect] navigating → /tables')
       navigate('/tables', { replace: true })
+    } else {
+      console.log('[AuthCallback effect] navigating → /subscribe (fallback)')
+      navigate('/subscribe', { replace: true })
     }
   }, [loading, subscription, user, navigate])
 

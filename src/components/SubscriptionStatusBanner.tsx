@@ -26,7 +26,7 @@ export function SubscriptionStatusBanner() {
           ₹{planMonthlyPrice.toLocaleString('en-IN')} charged on {chargeDate}.
         </p>
         <button
-          onClick={() => navigate('/settings')}
+          onClick={() => navigate('/subscribe', { state: { reason: 'subscribe_early' } })}
           className="text-[12px] font-bold text-accent shrink-0"
         >
           Manage →

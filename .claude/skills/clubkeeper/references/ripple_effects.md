@@ -214,13 +214,22 @@ If a change isn't documented here yet, pause and trace dependencies first.
 
 ### If you change the Subscribe page (`src/pages/Subscribe.tsx` or `src/components/subscribe/`)
 
+**New flow (cardless trial — 2 Jun 2026):** New signups land on `/tables` directly. Subscribe page is reached via three paths, each with a distinct headline:
+1. `trial_expired` (forced) — `RequireAccess` or `AuthCallback` redirects with `location.state = { reason: 'trial_expired' }` → "Your free trial has ended"
+2. `subscribe_early` (voluntary) — owner taps "Manage →" on the `SubscriptionStatusBanner` trial strip → `location.state = { reason: 'subscribe_early' }` → "Subscribe early to lock in ₹599/month" with days-left count
+3. `welcome` (default) — fresh signup (legacy `status='none'`) or direct navigate without state → existing PlanSelection welcome copy
+
+Subscribe.tsx `headline` is a `useMemo` discriminated union (`expired | early | welcome`). Auth guard only bounces active-trialing users when `locationReason` is unset — intentional arrivals via state stay on page.
+
 **Affects:**
 - `src/components/subscribe/PlanSelection.tsx` — `PLANS` array has hardcoded prices (₹299/₹599/₹999 monthly, ₹2990/₹5990/₹9990 annual). If pricing changes, update here AND in `StickyCheckout.tsx`. `selectedPlan` prop is `PlanId | null` (since BUG-016 fix).
 - `src/components/subscribe/StickyCheckout.tsx` — receives `selectedPlan: PlanId | null`; renders `null` (hides entirely) when no plan is selected. Receives `currentPrice` as number. Safe to change pricing in Subscribe.tsx only.
 - `src/components/subscribe/PaymentBottomSheet.tsx` — accepts: `payError: string | null`, `onMaybeLater: () => void`, `onRetry: () => void`. All three must stay in sync with `handlePayNow()`/`handleMaybeLater()`/`handleRetryPayment()` in `Subscribe.tsx`. Sheet has ESC key listener (BUG-016), 4 escape paths, "Maybe later" + "Retry" buttons.
 - `src/components/subscribe/ConfirmationScreen.tsx` — rendered when `screen === 'confirmed'`. Navigate uses `replace: true` — do NOT remove or user can back into Subscribe
-- `src/pages/AuthCallback.tsx` — checks `subscription.status` to decide `/subscribe` vs `/tables`
-- `src/hooks/useAccessGuard.ts` — reads `subscription.status`; `'trialing'` and `'active'` allow access
+- `src/pages/AuthCallback.tsx` — routes: `active`/`past_due` → `/tables`; `trialing`+active trial → `/tables`; `trialing`+expired trial → `/subscribe` with state; `none`/`cancelled`/`expired` → `/subscribe`.
+- `src/hooks/useAccessGuard.ts` — `'trialing'` with active trial → `canAccess: true`; expired trial → `reason: 'trial_expired'`; `active`/`past_due` → `canAccess: true`; `none`/`cancelled`/`expired` → `reason: 'no_subscription'`.
+- `src/components/RequireAccess.tsx` — `trial_expired` navigated imperatively (with state) via `useEffect`; `no_subscription` uses `<Navigate to="/subscribe">` without state.
+- `src/components/SubscriptionStatusBanner.tsx` — trial strip "Manage →" navigates to `/subscribe` with `state: { reason: 'subscribe_early' }`. The `past_due` "Fix Now →" and cancelling "Resume →" buttons still go to `/settings`.
 - `api/create-subscription.ts` — called by `handlePayNow()` via fetch POST with 15s AbortController timeout (since BUG-017 fix). If flow changes, both must update together.
 - `src/lib/razorpayPlans.ts` — plan IDs consumed by `api/create-subscription.ts`. If plan IDs change, update ONLY this file
 - Annual prices: `MONTHLY_PRICES` and `ANNUAL_PRICES` in `Subscribe.tsx`. ROI calculator in `Landing.tsx` also hardcodes `₹599` — keep in sync
@@ -256,6 +265,12 @@ All 4 paths are guarded by `!paying` — cannot escape mid-payment.
 - `src/store/authStore.ts` `refreshProfile()` — maps DB columns to TS types. If webhook writes a new column, add it to `refreshProfile()` mapping too.
 - `src/hooks/useAccessGuard.ts` — reads `status` values. If webhook writes a new status value, add it to the guard.
 - Razorpay Dashboard → Settings → Webhooks — event list must include all events the handler processes. Missing an event = silent data gap.
+
+**useAccessGuard reason values (as of cardless trial, 2 Jun 2026):**
+- `loading` / `db_loading` / `not_authenticated` — infrastructure states, show spinner or redirect /signup
+- `trial_expired` — trialing user whose `trialEndsAt` is in the past → RequireAccess navigates to `/subscribe` with `state: { reason: 'trial_expired' }`
+- `no_subscription` — status is `none`, `cancelled`, or `expired` → `<Navigate to="/subscribe" replace>`
+- `subscription_ended` — (retired reason name, now merged into `no_subscription`)
 
 **Webhook event → status mapping (as of Prompt 13):**
 - `subscription.authenticated` → `trialing`

@@ -4,6 +4,53 @@ Chronological record of what shipped, when, and what manual setup was done. Read
 
 ---
 
+## 3 Jun 2026 — Fix /subscribe headline duplication (Phase 1.5 visual bug)
+
+The `expired` and `early` headline blocks from Phase 1.5 were rendering above the old "Welcome, {Name} 👋" block from `PlanSelection` — two headlines visible at once in both states.
+
+**Root cause:** The `welcome` headline lived only inside `PlanSelection` (gated by `!hideWelcome`). The Phase 1.5 work added the `expired`/`early` blocks directly in `Subscribe.tsx` above `<PlanSelection>`, but the `welcome` block in `PlanSelection` was still rendering because `hideWelcome` evaluated to `false` for the welcome state. The three branches were split across two files, not mutually exclusive in one place.
+
+**Fix:** Moved the `welcome` headline block into `Subscribe.tsx` alongside the other two, so all three branches (`expired` / `early` / `welcome`) live in one place and are mutually exclusive via `headlineState.kind`. `PlanSelection` now always receives `hideWelcome={true}` — it never renders its own welcome header anymore. The `early` sub-line also received date polish: "Your plan starts on {d MMM} — no overlap, no double charge." using `format(subscription.trialEndsAt, 'd MMM')` with a null-guard fallback.
+
+**Rule:** Headline branches must all live in the same parent component, gated by a single discriminated union. Never split headline variants across a parent and a child — the child's unconditional (or weakly-gated) block will leak into sibling states.
+
+**Files touched:** `src/pages/Subscribe.tsx` (welcome branch added, `hideWelcome` always true).
+
+---
+
+## 2 Jun 2026 — Cardless trial Phase 1.5: three-branch Subscribe headline + trial strip routing
+
+Three-entry-path headline on `/subscribe`. Each path now shows distinct copy:
+- `trial_expired` — "Your free trial has ended / Subscribe to keep using ClubKeeper for your club."
+- `subscribe_early` — "Subscribe early to lock in ₹599/month / You have N days left in your trial. Your plan starts when the trial ends — no overlap, no double charge."
+- `welcome` (default) — existing PlanSelection welcome copy unchanged
+
+**Files touched:**
+- `src/pages/Subscribe.tsx` — `HeadlineState` discriminated union (`expired | early | welcome`), `useMemo` to derive from `location.state.reason` + live subscription. Auth guard updated: trialing users with active trial are only bounced if `locationReason` is unset. `LocationState` typed inline.
+- `src/components/SubscriptionStatusBanner.tsx` — "Manage →" now navigates to `/subscribe` with `state: { reason: 'subscribe_early' }` (was `/settings`).
+- `src/components/RequireAccess.tsx` — already passes `state: { reason: 'trial_expired' }` ✓
+- `src/pages/AuthCallback.tsx` — already passes `state: { reason: 'trial_expired' }` for expired trial ✓
+
+**Fallback on refresh:** `headline` `useMemo` derives from live subscription state when `locationReason` is absent — browser refresh on `/subscribe` still shows correct headline.
+
+---
+
+## 2 Jun 2026 — Cardless 7-day trial (Phase 1): Postgres trigger + client routing
+
+New signups get `status='trialing'` + `trial_ends_at = now()+7d` from Postgres trigger (no card required). Razorpay only entered when owner taps Subscribe or trial expires.
+
+**SQL migration:** `supabase/migrations/20260602_cardless_trial.sql` — replaces `handle_new_user()` to insert trialing status; backfills existing `status='none'` rows.
+
+**Files touched:**
+- `src/hooks/useAccessGuard.ts` — renamed `needs_subscription`→`no_subscription`, `trial_ended`→`trial_expired`; `cancelled`/`expired` merged into `no_subscription`
+- `src/components/RequireAccess.tsx` — `trial_expired` navigated imperatively with state; other reasons use `<Navigate>`
+- `src/pages/AuthCallback.tsx` — full status-aware routing including trialing + expired-trial path
+- `src/pages/Subscribe.tsx` — auth guard skips trialing-user bounce for expired trial; reads `location.state.reason`
+- `src/types/index.ts` — `trialEndsAt` and `'trialing'` already present, no change
+- `src/store/authStore.ts` — `trial_ends_at → trialEndsAt` already mapped, no change
+
+---
+
 ## 1 Jun 2026 — Alarm Phase 2 (snooze math, bell icon, edit-on-running)
 
 Three real-world bugs from Sugeet's test scenarios fixed:

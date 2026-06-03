@@ -32,14 +32,17 @@ For rejected ideas, historical decisions that have been superseded, and full rea
 - **Tiers: ₹299 / ₹599 / ₹999 monthly. ₹599 is target.** ₹599 hits the ROI math sweet spot (18× return at ₹10k/month leakage). ₹999 leaves room for Pro v2 features. Revisit at 3 months: <5% conversion → lower entry; >20% → raise.
 - **Razorpay for payments.** Dominant Indian provider, best NACH auto-debit support. 2% fee accepted. Revisit at 500+ customers — negotiate enterprise pricing.
 - **Razorpay Subscription API, not Orders API.** Recurring billing requires Subscription API. Orders API is one-time only.
-- **7-day trial via Razorpay `start_at`, NOT `trial_period`.** Set `start_at = now + 7 days`. Our `trial_ends_at` in Supabase + `useAccessGuard` is the truth.
+- **Cardless 7-day trial — new signups land directly on `/tables` with `status='trialing'` and `trial_ends_at = now+7d` via Postgres trigger.** Razorpay subscription created only when owner taps Subscribe (early) or trial expires (forced). No card mandate during trial period. `useAccessGuard` checks `trialEndsAt > Date.now()` — expired → `reason: 'trial_expired'` → RequireAccess redirects to `/subscribe` with state. AuthCallback routes trialing+active users to `/tables`, expired trial to `/subscribe`.
+- **Subscribe page shows three distinct headlines based on entry path.** `trial_expired` → "Your free trial has ended". `subscribe_early` (from trial strip "Manage →") → "Subscribe early to lock in ₹599/month" + days-left copy. Default (`welcome`) → existing PlanSelection welcome. `HeadlineState` discriminated union in `useMemo`; derives from `location.state.reason` first, falls back to live subscription state on refresh.
+- **Subscribe-early honors remaining trial — first charge fires on the original `trial_ends_at` date, not on the subscribe date.** UI copy promises this now. Razorpay `start_at` logic to honor it is Phase 3 work.
+- **7-day trial via Razorpay `start_at`, NOT `trial_period`.** Set `start_at = now + 7 days`. Our `trial_ends_at` in Supabase + `useAccessGuard` is the truth. (Applies once user creates a Razorpay subscription.)
 - **Webhook is source of truth, frontend optimistic.** Webhook updates Supabase status authoritatively. Frontend calls `refreshProfile(true)` after Razorpay's `handler()` callback with 1500ms delay.
 
 ## Auth
 
 - **Supabase + Google OAuth only.** No email/password for v1. Lowest friction for Indian SMB owners (everyone has Gmail). Revisit on first customer ask for non-Google login.
 - **Google OAuth always shows account picker.** `queryParams: { prompt: 'select_account' }` enforced — protects multi-account users and shared-device first-time users.
-- **Auth-first app, no anonymous trial mode.** `/tables` requires auth + active subscription. Revisit if conversion is very low.
+- ~~**Auth-first app, no anonymous trial mode.**~~ **Superseded — see "Cardless 7-day trial" in Pricing & billing.**
 - **`.env.local` never committed.** Supabase URL + anon key local-only. Service role key NEVER in client code.
 
 ## IndexedDB / Dexie

@@ -10,6 +10,7 @@ interface Props {
   selectedPlan: PlanId | null
   onPlanSelect: (p: PlanId) => void
   displayName: string
+  hideWelcome?: boolean
 }
 
 const PLANS = [
@@ -71,20 +72,22 @@ const PLANS = [
 // V1-LAUNCH: showing only Standard Monthly. Revert this block to re-enable tiering (see SKILL.md "scope gating deferred").
 const VISIBLE_PLAN_IDS = ['standard'] as const
 
-export function PlanSelection({ billing, onBillingChange, selectedPlan, onPlanSelect, displayName }: Props) {
+export function PlanSelection({ billing, onBillingChange, selectedPlan, onPlanSelect, displayName, hideWelcome }: Props) {
   const visiblePlans = PLANS.filter((p) => (VISIBLE_PLAN_IDS as readonly string[]).includes(p.id))
 
   return (
     <div className="px-5 pt-5 pb-40">
-      {/* Welcome */}
-      <div className="mb-[18px]">
-        <h1 className="text-[24px] font-extrabold tracking-[-0.03em] leading-[1.15] text-text mb-1.5">
-          Welcome, <span className="text-accent">{displayName}</span> 👋
-        </h1>
-        <p className="text-[14.5px] text-text-dim">
-          Start your 7-day free trial. You won't be charged until day 8.
-        </p>
-      </div>
+      {/* Welcome — hidden when expired/early headline is shown above */}
+      {!hideWelcome && (
+        <div className="mb-[18px]">
+          <h1 className="text-[24px] font-extrabold tracking-[-0.03em] leading-[1.15] text-text mb-1.5">
+            Welcome, <span className="text-accent">{displayName}</span> 👋
+          </h1>
+          <p className="text-[14.5px] text-text-dim">
+            Start your 7-day free trial. You won't be charged until day 8.
+          </p>
+        </div>
+      )}
 
       {/* Billing toggle hidden — V1-LAUNCH: only monthly plan shown. Re-enable when annual plans are live. */}
       {/* <BillingToggle billing={billing} onChange={onBillingChange} /> */}

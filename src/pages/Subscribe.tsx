@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { format, addDays } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/authStore'
@@ -45,19 +45,52 @@ function ProgressStep({ status, label }: { status: 'done' | 'now' | 'upcoming'; 
   )
 }
 
+type LocationState = { reason?: 'trial_expired' | 'subscribe_early' } | null
+type HeadlineState = { kind: 'expired' } | { kind: 'early'; daysLeft: number } | { kind: 'welcome' }
+
 export default function Subscribe() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const locationReason = (location.state as LocationState)?.reason
   const { session, subscription, loading: authLoading, profile, user } = useAuthStore()
 
-  // Auth guard
+  // Auth guard — redirect already-active/past_due users to /tables.
+  // Trial-expired users (reason='trial_expired') and subscribe-early users
+  // (reason='subscribe_early') both land here intentionally — do NOT bounce them.
   useEffect(() => {
     if (authLoading) return
     if (!session) { navigate('/signup', { replace: true }); return }
     const sub = subscription
-    if (sub && (sub.status === 'trialing' || sub.status === 'active' || sub.status === 'past_due')) {
-      navigate('/tables', { replace: true })
+    if (sub && sub.status === 'active') { navigate('/tables', { replace: true }); return }
+    if (sub && sub.status === 'past_due') { navigate('/tables', { replace: true }); return }
+    // Trialing: only bounce back if the trial is active AND user did NOT choose to come here.
+    // subscribe_early reason = user intentionally tapped Manage → stay on page.
+    // trial_expired reason = forced redirect → stay on page.
+    if (sub && sub.status === 'trialing' && !locationReason) {
+      const trialActive = sub.trialEndsAt ? sub.trialEndsAt > Date.now() : false
+      if (trialActive) navigate('/tables', { replace: true })
     }
-  }, [authLoading, session, subscription, navigate])
+  }, [authLoading, session, subscription, navigate, locationReason])
+
+  const headline = useMemo((): HeadlineState => {
+    const sub = subscription
+    const now = Date.now()
+    // Explicit state signal takes priority over live subscription state
+    if (locationReason === 'trial_expired') return { kind: 'expired' }
+    if (locationReason === 'subscribe_early') {
+      const daysLeft = sub?.trialEndsAt
+        ? Math.max(0, Math.ceil((sub.trialEndsAt - now) / 86_400_000))
+        : 0
+      return { kind: 'early', daysLeft }
+    }
+    // Fallback: derive from live subscription status (handles browser-refresh edge case)
+    if (sub?.status === 'trialing' && sub.trialEndsAt) {
+      if (sub.trialEndsAt <= now) return { kind: 'expired' }
+      const daysLeft = Math.max(0, Math.ceil((sub.trialEndsAt - now) / 86_400_000))
+      return { kind: 'early', daysLeft }
+    }
+    return { kind: 'welcome' }
+  }, [locationReason, subscription])
 
   const [screen, setScreen] = useState<Screen>('plans')
   const [billing, setBilling] = useState<Billing>('monthly')
@@ -285,12 +318,47 @@ export default function Subscribe() {
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto relative z-[1]">
+          {headline.kind === 'expired' && (
+            <div className="px-5 pt-6 pb-2">
+              <h2 className="text-[20px] font-extrabold tracking-tight text-text leading-[1.2]">
+                Your free trial has ended
+              </h2>
+              <p className="mt-1.5 text-[14px] text-text-dim leading-[1.5]">
+                Subscribe to keep using ClubKeeper for your club.
+              </p>
+            </div>
+          )}
+          {headline.kind === 'early' && (
+            <div className="px-5 pt-6 pb-2">
+              <h2 className="text-[20px] font-extrabold tracking-tight text-text leading-[1.2]">
+                Subscribe early to lock in ₹599/month
+              </h2>
+              <p className="mt-1.5 text-[14px] text-text-dim leading-[1.5]">
+                <span className="text-text font-semibold">{headline.daysLeft} {headline.daysLeft === 1 ? 'day' : 'days'}</span> left in your trial.{' '}
+                {subscription?.trialEndsAt
+                  ? <>Your plan starts on <span className="text-text font-semibold">{format(new Date(subscription.trialEndsAt), 'd MMM')}</span> — no overlap, no double charge.</>
+                  : <>Your plan starts when the trial ends — no overlap, no double charge.</>
+                }
+              </p>
+            </div>
+          )}
+          {headline.kind === 'welcome' && (
+            <div className="px-5 pt-6 pb-2">
+              <h1 className="text-[24px] font-extrabold tracking-[-0.03em] leading-[1.15] text-text mb-1.5">
+                Welcome, <span className="text-accent">{firstName}</span> 👋
+              </h1>
+              <p className="text-[14.5px] text-text-dim">
+                Start your 7-day free trial. You won't be charged until day 8.
+              </p>
+            </div>
+          )}
           <PlanSelection
             billing={billing}
             onBillingChange={setBilling}
             selectedPlan={selectedPlan}
             onPlanSelect={setSelectedPlan}
             displayName={firstName}
+            hideWelcome={true}
           />
         </div>
 
