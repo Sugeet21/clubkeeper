@@ -377,6 +377,7 @@ All 4 paths are guarded by `!paying` — cannot escape mid-payment.
 - PUBLIC_PATHS in App.tsx must stay in sync with actual public Route paths
 - **refreshProfile dedup rule (added BUG-002 fix, 24 May 2026):** `refreshProfile()` is a no-op if called within 3000ms of the last fetch, UNLESS called with `force=true`. Always use `force=true` after a real server mutation (post-payment, post-cancel). Never add new `refreshProfile()` calls without checking whether they'll fire within 3s of initialize(). Supabase fires `INITIAL_SESSION` synchronously on `onAuthStateChange` registration — this is the source of double-fetch.
 - **consumers of refreshProfile():** `authStore.ts:initialize()` (auto, no force), `authStore.ts:onAuthStateChange` (auto, no force — deduplicated), `Subscribe.tsx` post-payment handler (force=true), `Settings.tsx` post-cancel-subscription (force=true). If you add a new forced call, document it here.
+- **`api/cancel-subscription.ts` two-mode behavior (BUG-025):** `cancelAtCycleEnd=1` (at period end) requires an active billing cycle — fails for `authenticated` (pre-charge trial) state. `cancelAtCycleEnd=0` (immediate) works for pre-charge. Handler tries `1` first, falls back to `0` on "no billing cycle" 400. If you change cancellation logic, test BOTH paths: active subscription cancel (should keep access until period end) AND trial cancel (should revoke immediately).
 
 ### If you change the subscription schema (Supabase table or TypeScript types)
 

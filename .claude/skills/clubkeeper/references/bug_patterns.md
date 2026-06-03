@@ -252,6 +252,13 @@ curl -u KEY_ID:KEY_SECRET https://api.razorpay.com/v1/plans/PLAN_ID
 
 **Trigger this check when:** (1) rotating Razorpay keys, (2) switching TEST → LIVE mode, (3) plan IDs are copied from a different dashboard session.
 
+### Pattern S7 — Subscription cancel mode depends on lifecycle state (BUG-025)
+**Symptom signature:** Cancel during trial returns 400 "no billing cycle is going on" from Razorpay; user is stuck unable to cancel.
+**Root cause:** Razorpay has two cancel modes: `cancelAtCycleEnd=1` (cancel at end of current billing period — requires an active billing cycle) and `cancelAtCycleEnd=0` (cancel immediately — works for pre-charge `authenticated` state). Using `1` for all states fails when no billing cycle has started yet.
+**Rule:** In `api/cancel-subscription.ts`, always try `cancelAtCycleEnd=1` first. If Razorpay returns 400 `BAD_REQUEST_ERROR` with description containing `'no billing cycle'`, fall back to `cancelAtCycleEnd=0` (immediate). Update Supabase `status='cancelled', cancel_at_period_end=false` on the immediate path. Never remove the fallback — `authenticated` state is a normal part of every new subscription's lifecycle.
+
+---
+
 ### Pattern S6 — API response shape contract: use `message`, not `error`
 **Symptom signature:** Frontend shows generic fallback message even after server was updated to return real error details.
 **Root cause:** Server returns `{ error: '...' }` but frontend reads `.message`. Field name mismatch silently swallows the real reason.

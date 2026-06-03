@@ -444,6 +444,16 @@ useEffect(() => {
 
 ---
 
+### 3 Jun 2026 — BUG-025: Cancel subscription fails during trial with "no billing cycle" error
+
+**Symptom:** User in `trialing` / `authenticated` state (UPI mandate registered, first charge not yet taken) clicks "Cancel subscription" in Settings → sees "Failed to cancel subscription with payment provider" toast. Subscription stays active in Razorpay.
+**Root cause:** `api/cancel-subscription.ts` called `razorpay.subscriptions.cancel(id, 1)` (cancel at cycle end) for all states. Razorpay returns 400 `BAD_REQUEST_ERROR: Subscription cannot be cancelled since no billing cycle is going on` when no billing cycle has started yet (pre-charge trial). The original handler caught all errors and returned 500.
+**Fix:** Added fallback in the catch block: detect `statusCode === 400 && code === 'BAD_REQUEST_ERROR' && description includes 'no billing cycle'` → retry with `cancel(id, 0)` (immediate cancel). On success, update Supabase `status='cancelled', cancel_at_period_end=false`. Returns `{ cancelled: true, immediate: true }`. User loses access immediately (no partial trial credit — expected, since no charge was taken).
+**Files changed:** `api/cancel-subscription.ts`
+**Lesson:** See Pattern S7.
+
+---
+
 ## Open Issues / Not Yet Reproduced
 
 (Move here when Sugeet reports something but it can't be reproduced. Revisit later.)

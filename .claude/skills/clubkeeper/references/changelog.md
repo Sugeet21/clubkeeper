@@ -4,6 +4,14 @@ Chronological record of what shipped, when, and what manual setup was done. Read
 
 ---
 
+## 3 Jun 2026 — Fix: cancel subscription fails during trial (BUG-025)
+
+`api/cancel-subscription.ts` always called `cancel(id, 1)` (cancel at cycle end). Razorpay rejects this with 400 when no billing cycle has started yet (`authenticated` state during trial). Added fallback: catch that specific 400, retry with `cancel(id, 0)` (immediate), update Supabase `status='cancelled', cancel_at_period_end=false`, return `{ cancelled: true, immediate: true }`. Normal active-subscription cancel path unchanged. See Pattern S7.
+
+**Files touched:** `api/cancel-subscription.ts`
+
+---
+
 ## 3 Jun 2026 — Fix /subscribe headline duplication (Phase 1.5 visual bug)
 
 The `expired` and `early` headline blocks from Phase 1.5 were rendering above the old "Welcome, {Name} 👋" block from `PlanSelection` — two headlines visible at once in both states.

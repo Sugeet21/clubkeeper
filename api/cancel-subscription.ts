@@ -44,9 +44,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     await razorpay.subscriptions.cancel(sub.razorpay_subscription_id, 1)
-  } catch (err) {
-    console.error('Razorpay cancel error:', err)
-    return res.status(500).json({ error: 'Failed to cancel subscription with payment provider' })
+  } catch (err: unknown) {
+    const rzpErr = err as { statusCode?: number | string; error?: { code?: string; description?: string } }
+    const statusCode = rzpErr?.statusCode
+    const errorCode = rzpErr?.error?.code
+    const errorDescription = rzpErr?.error?.description ?? ''
+
+    // Pre-billing state: subscription is authenticated (trial) but no billing cycle has started yet.
+    // Razorpay rejects cycle-end cancel — fall back to immediate cancel (cancelAtCycleEnd=0).
+    if (
+      statusCode === 400 &&
+      errorCode === 'BAD_REQUEST_ERROR' &&
+      errorDescription.toLowerCase().includes('no billing cycle')
+    ) {
+      try {
+        await razorpay.subscriptions.cancel(sub.razorpay_subscription_id, 0)
+      } catch (innerErr: unknown) {
+        console.error('Razorpay immediate-cancel error:', JSON.stringify(innerErr))
+        const ie = innerErr as { statusCode?: number | string; error?: { code?: string } }
+        return res.status(500).json({
+          error: 'Could not cancel subscription. Please contact support or cancel from Razorpay directly.',
+          code: ie?.error?.code,
+          razorpayStatus: ie?.statusCode,
+        })
+      }
+
+      const { error: updateError } = await supabase
+        .from('subscriptions')
+        .update({ status: 'cancelled', cancel_at_period_end: false, updated_at: new Date().toISOString() })
+        .eq('user_id', user.id)
+
+      if (updateError) {
+        console.error('Supabase immediate-cancel update error:', updateError)
+        return res.status(500).json({ error: 'Failed to update cancellation record' })
+      }
+
+      return res.status(200).json({ cancelled: true, immediate: true, message: 'Trial cancelled immediately. Access removed.' })
+    }
+
+    console.error('Razorpay cancel error:', JSON.stringify(err))
+    return res.status(500).json({
+      error: errorDescription || 'Failed to cancel subscription with payment provider',
+      code: errorCode,
+      razorpayStatus: statusCode,
+    })
   }
 
   const { error: updateError } = await supabase
