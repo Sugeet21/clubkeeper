@@ -6,7 +6,7 @@ interface Feature {
 }
 
 interface Props {
-  id: 'starter' | 'standard' | 'pro'
+  id: 'starter' | 'standard' | 'pro' | 'test'
   name: string
   billing: Billing
   monthlyPrice: number
@@ -61,6 +61,13 @@ export function PlanCard({
           : undefined
       }
     >
+      {/* LIVE TEST badge — only for internal ₹10 validation plan */}
+      {id === 'test' && (
+        <span className="absolute top-2 right-2 bg-red-600 text-white text-xs font-bold px-2 py-1 rounded">
+          🔴 LIVE TEST — REAL ₹10
+        </span>
+      )}
+
       {/* Plan head */}
       <div className="flex items-start justify-between gap-2.5">
         <span

@@ -1,7 +1,7 @@
 // import { BillingToggle } from './BillingToggle' // V1-LAUNCH: re-enable with toggle when annual plans are live
 import { PlanCard } from './PlanCard'
 
-type PlanId = 'starter' | 'standard'
+type PlanId = 'starter' | 'standard' | 'pro' | 'test'
 type Billing = 'monthly' | 'annual'
 
 interface Props {
@@ -11,9 +11,12 @@ interface Props {
   onPlanSelect: (p: PlanId) => void
   displayName: string
   hideWelcome?: boolean
+  // Subscribe.tsx computes which plans to show (email gate, mode gate) and passes the list down.
+  // Replaces the old static VISIBLE_PLAN_IDS import so gating logic lives in one place.
+  visiblePlanIds: readonly PlanId[]
 }
 
-const PLANS = [
+const ALL_PLANS = [
   {
     id: 'starter' as const,
     name: 'Starter',
@@ -67,13 +70,24 @@ const PLANS = [
     disabled: true,
     badge: 'Coming soon',
   },
+  {
+    id: 'test' as const,
+    name: 'Test ₹10 / month',
+    monthlyPrice: 10,
+    annualPrice: 120,
+    subtitle: 'Internal LIVE test plan',
+    features: [
+      { text: 'Real ₹10 charge (LIVE mode)', soon: false },
+      { text: 'For billing flow validation only', soon: false },
+    ],
+    featured: false,
+    disabled: false,
+    badge: null,
+  },
 ]
 
-// V1-LAUNCH: showing only Standard Monthly. Revert this block to re-enable tiering (see SKILL.md "scope gating deferred").
-const VISIBLE_PLAN_IDS = ['standard'] as const
-
-export function PlanSelection({ billing, onBillingChange, selectedPlan, onPlanSelect, displayName, hideWelcome }: Props) {
-  const visiblePlans = PLANS.filter((p) => (VISIBLE_PLAN_IDS as readonly string[]).includes(p.id))
+export function PlanSelection({ billing, onBillingChange, selectedPlan, onPlanSelect, displayName, hideWelcome, visiblePlanIds }: Props) {
+  const visiblePlans = ALL_PLANS.filter((p) => (visiblePlanIds as readonly string[]).includes(p.id))
 
   return (
     <div className="px-5 pt-5 pb-40">
@@ -109,9 +123,7 @@ export function PlanSelection({ billing, onBillingChange, selectedPlan, onPlanSe
             badge={plan.badge}
             selected={plan.id === selectedPlan}
             onSelect={() => {
-              if (!plan.disabled && (plan.id === 'starter' || plan.id === 'standard')) {
-                onPlanSelect(plan.id)
-              }
+              if (!plan.disabled) onPlanSelect(plan.id)
             }}
           />
         ))}

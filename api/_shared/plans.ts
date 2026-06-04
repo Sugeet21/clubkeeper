@@ -3,10 +3,13 @@
 // Auto-selects TEST_PLANS or LIVE_PLANS based on key prefix.
 // See BUG-021 and Pattern S5 in bug_patterns.md for the full story.
 
-export type Tier = 'starter' | 'standard' | 'pro'
+export type Tier = 'starter' | 'standard' | 'pro' | 'test'
 export type Cycle = 'monthly' | 'annual'
 
-type PlanMap = Record<`${Tier}_${Cycle}`, string>
+// 'test' tier is LIVE-only (plan_Sx0LfhJGzccBHQ, ₹10/month).
+// Never resolves in TEST mode — server throws if attempted.
+type PlanMapKey = `${Tier}_${Cycle}`
+type PlanMap = Partial<Record<PlanMapKey, string>>
 
 const TEST_PLANS: PlanMap = {
   starter_monthly:  'plan_StMW5oAsLAtnhZ',
@@ -15,6 +18,7 @@ const TEST_PLANS: PlanMap = {
   standard_annual:  'plan_StMXaqlYWXAqe3',
   pro_monthly:      'plan_StMXyF3jrkSbwA',
   pro_annual:       'plan_StMeJcHJqAkqAY',
+  // 'test' tier intentionally omitted — LIVE key required
 }
 
 const LIVE_PLANS: PlanMap = {
@@ -24,6 +28,8 @@ const LIVE_PLANS: PlanMap = {
   standard_annual:  'plan_SshFh5NILH24ef',
   pro_monthly:      'plan_SshGRj6D3rfWzJ',
   pro_annual:       'plan_SshJ4iqI7iICkz',
+  test_monthly:     'plan_Sx0LfhJGzccBHQ',
+  // test_annual intentionally omitted — ₹10 plan is monthly only
 }
 
 // Vercel exposes VITE_RAZORPAY_KEY_ID (the same variable name) in serverless
@@ -42,10 +48,12 @@ if (!keyId) {
   )
 }
 
-const isTestMode: boolean = keyId?.startsWith('rzp_live_') !== true
+const isLiveMode: boolean = keyId?.startsWith('rzp_live_') === true
 
-export const PLANS: PlanMap = isTestMode ? TEST_PLANS : LIVE_PLANS
+export const PLANS: PlanMap = isLiveMode ? LIVE_PLANS : TEST_PLANS
 
 export function getPlanId(tier: Tier, cycle: Cycle): string {
-  return PLANS[`${tier}_${cycle}`]
+  const id = PLANS[`${tier}_${cycle}`]
+  if (!id) throw new Error(`[plans/_shared] No plan ID for tier="${tier}" cycle="${cycle}" in current mode (isLiveMode=${isLiveMode})`)
+  return id
 }

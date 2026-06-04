@@ -382,3 +382,19 @@ Vite alone doesn't serve serverless functions. Local dev with `npm run dev` retu
 2. **If it's a new class of bug**, append a new pattern entry here (under the right area) AND a full entry in `bug_archive.md`.
 3. **If it crosses multiple areas**, add to whichever section is primary, then cross-reference.
 4. **Update `ripple_effects.md`** if the fix touches files that weren't previously known to be coupled.
+
+---
+
+## Subscription / Billing
+
+Files most affected: `api/create-subscription.ts`, `api/cancel-subscription.ts`, `src/lib/razorpayPlans.ts`, `api/_shared/plans.ts`, `src/pages/Subscribe.tsx`.
+
+### Pattern S8 — Server reads Supabase as billing source of truth before every Razorpay call (BUG-026)
+**Symptom signature:** User with expired trial gets a free fresh 7-day extension on paying; or mid-trial user loses their remaining days on early subscribe.
+**Root cause:** `api/create-subscription.ts` computed `start_at` unconditionally from `Date.now()` without reading the existing `trial_ends_at` from Supabase. Every subscribe call reset the trial clock.
+**Rule:** Server reads existing `subscriptions.trial_ends_at` via Supabase service role BEFORE calling `razorpay.subscriptions.create()`. Three scenarios:
+- `new` — no row → `start_at = now+7d`, write `trial_ends_at = now+7d`
+- `mid_trial` — existing future `trial_ends_at` with >60s remaining → `start_at = existing trial_ends_at`, DO NOT overwrite
+- `expired` — existing `trial_ends_at` ≤ now+60s → `start_at = now+60s`, write `trial_ends_at = now`
+
+Frontend sends `{ tier, cycle }` only — never timestamps, flags, or scenario intent. `trial_ends_at` is NEVER overwritten if the existing value is in the future and still valid. Scenario is logged to console + stored in Razorpay `notes` for dashboard debugging. Supabase update errors after a successful Razorpay create are logged but not thrown — webhook reconciles DB state when `subscription.authenticated` fires.

@@ -8,12 +8,12 @@ import { StickyCheckout } from '../components/subscribe/StickyCheckout'
 import { PaymentBottomSheet } from '../components/subscribe/PaymentBottomSheet'
 import { ConfirmationScreen } from '../components/subscribe/ConfirmationScreen'
 
-type PlanId = 'starter' | 'standard'
+type PlanId = 'starter' | 'standard' | 'pro' | 'test'
 type Billing = 'monthly' | 'annual'
 type Screen = 'plans' | 'confirmed'
 
-const MONTHLY_PRICES: Record<PlanId, number> = { starter: 299, standard: 599 }
-const ANNUAL_PRICES: Record<PlanId, number> = { starter: 2990, standard: 5990 }
+const MONTHLY_PRICES: Record<PlanId, number> = { starter: 299, standard: 599, pro: 999, test: 10 }
+const ANNUAL_PRICES: Record<PlanId, number> = { starter: 2990, standard: 5990, pro: 9990, test: 120 }
 
 function getPrice(plan: PlanId, billing: Billing): number {
   return billing === 'monthly' ? MONTHLY_PRICES[plan] : ANNUAL_PRICES[plan]
@@ -103,6 +103,17 @@ export default function Subscribe() {
 
   const trialEndDate = format(addDays(new Date(), 7), 'MMM d')
   const currentPrice = selectedPlan ? getPrice(selectedPlan, billing) : 0
+
+  // V1-LAUNCH: only Standard Monthly shown to all users.
+  // live_10 test plan ('test' tier) is additionally shown only to Sugeet in LIVE mode.
+  const BASE_VISIBLE_PLAN_IDS: readonly PlanId[] = ['standard']
+  const SUGEET_TEST_EMAILS = ['sugeetjadhav@gmail.com']
+  const isLiveMode = import.meta.env.VITE_RAZORPAY_KEY_ID?.startsWith('rzp_live_') === true
+  const showLiveTestPlan = isLiveMode && !!user?.email && SUGEET_TEST_EMAILS.includes(user.email)
+  const visiblePlanIds: readonly PlanId[] = showLiveTestPlan
+    ? [...BASE_VISIBLE_PLAN_IDS, 'test']
+    : BASE_VISIBLE_PLAN_IDS
+
   const firstName = profile?.displayName?.split(' ')[0] ?? user?.email?.split('@')[0] ?? 'there'
   const email = profile?.email ?? user?.email ?? ''
   const avatarInitial = (firstName[0] ?? 'U').toUpperCase()
@@ -359,6 +370,7 @@ export default function Subscribe() {
             onPlanSelect={setSelectedPlan}
             displayName={firstName}
             hideWelcome={true}
+            visiblePlanIds={visiblePlanIds}
           />
         </div>
 

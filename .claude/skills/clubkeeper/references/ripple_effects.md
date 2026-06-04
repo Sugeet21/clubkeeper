@@ -222,7 +222,7 @@ If a change isn't documented here yet, pause and trace dependencies first.
 Subscribe.tsx `headline` is a `useMemo` discriminated union (`expired | early | welcome`). Auth guard only bounces active-trialing users when `locationReason` is unset — intentional arrivals via state stay on page.
 
 **Affects:**
-- `src/components/subscribe/PlanSelection.tsx` — `PLANS` array has hardcoded prices (₹299/₹599/₹999 monthly, ₹2990/₹5990/₹9990 annual). If pricing changes, update here AND in `StickyCheckout.tsx`. `selectedPlan` prop is `PlanId | null` (since BUG-016 fix).
+- `src/components/subscribe/PlanSelection.tsx` — `ALL_PLANS` array has hardcoded prices. Pricing changes: update here AND in `StickyCheckout.tsx`. `selectedPlan` prop is `PlanId | null`. **Phase 3 Commit 2:** No longer reads `VISIBLE_PLAN_IDS` from module scope — receives `visiblePlanIds: readonly PlanId[]` as a prop from `Subscribe.tsx`. All plan visibility gating (V1-LAUNCH filter + live_10 email gate) lives in `Subscribe.tsx` only. `PlanId` type = `'starter' | 'standard' | 'pro' | 'test'`.
 - `src/components/subscribe/StickyCheckout.tsx` — receives `selectedPlan: PlanId | null`; renders `null` (hides entirely) when no plan is selected. Receives `currentPrice` as number. Safe to change pricing in Subscribe.tsx only.
 - `src/components/subscribe/PaymentBottomSheet.tsx` — accepts: `payError: string | null`, `onMaybeLater: () => void`, `onRetry: () => void`. All three must stay in sync with `handlePayNow()`/`handleMaybeLater()`/`handleRetryPayment()` in `Subscribe.tsx`. Sheet has ESC key listener (BUG-016), 4 escape paths, "Maybe later" + "Retry" buttons.
 - `src/components/subscribe/ConfirmationScreen.tsx` — rendered when `screen === 'confirmed'`. Navigate uses `replace: true` — do NOT remove or user can back into Subscribe
@@ -230,8 +230,9 @@ Subscribe.tsx `headline` is a `useMemo` discriminated union (`expired | early | 
 - `src/hooks/useAccessGuard.ts` — `'trialing'` with active trial → `canAccess: true`; expired trial → `reason: 'trial_expired'`; `active`/`past_due` → `canAccess: true`; `none`/`cancelled`/`expired` → `reason: 'no_subscription'`.
 - `src/components/RequireAccess.tsx` — `trial_expired` navigated imperatively (with state) via `useEffect`; `no_subscription` uses `<Navigate to="/subscribe">` without state.
 - `src/components/SubscriptionStatusBanner.tsx` — trial strip "Manage →" navigates to `/subscribe` with `state: { reason: 'subscribe_early' }`. The `past_due` "Fix Now →" and cancelling "Resume →" buttons still go to `/settings`.
-- `api/create-subscription.ts` — called by `handlePayNow()` via fetch POST with 15s AbortController timeout (since BUG-017 fix). If flow changes, both must update together.
-- `src/lib/razorpayPlans.ts` — plan IDs consumed by `api/create-subscription.ts`. If plan IDs change, update ONLY this file
+- `api/create-subscription.ts` — called by `handlePayNow()` via fetch POST `{ userId, tier, cycle }` with 15s AbortController timeout. **Phase 3 Commit 2 (BUG-026 fix):** Server reads `trial_ends_at` from Supabase BEFORE calling Razorpay. Three scenarios: `new` / `mid_trial` / `expired`. `trial_ends_at` only overwritten when scenario requires it. Response now includes `startAt: number` and `scenario: string`.
+- `src/lib/razorpayPlans.ts` — plan IDs consumed by `api/create-subscription.ts`. If plan IDs change, update ONLY this file. Also update `api/_shared/plans.ts` (server-side mirror). `'test'` tier = LIVE-only ₹10 plan; absent from TEST_PLANS.
+- `Subscribe.tsx` **visiblePlanIds gating (Phase 3 Commit 2):** `BASE_VISIBLE_PLAN_IDS = ['standard']`. Adds `'test'` tier iff `isLiveMode === true` AND `user.email ∈ SUGEET_TEST_EMAILS`. This is the ONLY place to add/remove plan visibility. Pass `visiblePlanIds` prop to `<PlanSelection>`.
 - Annual prices: `MONTHLY_PRICES` and `ANNUAL_PRICES` in `Subscribe.tsx`. ROI calculator in `Landing.tsx` also hardcodes `₹599` — keep in sync
 
 **PaymentBottomSheet escape paths (as of BUG-016 fix, 24 May 2026):**
@@ -252,10 +253,14 @@ All 4 paths are guarded by `!paying` — cannot escape mid-payment.
 ### If you change Razorpay plan IDs
 
 **Affects:**
-- `src/lib/razorpayPlans.ts` — ONLY file to edit. It's the single source of truth.
-- `api/create-subscription.ts` imports `getPlanId()` from `razorpayPlans.ts` — no change needed there
+- `src/lib/razorpayPlans.ts` — ONLY file to edit for plan IDs. It's the single source of truth for the frontend.
+- `api/_shared/plans.ts` — MUST be updated in sync with `razorpayPlans.ts`. It is the server-side mirror (uses `process.env` instead of `import.meta.env`). The `'test'` tier (`test_monthly: 'plan_Sx0LfhJGzccBHQ'`) is in LIVE_PLANS only — absent from TEST_PLANS. `PlanMap` is `Partial<Record<...>>` to allow omitting tiers per mode.
+- `api/create-subscription.ts` — reads from `api/_shared/plans.ts`. `getPlanId()` now throws a descriptive error if a plan is LIVE-only but server is in TEST mode (e.g. someone accidentally sends `tier=test` in TEST mode). Adding a new tier: update `VALID_TIERS` set + both plan maps.
 - Razorpay Dashboard — the plan must exist there with the exact ID before using it in the app
-- `src/components/landing/PricingSection.tsx` and `src/components/subscribe/PlanCard.tsx` — if tier names or prices change (not just plan IDs), update the display text here
+- `src/components/subscribe/PlanCard.tsx` — `id` union must include the new tier. Also add any special badge logic here (e.g. the 🔴 LIVE TEST badge for `id === 'test'`).
+- `src/components/subscribe/PlanSelection.tsx` — `ALL_PLANS` array must include the new tier's display data (name, prices, features). Visibility controlled by `visiblePlanIds` prop from Subscribe.tsx — not here.
+- `src/pages/Subscribe.tsx` — `MONTHLY_PRICES` and `ANNUAL_PRICES` maps must include the new tier. If it's a gated plan, add gate logic to `visiblePlanIds` computation.
+- `src/components/landing/PricingSection.tsx` — hardcoded HTML, safe. Does NOT import plan data — `live_10` / `test` tier cannot leak here. Verify when adding a new publicly-visible plan that PricingSection also shows it (currently it's hardcoded Standard only).
 
 ### If you change the webhook handler (`api/razorpay-webhook.ts`)
 

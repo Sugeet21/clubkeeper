@@ -459,3 +459,16 @@ useEffect(() => {
 (Move here when Sugeet reports something but it can't be reproduced. Revisit later.)
 
 (none currently)
+
+---
+
+### 4 Jun 2026 — BUG-026: start_at always set to now+7d — expired-trial users got free fresh trial
+
+**Symptom:** User with expired trial paid via UPI and received "7 days left, ₹599 on 10 Jun" — should have been charged immediately. Confirmed by manual test on 3 Jun 2026: signed up `shrutiwebaudits@gmail.com`, ran SQL to set `trial_ends_at` to yesterday, paid via UPI, got fresh 7-day trial instead of immediate charge.
+**Root cause:** `api/create-subscription.ts` computed `start_at = now + 7 days` unconditionally AND overwrote `trial_ends_at` in Supabase unconditionally. No check of the existing `trial_ends_at` value — expired-trial users received a brand-new 7-day trial extension every time they tried to subscribe.
+**Fix:** 3-scenario logic reading existing `trial_ends_at` from Supabase before creating the Razorpay subscription:
+1. `new` — no row / no `trial_ends_at` yet → `start_at = now+7d`, write `trial_ends_at = now+7d` (defensive new-user path)
+2. `mid_trial` — existing `trial_ends_at` is >60s in the future → `start_at = existing trial_ends_at`, DO NOT overwrite DB value
+3. `expired` — existing `trial_ends_at` is ≤60s from now or in the past → `start_at = now+60s`, write `trial_ends_at = now` (mark trial ended)
+**Files changed:** `api/create-subscription.ts` (3-scenario math + conditional `trial_ends_at` write), `api/_shared/plans.ts` (added `'test'` tier, `Partial` map), `src/lib/razorpayPlans.ts` (added `'test'` tier, `Partial` map, exported `isLiveMode`)
+**Lesson:** See Pattern S8. Server must always read Supabase before computing billing dates. Frontend never sends timestamps — it sends only `{ tier, cycle }`. `trial_ends_at` is NEVER overwritten if existing value is in the future and still valid.

@@ -460,3 +460,28 @@ Every inline `customer.name ?? customer.walkInCode ?? 'Customer'` chain replaced
 - Email notifications (Prompt 14)
 - One-time migration from old `ClubKeeperDB` → `ClubKeeperDB_<userId>` for users who had data before this change
 - Existing offline data migration strategy when cloud sync arrives (now unblocked — Dexie is already per-user)
+
+---
+
+## Phase 3 Commit 2 — ₹10 live plan + start_at 3-scenario math (BUG-026)
+
+**Date:** 4 Jun 2026
+**Commit message:** `phase-3-commit-2: ₹10 live plan + start_at 3-scenario math (BUG-026)`
+
+### Files changed
+- `src/lib/razorpayPlans.ts` — added `'test'` to `Tier` union; `LIVE_PLANS` gains `test_monthly: 'plan_Sx0LfhJGzccBHQ'`; exported `isLiveMode`; `PlanMap` is now `Partial<Record<...>>` so `'test'` tier can be absent from TEST_PLANS
+- `api/_shared/plans.ts` — same mirror changes: `'test'` tier, `LIVE_PLANS` gains `test_monthly`, `Partial` map
+- `api/create-subscription.ts` — 3-scenario `start_at` logic reading Supabase before Razorpay create; conditional `trial_ends_at` write; scenario logged + stored in Razorpay notes; added `'test'` to `VALID_TIERS`; response now includes `startAt` and `scenario` fields
+- `src/pages/Subscribe.tsx` — `PlanId` type extended to include `'test'` and `'pro'`; `MONTHLY_PRICES`/`ANNUAL_PRICES` maps include all 4 tiers; added `visiblePlanIds` gating logic (Sugeet email + LIVE mode check); passes `visiblePlanIds` prop to `<PlanSelection>`
+- `src/components/subscribe/PlanSelection.tsx` — `VISIBLE_PLAN_IDS` removed from module scope; now receives `visiblePlanIds: readonly PlanId[]` as prop; `PLANS` renamed `ALL_PLANS`; `'test'` tier entry added (₹10/month, 2-feature list)
+- `src/components/subscribe/PlanCard.tsx` — `id` union extended to include `'test'`; LIVE TEST badge rendered for `id === 'test'`
+
+### Business impact
+- BUG-026 fixed: expired-trial users now charged immediately on subscribe (no more free trial extension)
+- Mid-trial early-subscribe honors remaining trial days correctly (no overlap, no double charge)
+- ₹10 LIVE test plan visible only to `sugeetjadhav@gmail.com` in LIVE mode — allows cheap end-to-end billing validation without touching real customer plans
+
+### What's now testable
+- Sign in as Sugeet on LIVE mode → Subscribe page shows ₹10 "Test ₹10 / month" card with 🔴 badge
+- Subscribe with ₹10 → Razorpay charges real ₹10 immediately if trial expired, or defers to trial end if mid-trial
+- Scenario (`new` / `mid_trial` / `expired`) visible in Razorpay dashboard under subscription notes

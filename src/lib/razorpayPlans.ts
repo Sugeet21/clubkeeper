@@ -4,10 +4,13 @@
 // Permanent fix: auto-select TEST_PLANS or LIVE_PLANS based on key prefix.
 // Switching Vercel env between TEST ↔ LIVE now requires zero code changes.
 
-export type Tier = 'starter' | 'standard' | 'pro'
+export type Tier = 'starter' | 'standard' | 'pro' | 'test'
 export type Cycle = 'monthly' | 'annual'
 
-type PlanMap = Record<`${Tier}_${Cycle}`, string>
+// 'test' tier is LIVE-only (plan_Sx0LfhJGzccBHQ, ₹10/month).
+// Gated to Sugeet email in Subscribe.tsx. Never resolves in TEST mode.
+type PlanMapKey = `${Tier}_${Cycle}`
+type PlanMap = Partial<Record<PlanMapKey, string>>
 
 const TEST_PLANS: PlanMap = {
   starter_monthly:  'plan_StMW5oAsLAtnhZ',
@@ -16,6 +19,7 @@ const TEST_PLANS: PlanMap = {
   standard_annual:  'plan_StMXaqlYWXAqe3',
   pro_monthly:      'plan_StMXyF3jrkSbwA',
   pro_annual:       'plan_StMeJcHJqAkqAY',
+  // 'test' tier intentionally omitted — LIVE key required
 }
 
 const LIVE_PLANS: PlanMap = {
@@ -25,6 +29,8 @@ const LIVE_PLANS: PlanMap = {
   standard_annual:  'plan_SshFh5NILH24ef',
   pro_monthly:      'plan_SshGRj6D3rfWzJ',
   pro_annual:       'plan_SshJ4iqI7iICkz',
+  test_monthly:     'plan_Sx0LfhJGzccBHQ',
+  // test_annual intentionally omitted — ₹10 plan is monthly only
 }
 
 const keyId: string | undefined = import.meta.env.VITE_RAZORPAY_KEY_ID
@@ -42,11 +48,13 @@ if (keyId === undefined || keyId === '') {
   )
 }
 
-const isTestMode: boolean = keyId?.startsWith('rzp_live_') !== true
+export const isLiveMode: boolean = keyId?.startsWith('rzp_live_') === true
 
 // Single source of truth — consumed by api/create-subscription.ts and frontend
-export const PLANS: PlanMap = isTestMode ? TEST_PLANS : LIVE_PLANS
+export const PLANS: PlanMap = isLiveMode ? LIVE_PLANS : TEST_PLANS
 
 export function getPlanId(tier: Tier, cycle: Cycle): string {
-  return PLANS[`${tier}_${cycle}`]
+  const id = PLANS[`${tier}_${cycle}`]
+  if (!id) throw new Error(`[razorpayPlans] No plan ID for tier="${tier}" cycle="${cycle}" in current mode (isLiveMode=${isLiveMode})`)
+  return id
 }
