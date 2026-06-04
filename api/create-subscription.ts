@@ -22,6 +22,7 @@ const supabaseAdmin = createClient(
 
 const VALID_TIERS = new Set<Tier>(['starter', 'standard', 'pro', 'test'])
 const VALID_CYCLES = new Set<Cycle>(['monthly', 'annual'])
+const TEST_TIER_ALLOWED_EMAILS = ['sugeetjadhav@gmail.com'] as const
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -49,6 +50,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   if (!VALID_TIERS.has(tier as Tier) || !VALID_CYCLES.has(cycle as Cycle)) {
     return res.status(400).json({ error: 'Invalid tier or cycle' })
+  }
+
+  // Defense in depth: 'test' tier (₹10 LIVE plan) is gated to specific emails.
+  // Frontend (Subscribe.tsx) already hides it from other users, but the server
+  // must enforce this independently — anyone could POST to this endpoint directly.
+  if (tier === 'test') {
+    const userEmail = user.email ?? null
+    if (!userEmail || !(TEST_TIER_ALLOWED_EMAILS as readonly string[]).includes(userEmail)) {
+      console.warn(
+        `[create-subscription] REJECTED test tier request from email="${userEmail}" userId="${userId}"`
+      )
+      return res.status(403).json({ message: 'This plan is not available for your account.' })
+    }
   }
 
   let planId: string
