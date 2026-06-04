@@ -85,26 +85,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? new Date(profile.trial_ends_at as string).getTime()
     : null
 
-  type Scenario = 'new' | 'mid_trial' | 'expired'
+  type Scenario = 'new' | 'mid_trial' | 'expired' | 'test_5min_override'
   let scenario: Scenario
   let startAtSec: number
   let trialEndsAtToWrite: string | null // null = do not overwrite existing DB value
 
-  if (!existingTrialEndsMs) {
-    // No trial row yet (trigger didn't fire or row missing) → defensive new-user path
-    scenario = 'new'
-    startAtSec = Math.floor((nowMs + sevenDaysMs) / 1000)
-    trialEndsAtToWrite = new Date(nowMs + sevenDaysMs).toISOString()
-  } else if (existingTrialEndsMs > nowMs + minBufferSec * 1000) {
-    // Trial still has > 60s remaining → honor existing trial end date
-    scenario = 'mid_trial'
-    startAtSec = Math.floor(existingTrialEndsMs / 1000)
-    trialEndsAtToWrite = null // DO NOT overwrite — keep existing value
+  // ═══════════════════════════════════════════════════════════════
+  // 🚧 TEMPORARY — REMOVE AFTER LIVE PAYMENT TESTING 🚧
+  // Compresses 7-day trial to 5 minutes for the test tier ONLY.
+  // Lets Sugeet validate the first-charge webhook flow without
+  // waiting a week. Production tiers are NOT affected.
+  // Revert by deleting this entire if block (keep the else contents).
+  // ═══════════════════════════════════════════════════════════════
+  if (tier === 'test') {
+    const fiveMinutesFromNowSec = Math.floor(Date.now() / 1000) + 300
+    const fiveMinutesFromNowIso = new Date(Date.now() + 5 * 60 * 1000).toISOString()
+    console.log(
+      `[create-subscription] 🚧 TEST TIER OVERRIDE: start_at=${fiveMinutesFromNowSec} (now+5min) ` +
+      `trialEndsAtToWrite=${fiveMinutesFromNowIso}`
+    )
+    startAtSec = fiveMinutesFromNowSec
+    trialEndsAtToWrite = fiveMinutesFromNowIso
+    scenario = 'test_5min_override'
   } else {
-    // Trial expired OR ending within 60s → start charging as soon as Razorpay allows
-    scenario = 'expired'
-    startAtSec = Math.floor((nowMs + minBufferSec * 1000) / 1000)
-    trialEndsAtToWrite = new Date(nowMs).toISOString() // mark trial ended now
+    if (!existingTrialEndsMs) {
+      // No trial row yet (trigger didn't fire or row missing) → defensive new-user path
+      scenario = 'new'
+      startAtSec = Math.floor((nowMs + sevenDaysMs) / 1000)
+      trialEndsAtToWrite = new Date(nowMs + sevenDaysMs).toISOString()
+    } else if (existingTrialEndsMs > nowMs + minBufferSec * 1000) {
+      // Trial still has > 60s remaining → honor existing trial end date
+      scenario = 'mid_trial'
+      startAtSec = Math.floor(existingTrialEndsMs / 1000)
+      trialEndsAtToWrite = null // DO NOT overwrite — keep existing value
+    } else {
+      // Trial expired OR ending within 60s → start charging as soon as Razorpay allows
+      scenario = 'expired'
+      startAtSec = Math.floor((nowMs + minBufferSec * 1000) / 1000)
+      trialEndsAtToWrite = new Date(nowMs).toISOString() // mark trial ended now
+    }
   }
 
   console.log(
