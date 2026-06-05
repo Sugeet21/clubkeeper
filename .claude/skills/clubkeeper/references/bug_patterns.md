@@ -389,6 +389,15 @@ Vite alone doesn't serve serverless functions. Local dev with `npm run dev` retu
 
 Files most affected: `api/create-subscription.ts`, `api/cancel-subscription.ts`, `src/lib/razorpayPlans.ts`, `api/_shared/plans.ts`, `src/pages/Subscribe.tsx`.
 
+### Pattern S9 — Use `razorpaySubscriptionId` presence to split trialing sub-states in UI (5 Jun 2026)
+**Symptom signature:** After completing UPI mandate setup (₹5 RBI charge), user returns to `/tables` and still sees the "7-day free trial" banner as if nothing happened.
+**Root cause:** `subscription.authenticated` webhook writes `status='trialing'` — the same value it was before. `trial_ends_at` is never touched. Banner only checked `status === 'trialing'` with no further differentiation.
+**Rule:** When rendering UI that needs to distinguish "trial, no mandate" from "trial, mandate registered (subscribed, waiting for first charge at trial end)", use `razorpaySubscriptionId` as the discriminator — it is written by `create-subscription.ts` when the Razorpay subscription is created, before the mandate is completed. Both sub-states remain `status='trialing'` in the DB until `subscription.charged` fires and sets `status='active'`.
+- `status === 'trialing' && !razorpaySubscriptionId` → pure trial, no payment setup
+- `status === 'trialing' && razorpaySubscriptionId` → mandate registered, first charge pending at `trial_ends_at`
+
+Never change `status` values or webhook behavior to encode this distinction — `trialing` is the correct Razorpay lifecycle state until the first charge succeeds.
+
 ### Pattern S8 — Server reads Supabase as billing source of truth before every Razorpay call (BUG-026)
 **Symptom signature:** User with expired trial gets a free fresh 7-day extension on paying; or mid-trial user loses their remaining days on early subscribe.
 **Root cause:** `api/create-subscription.ts` computed `start_at` unconditionally from `Date.now()` without reading the existing `trial_ends_at` from Supabase. Every subscribe call reset the trial clock.

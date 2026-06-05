@@ -4,6 +4,24 @@ Chronological record of what shipped, when, and what manual setup was done. Read
 
 ---
 
+## 5 Jun 2026 — SubscriptionStatusBanner two-state trialing split + ConfirmationScreen date fix
+
+**Problem:** After completing the ₹5 UPI mandate (Razorpay `subscription.authenticated`), the banner on `/tables` still showed "7-day free trial — N days left · Manage →" — identical to before payment. Root cause: `subscription.authenticated` webhook writes `status='trialing'` (unchanged) and never touches `trial_ends_at`. Banner had no way to distinguish "pure trial" from "mandate registered, waiting for first charge."
+
+**Fix:** Split the `trialing` branch of `SubscriptionStatusBanner` into two sub-states using `razorpaySubscriptionId` presence:
+- `!razorpaySubscriptionId` → existing "Free trial: N days left · Manage →" strip (unchanged)
+- `razorpaySubscriptionId` present → new "Subscribed ✓ — ₹599 will be charged on {d MMM} · View →" strip. "View →" sets `sessionStorage('ck_settings_section', 'subscription')` then navigates to `/settings`, auto-opening the Subscription section.
+
+**Also fixed:** `trialEndDate` in `ConfirmationScreen` was always `format(addDays(new Date(), 7), 'MMM d')` — today+7 from Subscribe page render time, not the actual stored `trial_ends_at`. Fixed in `Subscribe.tsx` to read `subscription.trialEndsAt` from authStore, with `addDays(new Date(), 7)` as fallback. Note: `ConfirmationScreen.tsx` receives `trialEndDate` as a prop but its current body doesn't display it prominently; fix is forward-compatible for when that copy is updated.
+
+**Files touched:**
+- `src/components/SubscriptionStatusBanner.tsx` — added `razorpaySubscriptionId` to destructure; trialing branch split into two renders
+- `src/pages/Subscribe.tsx` — `trialEndDate` now reads `subscription.trialEndsAt` first
+
+**No changes to:** `useAccessGuard.ts`, webhook, `create-subscription.ts`, `SubscriptionStatus` type, `AuthCallback`, or any other strips (past_due, active+cancelling).
+
+---
+
 ## 3 Jun 2026 — Fix: cancel subscription fails during trial (BUG-025)
 
 `api/cancel-subscription.ts` always called `cancel(id, 1)` (cancel at cycle end). Razorpay rejects this with 400 when no billing cycle has started yet (`authenticated` state during trial). Added fallback: catch that specific 400, retry with `cancel(id, 0)` (immediate), update Supabase `status='cancelled', cancel_at_period_end=false`, return `{ cancelled: true, immediate: true }`. Normal active-subscription cancel path unchanged. See Pattern S7.

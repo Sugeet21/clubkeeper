@@ -101,7 +101,9 @@ export default function Subscribe() {
   const [showBackWarning, setShowBackWarning] = useState(false)
   const warnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const trialEndDate = format(addDays(new Date(), 7), 'MMM d')
+  const trialEndDate = subscription?.trialEndsAt
+    ? format(new Date(subscription.trialEndsAt), 'MMM d')
+    : format(addDays(new Date(), 7), 'MMM d')
   const currentPrice = selectedPlan ? getPrice(selectedPlan, billing) : 0
 
   // V1-LAUNCH: only Standard Monthly shown to all users.

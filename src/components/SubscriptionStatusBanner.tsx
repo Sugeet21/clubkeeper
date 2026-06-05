@@ -8,13 +8,39 @@ export function SubscriptionStatusBanner() {
 
   if (!subscription) return null
 
-  const { status, trialEndsAt, cancelAtPeriodEnd, currentPeriodEnd, plan } = subscription
+  const { status, trialEndsAt, cancelAtPeriodEnd, currentPeriodEnd, plan, razorpaySubscriptionId } = subscription
 
   const planMonthlyPrice = plan === 'starter' ? 299 : plan === 'standard' ? 599 : 999
 
   if (status === 'trialing' && trialEndsAt) {
     const daysLeft = Math.max(0, Math.ceil((trialEndsAt - Date.now()) / 86400000))
     const chargeDate = format(new Date(trialEndsAt), 'd MMM')
+
+    // Mandate registered — user subscribed, waiting for first charge at trial end
+    if (razorpaySubscriptionId) {
+      return (
+        <div
+          className="mx-4 mb-3 flex items-center justify-between gap-3 rounded-xl px-4 py-3 border"
+          style={{ background: 'rgba(184,255,90,.06)', borderColor: 'rgba(184,255,90,.25)' }}
+        >
+          <p className="text-[13px] text-text leading-snug">
+            <span className="font-bold text-accent">Subscribed ✓</span>{' '}
+            — ₹{planMonthlyPrice.toLocaleString('en-IN')} will be charged on {chargeDate}.
+          </p>
+          <button
+            onClick={() => {
+              sessionStorage.setItem('ck_settings_section', 'subscription')
+              navigate('/settings')
+            }}
+            className="text-[12px] font-bold text-accent shrink-0"
+          >
+            View →
+          </button>
+        </div>
+      )
+    }
+
+    // No mandate yet — pure trial, prompt to subscribe
     return (
       <div
         className="mx-4 mb-3 flex items-center justify-between gap-3 rounded-xl px-4 py-3 border"
