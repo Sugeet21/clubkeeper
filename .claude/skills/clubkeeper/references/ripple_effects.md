@@ -713,6 +713,30 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 
 ---
 
+## Table Move feature — added 8 Jun 2026
+
+### If you change `moveSessionToTable()` in queries.ts
+
+**Affects:**
+- `src/types/index.ts` — `TableMove` interface + `Session.tableMoves?: TableMove[]`
+- `src/db/database.ts` — v9 schema block (field-only, no index). Keep all prior version blocks.
+- `src/pages/SessionDetail.tsx` — `MoveTableModal`, `MoveTableList`, `MoveIcon`, move button, Table Journey row
+- `src/pages/History.tsx` — `↻ N tables` subtitle in `SessionRow`
+- `src/pages/Home.tsx` — NO change needed. `sessionMap` keys on `s.tableId`; Dexie live query re-fires automatically after a move writes the new `tableId`.
+
+**Invariant:** `session.tableId` always points to the CURRENT (latest) table. `tableMoves` records the full journey. Existing queries that filter by `tableId` continue working unchanged — they always see the current table.
+
+**Error classes exported from queries.ts:** `IncompatibleTableError`, `TableOccupiedError` — catch by type in UI for inline error display (Pattern F7). Never show a toast for these.
+
+**Compatibility rule (all three must match):**
+1. `srcTable.gameType === destTable.gameType`
+2. Session `billingMode === 'per_hour'` → `srcTable.ratePerHour === destTable.ratePerHour`
+3. Session `billingMode === 'per_frame'` → `srcTable.ratePerFrame === destTable.ratePerFrame`
+
+**Discovered when:** Table Move Phase 1, 8 Jun 2026.
+
+---
+
 ## Authentication ripples — subscriptionLoaded flag (7 Jun 2026)
 
 - `authStore.subscriptionLoaded` must be set to `true` AFTER `refreshProfile()` resolves, in BOTH `initialize()` and `onAuthStateChange` handler.
