@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie'
-import type { GameTable, Session, ClubSettings, SessionItem } from '../types'
+import type { GameTable, Session, ClubSettings, SessionItem, CanteenItem } from '../types'
 import type { Customer } from '../types/customer'
 import type { WalletTransaction } from '../types/walletTransaction'
 
@@ -16,6 +16,7 @@ export class ClubKeeperDB extends Dexie {
   sessionItems!: Table<SessionItem, number>
   customers!: Table<Customer, string>
   walletTransactions!: Table<WalletTransaction, string>
+  canteenItems!: Table<CanteenItem, number>
 
   constructor(dbName: string) {
     super(dbName)
@@ -118,6 +119,18 @@ export class ClubKeeperDB extends Dexie {
       sessionItems: '++id, sessionId, addedAt',
       customers: 'id, phone, walkInCode, lastVisitAt',
       walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+    })
+    // Version 8: adds canteenItems table for canteen/snack menu management.
+    // No .upgrade() needed — new table starts empty. lowStockThreshold field on
+    // ClubSettings is optional; missing values are treated as 5 at read time.
+    this.version(8).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
     })
   }
 }

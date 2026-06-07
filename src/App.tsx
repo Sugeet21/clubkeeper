@@ -20,6 +20,7 @@ import Wallet from './pages/Wallet'
 import WalletNewCustomer from './pages/WalletNewCustomer'
 import WalletTopup from './pages/WalletTopup'
 import CustomerProfile from './pages/CustomerProfile'
+import Canteen from './pages/Canteen'
 
 const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback']
 // Wallet routes are private but not in BottomNav — they are deep-linked pages.
@@ -83,6 +84,7 @@ function AppLayout() {
             <Route path="/wallet/new" element={<WalletNewCustomer />} />
             <Route path="/wallet/topup/:customerId" element={<WalletTopup />} />
             <Route path="/customer/:customerId" element={<CustomerProfile />} />
+            <Route path="/canteen" element={<Canteen />} />
           </Route>
         </Routes>
       </div>

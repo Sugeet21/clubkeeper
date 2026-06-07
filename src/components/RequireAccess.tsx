@@ -14,9 +14,11 @@ export function RequireAccess() {
   }, [guard, navigate])
 
   if (!guard.canAccess) {
-    if (guard.reason === 'loading' || guard.reason === 'db_loading') {
+    if (guard.reason === 'loading' || guard.reason === 'db_loading' || guard.reason === 'subscription_loading') {
       // 'db_loading': auth is done but per-user IndexedDB is still opening.
-      // Show the same spinner — never let a private page query the placeholder DB.
+      // 'subscription_loading': DB ready but refreshProfile() hasn't resolved yet —
+      // subscription===null in this window must NOT be treated as no_subscription.
+      // Show the same spinner for all three — never redirect during transient loading.
       return (
         <div className="min-h-screen flex items-center justify-center text-text-dim text-sm font-mono">
           Loading…

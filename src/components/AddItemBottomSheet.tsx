@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { useSessionItems, useRecentItems } from '../hooks/useLiveData'
-import { addSessionItem, updateSessionItem, deleteSessionItem, restoreSessionItem } from '../db/queries'
+import { addSessionItem, updateSessionItem, deleteSessionItem, restoreSessionItem, getCanteenItems, getLowStockThreshold } from '../db/queries'
+import { db } from '../db/database'
 import { useToastStore } from '../store/toastStore'
 import { validateItemName } from '../lib/validation'
-import type { SessionItem } from '../types'
+import type { SessionItem, CanteenItem } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -42,12 +44,14 @@ export function AddItemBottomSheet({
 }: AddItemBottomSheetProps) {
   const items = useSessionItems(sessionId)
   const recentItems = useRecentItems(8)
+  const canteenItems = useLiveQuery(() => getCanteenItems(false), [], [] as CanteenItem[])
   const { show: showToast } = useToastStore()
 
   const [editingId, setEditingId] = useState<number | null>(null)
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState('1')
+  const [selectedCanteenItem, setSelectedCanteenItem] = useState<CanteenItem | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -70,6 +74,7 @@ export function AddItemBottomSheet({
       setName('')
       setPrice('')
       setQuantity('1')
+      setSelectedCanteenItem(null)
       setError(null)
     }
   }, [open])
@@ -108,6 +113,7 @@ export function AddItemBottomSheet({
     setName('')
     setPrice('')
     setQuantity('1')
+    setSelectedCanteenItem(null)
     setError(null)
   }
 
@@ -122,7 +128,9 @@ export function AddItemBottomSheet({
     try {
       const priceNum = Math.round(Number(price))
       const qtyNum = Math.round(Number(quantity))
+
       if (editingId !== null) {
+        // Edit path — no stock change (user is editing an existing session item)
         await updateSessionItem(editingId, {
           name: name.trim(),
           price: priceNum,
@@ -132,13 +140,55 @@ export function AddItemBottomSheet({
         setName('')
         setPrice('')
         setQuantity('1')
-      } else {
-        await addSessionItem({ sessionId, name, price: priceNum, quantity: qtyNum })
-        setName('')
-        setPrice('')
-        setQuantity('1')
+        return
       }
+
+      // Add path — check if this came from a stock-tracked canteen chip
+      const ci = selectedCanteenItem
+      const shouldDecrement = ci !== null && ci.id !== undefined && ci.stockEnabled
+
+      if (shouldDecrement && ci.id !== undefined) {
+        // Single flat transaction — inlining the stock logic here avoids a nested
+        // transaction crash (decrementCanteenItemStock has its own internal tx).
+        let crossingInfo: { oldStock: number; newStock: number } | null = null
+        await db.transaction('rw', db.canteenItems, db.sessionItems, async () => {
+          const fresh = await db.canteenItems.get(ci.id!)
+          if (!fresh) throw new Error('Canteen item not found')
+          const oldStock = fresh.currentStock ?? 0
+          const newStock = oldStock - qtyNum
+          if (newStock < 0) throw new Error('Insufficient stock')
+          await db.canteenItems.update(ci.id!, { currentStock: newStock })
+          await db.sessionItems.add({
+            sessionId,
+            name: name.trim(),
+            price: priceNum,
+            quantity: qtyNum,
+            addedAt: Date.now(),
+          })
+          crossingInfo = { oldStock, newStock }
+        })
+        const { oldStock, newStock } = crossingInfo!
+
+        // Evaluate crossing toast AFTER both writes committed
+        const threshold = await getLowStockThreshold()
+        const itemName = ci.name
+        if (newStock === 0) {
+          showToast(`${itemName} out of stock`, 'error')
+        } else if (oldStock >= threshold && newStock < threshold) {
+          showToast(`⚠️ ${itemName} stock low — ${newStock} left`, 'info')
+        }
+      } else {
+        // Free-text or non-tracked canteen item — plain add, no decrement
+        await addSessionItem({ sessionId, name: name.trim(), price: priceNum, quantity: qtyNum })
+      }
+
+      setName('')
+      setPrice('')
+      setQuantity('1')
+      setSelectedCanteenItem(null)
     } catch (err) {
+      // Includes "Insufficient stock" from decrementCanteenItemStock.
+      // Transaction rolls back automatically on throw, so no session item row was written.
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
       setSubmitting(false)
@@ -227,6 +277,53 @@ export function AddItemBottomSheet({
           {!isReadOnly && (
             <div className="mb-5">
 
+              {/* Canteen master-list chips — only shown when items exist */}
+              {canteenItems.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-[10px] uppercase tracking-widest font-mono text-text-faint mb-2">
+                    Canteen items
+                  </p>
+                  <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+                    {canteenItems.map((ci) => {
+                      const outOfStock = ci.stockEnabled && ci.currentStock === 0
+                      return (
+                        <button
+                          key={ci.id}
+                          type="button"
+                          disabled={outOfStock}
+                          onClick={() => {
+                            if (outOfStock) return
+                            setName(ci.name)
+                            setPrice(String(ci.defaultPrice))
+                            setQuantity('1')
+                            setSelectedCanteenItem(ci)
+                            setEditingId(null)
+                            setError(null)
+                          }}
+                          className={`min-h-[44px] px-4 border rounded-full text-sm flex flex-col items-center justify-center shrink-0 transition-colors ${
+                            outOfStock
+                              ? 'bg-bg-card border-border text-text-faint opacity-50 cursor-not-allowed'
+                              : 'bg-bg-card border-border text-text active:scale-95 transition-transform'
+                          }`}
+                        >
+                          <span className="font-medium whitespace-nowrap">
+                            {ci.name}{' '}
+                            <span className="font-mono text-text-dim text-xs">
+                              ₹{ci.defaultPrice.toLocaleString('en-IN')}
+                            </span>
+                          </span>
+                          {outOfStock && (
+                            <span className="text-[10px] font-mono text-busy leading-none mt-0.5">
+                              Out of stock
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Quick-add chips — only shown when there are recent items */}
               {recentItems.length > 0 && (
                 <div className="mb-4">
@@ -267,6 +364,7 @@ export function AddItemBottomSheet({
                   value={name}
                   onChange={(e) => {
                     setName(e.target.value)
+                    setSelectedCanteenItem(null)
                     setError(null)
                   }}
                   placeholder="e.g. Cold drink, Chips, Water bottle"
@@ -298,19 +396,39 @@ export function AddItemBottomSheet({
                   <label className="block text-[10px] uppercase tracking-widest font-mono text-text-faint mb-1.5">
                     Qty
                   </label>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={quantity}
-                    onChange={(e) => {
-                      setQuantity(e.target.value)
-                      setError(null)
-                    }}
-                    placeholder="1"
-                    min="1"
-                    max="99"
-                    className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-[15px] focus:border-accent focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint"
-                  />
+                  {(() => {
+                    const qtyNum = Math.max(1, Math.min(99, Number(quantity) || 1))
+                    const stockMax = selectedCanteenItem?.stockEnabled && selectedCanteenItem.currentStock !== null
+                      ? Math.min(99, selectedCanteenItem.currentStock)
+                      : 99
+                    const atMax = qtyNum >= stockMax
+                    const atMin = qtyNum <= 1
+                    return (
+                      <div className="flex items-center bg-bg border border-border rounded-xl overflow-hidden min-h-[44px]">
+                        <button
+                          type="button"
+                          disabled={atMin}
+                          onClick={() => { setQuantity(String(Math.max(1, qtyNum - 1))); setError(null) }}
+                          className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim disabled:opacity-30 active:bg-bg-card transition-colors text-xl font-bold"
+                          aria-label="Decrease quantity"
+                        >
+                          −
+                        </button>
+                        <span className="flex-1 text-center text-[15px] font-mono font-bold text-text tabular-nums">
+                          {qtyNum}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={atMax}
+                          onClick={() => { setQuantity(String(Math.min(stockMax, qtyNum + 1))); setError(null) }}
+                          className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim disabled:opacity-30 active:bg-bg-card transition-colors text-xl font-bold"
+                          aria-label="Increase quantity"
+                        >
+                          +
+                        </button>
+                      </div>
+                    )
+                  })()}
                 </div>
               </div>
 

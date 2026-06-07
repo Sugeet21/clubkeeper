@@ -72,6 +72,18 @@ export interface ClubSettings {
   legacyAdjustmentsBackfilled?: boolean // set true by v6 migration; never write false
   alarmSoundEnabled?: boolean    // default true; stored in Dexie, NOT localStorage
   alarmVibrationEnabled?: boolean // default true; stored in Dexie, NOT localStorage
+  lowStockThreshold?: number     // default 5; treat missing as 5
+}
+
+export interface CanteenItem {
+  id?: number
+  name: string           // 1-50 chars
+  defaultPrice: number   // integer rupees, 1-9999
+  stockEnabled: boolean  // default false
+  currentStock: number | null // null when stockEnabled=false, integer >=0 otherwise
+  isActive: boolean      // soft-delete pattern
+  createdAt: number
+  sortOrder: number
 }
 
 export interface SessionItem {

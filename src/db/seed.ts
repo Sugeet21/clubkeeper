@@ -50,6 +50,7 @@ const DEFAULT_SETTINGS: ClubSettings = {
   clubName: 'My Club',
   currency: '₹',
   rounding: 'none',
+  lowStockThreshold: 5,
 }
 
 export async function seedIfEmpty(): Promise<void> {

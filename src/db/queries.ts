@@ -1,9 +1,9 @@
 import { startOfDay, endOfDay } from 'date-fns'
 import { db } from './database'
 import { calculateAmount, applyRounding } from '../lib/money'
-import { validatePlayerName, validateItemName } from '../lib/validation'
+import { validatePlayerName, validateItemName, validateCanteenItemName } from '../lib/validation'
 import { seedIfEmpty } from './seed'
-import type { GameTable, Session, ClubSettings, SessionItem } from '../types'
+import type { GameTable, Session, ClubSettings, SessionItem, CanteenItem } from '../types'
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -397,4 +397,130 @@ export async function updateSettings(
   data: Partial<Omit<ClubSettings, 'id'>>,
 ): Promise<void> {
   await db.settings.update(1, data)
+}
+
+// ─── Canteen Items ─────────────────────────────────────────────────────────────
+
+export async function getCanteenItems(includeInactive = false): Promise<CanteenItem[]> {
+  if (includeInactive) {
+    return db.canteenItems.orderBy('sortOrder').toArray()
+  }
+  // Use filter() instead of .where('isActive').equals(1) — IndexedDB stores booleans
+  // as booleans, not integers, so equality index queries against a boolean column are
+  // unreliable. filter() reads all rows (tiny table) and is safe across all browsers.
+  return db.canteenItems
+    .orderBy('sortOrder')
+    .filter((item) => item.isActive === true)
+    .toArray()
+}
+
+export async function addCanteenItem(
+  input: Omit<CanteenItem, 'id' | 'createdAt' | 'sortOrder' | 'isActive'>,
+): Promise<number> {
+  const nameValidation = validateCanteenItemName(input.name)
+  if (!nameValidation.valid) throw new Error(nameValidation.error)
+
+  const trimmedName = input.name.trim()
+
+  // Reject duplicate active name (case-insensitive)
+  const existing = await db.canteenItems
+    .filter((item) => item.isActive && item.name.trim().toLowerCase() === trimmedName.toLowerCase())
+    .first()
+  if (existing) throw new Error(`An active item named "${existing.name}" already exists`)
+
+  // Validate stock fields
+  const stockEnabled = input.stockEnabled
+  let currentStock = input.currentStock
+  if (!stockEnabled) {
+    currentStock = null
+  } else if (currentStock === null) {
+    throw new Error('Stock count required when tracking enabled')
+  }
+
+  // Determine next sortOrder
+  const last = await db.canteenItems.orderBy('sortOrder').last()
+  const sortOrder = last ? last.sortOrder + 1 : 1
+
+  return db.canteenItems.add({
+    name: trimmedName,
+    defaultPrice: input.defaultPrice,
+    stockEnabled,
+    currentStock,
+    isActive: true,
+    createdAt: Date.now(),
+    sortOrder,
+  })
+}
+
+export async function updateCanteenItem(
+  id: number,
+  patch: Partial<CanteenItem>,
+): Promise<void> {
+  const item = await db.canteenItems.get(id)
+  if (!item) throw new Error(`Canteen item ${id} not found`)
+
+  if (patch.name !== undefined) {
+    const nameValidation = validateCanteenItemName(patch.name)
+    if (!nameValidation.valid) throw new Error(nameValidation.error)
+    const trimmedName = patch.name.trim()
+    patch.name = trimmedName
+    // Reject duplicate active name (case-insensitive, excluding this id)
+    const duplicate = await db.canteenItems
+      .filter(
+        (i) =>
+          i.isActive &&
+          i.id !== id &&
+          i.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+      )
+      .first()
+    if (duplicate) throw new Error(`An active item named "${duplicate.name}" already exists`)
+  }
+
+  // Resolve effective stockEnabled after patch
+  const newStockEnabled = patch.stockEnabled ?? item.stockEnabled
+  const oldStockEnabled = item.stockEnabled
+
+  let currentStock = patch.currentStock ?? item.currentStock
+
+  if (oldStockEnabled && !newStockEnabled) {
+    // flipped true→false: force null
+    currentStock = null
+  } else if (!oldStockEnabled && newStockEnabled) {
+    // flipped false→true: require currentStock in patch
+    if (patch.currentStock === undefined || patch.currentStock === null) {
+      throw new Error('Stock count required when tracking enabled')
+    }
+    currentStock = patch.currentStock
+  } else if (newStockEnabled && currentStock === null) {
+    throw new Error('Stock count required when tracking enabled')
+  } else if (!newStockEnabled) {
+    currentStock = null
+  }
+
+  await db.canteenItems.update(id, { ...patch, currentStock })
+}
+
+export async function softDeleteCanteenItem(id: number): Promise<void> {
+  await db.canteenItems.update(id, { isActive: false })
+}
+
+export async function decrementCanteenItemStock(
+  id: number,
+  quantity: number,
+): Promise<{ oldStock: number; newStock: number }> {
+  return db.transaction('rw', db.canteenItems, async () => {
+    const item = await db.canteenItems.get(id)
+    if (!item) throw new Error(`Canteen item ${id} not found`)
+    if (!item.stockEnabled) throw new Error('Stock not tracked on this item')
+    const oldStock = item.currentStock!
+    if (oldStock < quantity) throw new Error('Insufficient stock')
+    const newStock = oldStock - quantity
+    await db.canteenItems.update(id, { currentStock: newStock })
+    return { oldStock, newStock }
+  })
+}
+
+export async function getLowStockThreshold(): Promise<number> {
+  const settings = await db.settings.get(1)
+  return settings?.lowStockThreshold ?? 5
 }

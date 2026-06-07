@@ -47,6 +47,21 @@ export function validateUpiId(upi: string): string | null {
   return null
 }
 
+export const CANTEEN_ITEM_NAME_MAX = 50
+export const CANTEEN_ITEM_NAME_REGEX = /^[a-zA-Z0-9\s.\-_]+$/
+
+export function validateCanteenItemName(name: string): { valid: boolean; error?: string } {
+  const trimmed = name.trim()
+  if (trimmed.length === 0) return { valid: false, error: 'Name is required' }
+  if (trimmed.length > CANTEEN_ITEM_NAME_MAX) {
+    return { valid: false, error: `Name must be ${CANTEEN_ITEM_NAME_MAX} characters or less` }
+  }
+  if (!CANTEEN_ITEM_NAME_REGEX.test(trimmed)) {
+    return { valid: false, error: 'Name can only contain letters, numbers, spaces, dots, dashes, underscores' }
+  }
+  return { valid: true }
+}
+
 export function validateItemName(name: string): string | null {
   const trimmed = name.trim()
   if (!trimmed) return 'Item name is required'

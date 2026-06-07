@@ -38,7 +38,19 @@ export default function TopBar({ onWalletPress }: Props) {
         {online && (
           <span className="w-1.5 h-1.5 rounded-full bg-free shrink-0 mr-1" />
         )}
-        {/* Wallet button — between online dot and gear */}
+        {/* Canteen button — between online dot and wallet */}
+        <button
+          onClick={() => navigate('/canteen')}
+          className="w-9 h-9 flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors"
+          aria-label="Canteen management"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="9" cy="21" r="1" />
+            <circle cx="20" cy="21" r="1" />
+            <path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6" />
+          </svg>
+        </button>
+        {/* Wallet button — between canteen and gear */}
         <button
           onClick={onWalletPress ?? (() => navigate('/wallet'))}
           className="w-9 h-9 flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors"

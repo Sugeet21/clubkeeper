@@ -12,6 +12,7 @@ interface AuthState {
   subscription: Subscription | null
   loading: boolean
   dbReady: boolean           // true once initDbForUser + seed complete for current user
+  subscriptionLoaded: boolean // true once refreshProfile() has resolved at least once
   _lastFetchedAt: number     // epoch ms; 0 = never fetched
   initialize: () => Promise<void>
   signInWithGoogle: () => Promise<void>
@@ -41,6 +42,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   subscription: null,
   loading: true,
   dbReady: false,
+  subscriptionLoaded: false,
   _lastFetchedAt: 0,
 
   initialize: async () => {
@@ -52,6 +54,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (session?.user) {
         await get().refreshProfile()
+        set({ subscriptionLoaded: true })
         await openAndSeed(session.user.id)
         set({ dbReady: true })
       }
@@ -76,6 +79,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (session?.user) {
         await get().refreshProfile()
+        set({ subscriptionLoaded: true })
         // initDbForUser is idempotent — safe to call on every INITIAL_SESSION
         // re-fire without closing/reopening the connection (Pattern A1).
         await openAndSeed(session.user.id)
@@ -83,7 +87,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       } else {
         // Sign-out: close the per-user DB, reset state.
         await closeDb()
-        set({ profile: null, subscription: null, dbReady: false })
+        set({ profile: null, subscription: null, dbReady: false, subscriptionLoaded: false })
       }
     })
   },

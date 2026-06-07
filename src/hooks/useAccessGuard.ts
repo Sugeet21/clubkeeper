@@ -1,11 +1,11 @@
 import { useAuthStore } from '../store/authStore'
 
 type GuardResult =
-  | { canAccess: false; reason: 'loading' | 'db_loading' | 'not_authenticated' | 'no_subscription' | 'trial_expired' | 'subscription_ended' }
+  | { canAccess: false; reason: 'loading' | 'db_loading' | 'subscription_loading' | 'not_authenticated' | 'no_subscription' | 'trial_expired' | 'subscription_ended' }
   | { canAccess: true; isTrialing?: boolean; daysLeftInTrial?: number; isPastDue?: boolean }
 
 export function useAccessGuard(): GuardResult {
-  const { session, subscription, loading, dbReady } = useAuthStore()
+  const { session, subscription, loading, dbReady, subscriptionLoaded } = useAuthStore()
 
   if (loading) return { canAccess: false, reason: 'loading' }
   if (!session) return { canAccess: false, reason: 'not_authenticated' }
@@ -15,6 +15,12 @@ export function useAccessGuard(): GuardResult {
   // Show the same spinner — do NOT let pages run Dexie queries against the
   // placeholder DB (Pattern D6).
   if (!dbReady) return { canAccess: false, reason: 'db_loading' }
+
+  // Subscription row not yet loaded from Supabase. Without this guard, the window
+  // between loading=false and refreshProfile() completing causes subscription===null
+  // to be misread as 'no_subscription', triggering a redirect to /subscribe which
+  // then bounces active users to /tables — overwriting the intended route.
+  if (!subscriptionLoaded) return { canAccess: false, reason: 'subscription_loading' }
 
   const sub = subscription
   if (!sub || sub.status === 'none' || sub.status === 'cancelled' || sub.status === 'expired') {
