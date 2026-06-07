@@ -10,8 +10,11 @@ import {
   editSessionStart,
   updateSession,
   updateSessionNotify,
+  moveSessionToTable,
+  IncompatibleTableError,
+  TableOccupiedError,
 } from '../db/queries'
-import { useTable, useSessionItems, useSettings } from '../hooks/useLiveData'
+import { useTable, useTables, useSessionItems, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatHMS, formatDuration } from '../lib/time'
 import { calculateAmount, calculateItemsTotal, applyRounding } from '../lib/money'
@@ -19,7 +22,7 @@ import { NOTIFY_PRESETS } from '../lib/notifyPresets'
 import { Modal } from '../components/Modal'
 import { AddItemBottomSheet } from '../components/AddItemBottomSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
-import type { Session } from '../types'
+import type { Session, GameTable } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -56,6 +59,199 @@ function PlusIcon() {
     <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
       <path d="M9 3v12M3 9h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
+  )
+}
+
+function MoveIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12h14M12 5l7 7-7 7" />
+    </svg>
+  )
+}
+
+// ─── Move Table Modal ─────────────────────────────────────────────────────────
+
+type MovePhase = 'list' | 'confirm'
+
+// Sub-component owns the occupancy live query so it can re-subscribe independently.
+function MoveTableList({
+  session,
+  allTables,
+  srcTable,
+  rateLabel,
+  onSelect,
+}: {
+  session: Session
+  allTables: GameTable[]
+  srcTable: GameTable | undefined
+  rateLabel: string
+  onSelect: (t: GameTable) => void
+}) {
+  const activeSessions = useLiveQuery(
+    () => db.sessions.where('status').anyOf(['running', 'paused']).toArray(),
+    [],
+  ) as Session[] | undefined
+
+  const occupiedTableIds = new Set((activeSessions ?? []).map((s) => s.tableId))
+
+  const candidates = allTables.filter((t) => {
+    if (!t.id || t.id === session.tableId) return false
+    if (t.outOfService) return false
+    if (t.gameType !== srcTable?.gameType) return false
+    if (session.billingMode === 'per_hour') {
+      if (t.ratePerHour !== srcTable?.ratePerHour) return false
+    } else {
+      if ((t.ratePerFrame ?? 0) !== (srcTable?.ratePerFrame ?? 0)) return false
+    }
+    if (occupiedTableIds.has(t.id)) return false
+    return true
+  })
+
+  if (candidates.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 gap-2">
+        <p className="text-text-dim text-sm text-center">No compatible tables are free right now.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2 max-h-72 overflow-y-auto">
+      {candidates.map((t) => (
+        <button
+          key={t.id}
+          onClick={() => onSelect(t)}
+          className="w-full min-h-[56px] flex items-center justify-between gap-3 px-4 py-3 bg-bg-card border border-border rounded-2xl active:border-accent transition-colors text-left"
+        >
+          <div className="min-w-0">
+            <p className="text-[15px] font-semibold text-text truncate">{t.name}</p>
+            <p className="text-[12px] text-text-faint mt-0.5">Same rate ({rateLabel})</p>
+          </div>
+          <span className="text-text-faint shrink-0">
+            <MoveIcon />
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function MoveTableModal({
+  open,
+  onClose,
+  session,
+  allTables,
+  onMoved,
+}: {
+  open: boolean
+  onClose: () => void
+  session: Session
+  allTables: GameTable[]
+  onMoved: () => void
+}) {
+  const [phase, setPhase] = useState<MovePhase>('list')
+  const [targetTable, setTargetTable] = useState<GameTable | null>(null)
+  const [moving, setMoving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (open) {
+      setPhase('list')
+      setTargetTable(null)
+      setMoving(false)
+      setError(null)
+    }
+  }, [open])
+
+  // Escape key
+  useEffect(() => {
+    if (!open) return
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  const srcTable = allTables.find((t) => t.id === session.tableId)
+  const rateLabel =
+    session.billingMode === 'per_hour'
+      ? `₹${session.rateSnapshot}/hr`
+      : `₹${session.rateSnapshot}/frame`
+
+  async function handleMove() {
+    if (!targetTable?.id || moving) return
+    setMoving(true)
+    setError(null)
+    try {
+      await moveSessionToTable(session.id!, targetTable.id)
+      onMoved()
+      onClose()
+    } catch (err) {
+      if (err instanceof TableOccupiedError || err instanceof IncompatibleTableError) {
+        setError(err.message)
+        setPhase('list')
+      } else {
+        setError(err instanceof Error ? err.message : 'Move failed. Try again.')
+      }
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  if (!open) return null
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed bottom-0 left-0 right-0 z-50 bg-bg-elevated rounded-t-3xl border-t border-border px-5 pt-5 pb-10">
+        <div className="w-10 h-1 bg-border-bright rounded-full mx-auto mb-5" />
+        <h4 className="text-[18px] font-bold tracking-tight text-text mb-3">Move to another table</h4>
+
+        {error && (
+          <p className="text-busy text-[13px] mb-3">{error}</p>
+        )}
+
+        {phase === 'list' ? (
+          <MoveTableList
+            session={session}
+            allTables={allTables}
+            srcTable={srcTable}
+            rateLabel={rateLabel}
+            onSelect={(t) => { setTargetTable(t); setPhase('confirm') }}
+          />
+        ) : (
+          <div className="space-y-4">
+            <p className="text-text-dim text-sm">
+              Move from{' '}
+              <span className="text-text font-semibold">
+                {srcTable?.name ?? `Table ${session.tableId}`}
+              </span>
+              {' '}to{' '}
+              <span className="text-text font-semibold">{targetTable?.name}</span>?
+            </p>
+            <p className="text-text-faint text-[12px]">
+              Elapsed time and items carry over. Billing continues at the same rate.
+            </p>
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <button
+                onClick={() => { setPhase('list'); setError(null) }}
+                disabled={moving}
+                className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleMove()}
+                disabled={moving}
+                className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold disabled:opacity-50"
+              >
+                {moving ? 'Moving…' : 'Move'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 
@@ -146,6 +342,7 @@ export default function SessionDetail() {
   )
 
   const table = useTable(session != null ? session.tableId : undefined)
+  const allTables = useTables()
   const items = useSessionItems(session != null ? session.id : undefined)
   const settings = useSettings()
 
@@ -153,6 +350,7 @@ export default function SessionDetail() {
   useTick()
 
   const [confirmStop, setConfirmStop] = useState(false)
+  const [moveModalOpen, setMoveModalOpen] = useState(false)
   const [editStartOpen, setEditStartOpen] = useState(false)
   const [editDate, setEditDate] = useState('')
   const [editTime, setEditTime] = useState('')
@@ -563,6 +761,25 @@ export default function SessionDetail() {
         )}
       </div>
 
+      {/* ── Table journey (shown when session has moved tables) ─────────── */}
+      {(session.tableMoves?.length ?? 0) > 0 && (
+        <div className="px-4 mt-4">
+          <p className="text-[11px] uppercase tracking-widest font-mono text-text-faint mb-1.5">
+            Table Journey
+          </p>
+          <p className="text-[13px] text-text-dim truncate">
+            {(() => {
+              const moves = session.tableMoves!
+              const tableIdToName = (id: number) =>
+                allTables.find((t) => t.id === id)?.name ?? `Table ${id}`
+              const first = tableIdToName(moves[0]!.fromTableId)
+              const rest = moves.map((m) => tableIdToName(m.toTableId))
+              return [first, ...rest].join(' → ')
+            })()}
+          </p>
+        </div>
+      )}
+
       {/* ── Bill split ──────────────────────────────────────────────────────── */}
       <div className="px-4 mt-5">
         <div className="bg-bg-card border border-border rounded-2xl p-4 space-y-2.5">
@@ -637,6 +854,17 @@ export default function SessionDetail() {
           >
             <PlusIcon />
             Add Item
+          </button>
+        )}
+
+        {/* Move table button — active sessions only */}
+        {isActive && (
+          <button
+            onClick={() => setMoveModalOpen(true)}
+            className="w-full min-h-[44px] bg-bg-card text-text-dim border border-border rounded-2xl flex items-center justify-center gap-2 font-medium text-[14px] active:scale-[0.99] transition-transform"
+          >
+            <MoveIcon />
+            Move table
           </button>
         )}
 
@@ -869,6 +1097,15 @@ export default function SessionDetail() {
           })()}
         </div>
       </Modal>
+
+      {/* ── Move Table modal ────────────────────────────────────────────── */}
+      <MoveTableModal
+        open={moveModalOpen}
+        onClose={() => setMoveModalOpen(false)}
+        session={session}
+        allTables={allTables}
+        onMoved={() => setMoveModalOpen(false)}
+      />
     </div>
   )
 }

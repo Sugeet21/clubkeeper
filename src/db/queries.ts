@@ -643,3 +643,69 @@ export async function getLowStockThreshold(): Promise<number> {
   const settings = await db.settings.get(1)
   return settings?.lowStockThreshold ?? 5
 }
+
+// ─── Table Move ───────────────────────────────────────────────────────────────
+
+export class IncompatibleTableError extends Error {
+  constructor() {
+    super('This table is no longer compatible. Refreshing list...')
+    this.name = 'IncompatibleTableError'
+  }
+}
+
+export class TableOccupiedError extends Error {
+  constructor() {
+    super('That table just became occupied. Refreshing list...')
+    this.name = 'TableOccupiedError'
+  }
+}
+
+export async function moveSessionToTable(
+  sessionId: number,
+  toTableId: number,
+): Promise<void> {
+  await db.transaction('rw', db.sessions, db.gameTables, async () => {
+    const session = await db.sessions.get(sessionId)
+    if (!session) throw new Error('Session not found')
+    if (session.status !== 'running' && session.status !== 'paused') {
+      throw new Error('Session is not active')
+    }
+
+    const fromTableId = session.tableId
+    const [srcTable, destTable] = await Promise.all([
+      db.gameTables.get(fromTableId),
+      db.gameTables.get(toTableId),
+    ])
+
+    if (!destTable || destTable.outOfService) throw new IncompatibleTableError()
+
+    // Full compatibility: gameType + billingMode + rate
+    const rateMatches =
+      session.billingMode === 'per_hour'
+        ? srcTable?.ratePerHour === destTable.ratePerHour
+        : (srcTable?.ratePerFrame ?? 0) === (destTable.ratePerFrame ?? 0)
+
+    if (
+      srcTable?.gameType !== destTable.gameType ||
+      rateMatches === false
+    ) {
+      throw new IncompatibleTableError()
+    }
+
+    // Verify destination is not currently occupied (race condition guard)
+    const occupying = await db.sessions
+      .where('tableId')
+      .equals(toTableId)
+      .filter((s) => s.status !== 'completed')
+      .first()
+    if (occupying) throw new TableOccupiedError()
+
+    const move = { fromTableId, toTableId, movedAt: Date.now() }
+    const existingMoves = session.tableMoves ?? []
+
+    await db.sessions.update(sessionId, {
+      tableId: toTableId,
+      tableMoves: [...existingMoves, move],
+    })
+  })
+}

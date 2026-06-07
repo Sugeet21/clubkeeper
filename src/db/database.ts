@@ -132,6 +132,19 @@ export class ClubKeeperDB extends Dexie {
       walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
       canteenItems: '++id, name, isActive, sortOrder',
     })
+    // Version 9: adds optional tableMoves field to sessions for table-move feature.
+    // No .upgrade() needed — field is optional; existing rows without it are treated
+    // as zero moves (undefined === no moves made). No new index required — moves are
+    // always accessed via the parent session, never queried independently.
+    this.version(9).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+    })
   }
 }
 

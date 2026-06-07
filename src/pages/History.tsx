@@ -81,7 +81,12 @@ function SessionRow({
         <div className="flex items-center gap-1.5 mt-0.5">
           {session.status === 'running' && <span className="w-1.5 h-1.5 rounded-full bg-busy animate-pulse shrink-0" />}
           {session.status === 'paused' && <span className="w-1.5 h-1.5 rounded-full bg-paused shrink-0" />}
-          <p className="text-[11px] text-text-faint font-mono">{startStr} — {endStr}</p>
+          <p className="text-[11px] text-text-faint font-mono">
+            {startStr} — {endStr}
+            {(session.tableMoves?.length ?? 0) > 0 && (
+              <span className="ml-1.5">· ↻ {session.tableMoves!.length + 1} tables</span>
+            )}
+          </p>
         </div>
       </div>
       <div className="text-right shrink-0">

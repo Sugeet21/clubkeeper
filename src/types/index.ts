@@ -42,6 +42,12 @@ export interface GameTable {
   sortOrder: number
 }
 
+export interface TableMove {
+  fromTableId: number
+  toTableId: number
+  movedAt: number  // Unix ms timestamp
+}
+
 export interface Session {
   id?: number
   tableId: number
@@ -60,6 +66,7 @@ export interface Session {
   roundedDurationMs?: number  // set when rounding applied; undefined = raw elapsed used
   notifyAtMs?: number | null          // absolute Unix ms when alarm should fire; undefined/null = no alarm
   notifyAcknowledgedAt?: number | null // Unix ms when owner tapped Stop or Snooze; null = alarm pending
+  tableMoves?: TableMove[]            // v9: journey of table hops; undefined = no moves (legacy rows)
 }
 
 export interface ClubSettings {
