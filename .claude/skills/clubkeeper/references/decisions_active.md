@@ -52,6 +52,17 @@ For rejected ideas, historical decisions that have been superseded, and full rea
 - **Never query `db` before `dbReady === true`.** The Proxy forwards to a placeholder DB pre-auth; Dexie won't crash but writes go to the wrong store. `useAccessGuard` blocks all private routes with `'db_loading'` until `dbReady` is set (Pattern D6).
 - **Full cloud sync still pending.** Cross-device access requires Supabase sync layer — deferred until 3+ paying customers ask. Per-user IndexedDB is the bridge: it's now safe to add `userId`-keyed sync without a schema redesign.
 
+## Canteen feature (Phase 1, 7 Jun 2026)
+
+- **[2026-06-07] Canteen uses a destination model (/canteen page via TopBar cart icon), not a mode-switch toggle.** Avoids bottom-nav semantics change, smaller blast radius, scales to Phase 2 (stock-in entries, canteen P&L report, category grouping) via internal tabs on `/canteen`. Revisit if bottom-nav canteen tab is requested by customers.
+- **[2026-06-07] Canteen item deletion is soft-delete (`isActive=false`).** Rows persist in IndexedDB — historical session item references remain valid. Filter at query time via `getCanteenItems(includeInactive=false)` default. Never hard-delete.
+- **[2026-06-07] Low-stock threshold is global per club (`ClubSettings.lowStockThreshold`, default 5), not per-item.** Per-item thresholds were considered overkill for v1. Revisit if a customer with varied-volume items requests it.
+- **[2026-06-07] Out-of-stock items in AddItemBottomSheet chip list are disabled (greyed), not hidden.** Staff see what items exist and can recognize when stock needs refilling. Hiding would cause "did this item get deleted?" confusion. Revisit if the disabled chips cause UI clutter feedback.
+- **[2026-06-07] Stock decrement ONLY fires when a canteen master-list chip is tapped.** Free-text item adds (typed name + price, no chip selected) do NOT touch stock. Preserves the "ad-hoc one-off item" use case (e.g. a custom charge, a non-canteen item). This is intentional — never change it without explicit decision.
+- **[2026-06-07] Owner cloud sync (remote view) deferred.** Customer #1 (12-table club) requested ability to see sales remotely. Scoped plan exists (manual sync → JSON blob → Supabase row → read-only parent login) but NOT built. Trigger: build only when 3+ paying customers explicitly ask. Keeps Supabase costs at ₹0. Avoids premature architecture lock-in.
+- **[2026-06-07] Canteen Phase 2 reserved but not scoped.** Reserved for: stock-in entries (purchase cost tracking), canteen-only P&L (sale revenue − purchase cost), category grouping (snacks/cold drinks/cigarettes). Reachable via tabs on `/canteen` when built. Do not scope until shipped to first customer and validated.
+- **[2026-06-07] Local-only testing protocol confirmed as canonical workflow.** Building in 6 small prompts (each verified in browser before next) caught 5 bugs that would have been impossible to isolate in a single mega-prompt. Never attempt feature work via single large prompts on a 50+ file codebase. Small prompt → browser verify → next prompt.
+
 ## Operational patterns
 
 - **`authStore.refreshProfile` has 3000ms dedup window.** `_lastFetchedAt` timestamp prevents the `initialize() + onAuthStateChange(INITIAL_SESSION)` double-fire. `force=true` only after real server mutations (post-payment, post-cancel). **Permanent correctness fix — never revisit.**
@@ -97,3 +108,52 @@ Discuss when polishing the signup → subscribe flow.
 - Multi-staff-on-one-phone scenario blocked until this is done
 
 Deferred. Surface when first customer asks for cloud sync or multi-device.
+
+
+---
+
+### Canteen item matching — strict name+price (8 Jun 2026)
+
+**Decision:** All non-canteen-chip add paths in AddItemBottomSheet match against active canteen items by `(normalizedName, exactPrice)`. Matched → decrement stock via inline atomic tx (`runCanteenAddTransaction`). Unmatched → freeform sessionItem, no stock touch. NO "save to canteen?" prompt for freeform items.
+
+**Why:**
+- Same logical item must behave the same regardless of add path (consistency)
+- Freeform stays available as escape hatch (one-off items, items not yet in master list)
+- No auto-save prevents staff-typo pollution of the canteen master list ("wtr", "cokee", etc.) which would make stock tracking useless
+- Manual form collapsed by tap to encourage canteen chip use as the default path
+
+**Supersedes:** Previous behavior where Quick Add and manual form silently skipped stock decrement.
+
+---
+
+### Session-item merge-on-add (8 Jun 2026)
+
+**Decision:** When a user adds a session item (any path), if a row with the same sessionId + normalizeName(name) + exact price already exists, increment its qty instead of creating a new row. Edits still go through the existing tap-row-to-edit modal.
+
+**Why:**
+- Staff can answer "how many Cokes?" by reading one number, not counting rows
+- Settlement disputes are faster + less error-prone
+- No new UI surface — uses existing edit modal for corrections
+- Consistent with how chip-based POS systems work
+
+**Out of scope:** Stock restore on qty-down edit (separate fix).
+
+**Supersedes:** Previous behavior where every tap created a new sessionItems row.
+
+---
+
+### Canteen stock syncs with sessionItem mutations (8 Jun 2026)
+
+**Decision:** updateSessionItem, deleteSessionItem, and restoreSessionItem all sync canteen stock atomically when the row matches an active canteen item by (normalizeName, exactPrice).
+
+**Stock direction:**
+- updateSessionItem qty-up by N → stock −N (blocked if insufficient; InsufficientStockError)
+- updateSessionItem qty-down by N → stock +N
+- deleteSessionItem → stock +quantity (always succeeds)
+- restoreSessionItem (Undo) → stock −quantity (blocked if insufficient; InsufficientStockError)
+
+**Error surface:** InsufficientStockError thrown from queries layer; caught in AddItemBottomSheet. Edit modal shows inline error via setError (Pattern F7). Undo path surfaces toast (justified exception — no inline surface once toast dismisses).
+
+**Why:** Closes the three-way stock leak — staff can no longer over-edit, delete-without-restore, or undo-without-redecrement items out of the canteen inventory.
+
+**Supersedes:** Previous behavior where these three operations silently bypassed stock.

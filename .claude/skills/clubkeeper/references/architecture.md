@@ -51,6 +51,35 @@ src/
 | `/summary` | Summary | Daily revenue + sessions list |
 | `/history` | History | Multi-day session history with filters |
 | `/settings` | Settings | Club name, rounding, table management |
+| `/canteen` | Canteen | Canteen master-list management (add/edit/delete/stock) |
+| `/wallet` | Wallet | Customer wallet / prepaid credit list |
+| `/wallet/new` | WalletNewCustomer | Add new customer |
+| `/wallet/topup/:customerId` | WalletTopup | Top up customer wallet |
+| `/customer/:customerId` | CustomerProfile | Customer transaction history |
+
+## /canteen Route (Phase 1, 7 Jun 2026)
+
+Private route — lives inside `<RequireAccess>`. Reached via TopBar cart icon on all private screens that render `TopBar`.
+
+**Page structure:**
+- Header: back arrow + "Canteen" title (always renders — never gated on data query)
+- Stats row: "N items · M low stock" (M only shown when > 0; handles `undefined` gracefully)
+- List area: branches on `undefined` (3 skeleton pulse cards) / `[]` (empty state + icon) / `[items]` (item cards)
+- Each item card: name + price, `StockPill` badge, edit pencil (opens `CanteenItemFormModal` in EDIT mode), trash icon (opens `ConfirmModal`)
+- FAB "+" always renders → opens `CanteenItemFormModal` in ADD mode
+
+**Data flow:**
+- `useLiveQuery(() => getCanteenItems(false), [])` — live item list (active only)
+- `useLiveQuery(() => getCanteenItems(true), [])` — all items including inactive (passed to form for duplicate-name checking)
+- `useLiveQuery(() => getLowStockThreshold(), [], 5)` — live threshold with fallback
+
+**Writes via `queries.ts`:** `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`
+
+**`CanteenItemFormModal`:** Shared ADD/EDIT modal. Fields: name (validated), price (1–9999), track stock toggle, current stock (conditional on toggle). EDIT sends only changed fields as a patch. No `<form>` tag — button `onClick` only.
+
+**`StockPill`:** Pure display component. Four states: "No stock tracking" (grey), "Out of stock" (red), "N left ⚠️" (amber, when stock < threshold), "N in stock" (green).
+
+**Direct URL:** Works in production. Localhost dev mode has a known redirect quirk (StrictMode + HMR timing) — `/canteen` URL bar navigation may redirect to `/tables`. In-app navigation (cart icon tap) always works.
 
 ## Critical Patterns
 

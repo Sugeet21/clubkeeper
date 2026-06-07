@@ -4,6 +4,40 @@ Chronological record of what shipped, when, and what manual setup was done. Read
 
 ---
 
+## 7 Jun 2026 — Canteen management (full Phase 1) + auth race fix
+
+**What shipped:**
+- Dexie v8: `canteenItems` table (`++id, name, isActive, sortOrder`). New `CanteenItem` type. `lowStockThreshold: 5` default on `ClubSettings`.
+- 6 query functions in `queries.ts`: `getCanteenItems` (uses `.filter()` not `.where().equals(1)` — boolean index quirk), `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`, `decrementCanteenItemStock`, `getLowStockThreshold`.
+- `src/lib/validation.ts`: `validateCanteenItemName()` (1–50 chars, alphanumeric + common punctuation).
+- Canteen page (`/canteen`): header + stats row + item list with StockPill badges (out of stock / low stock / in stock / no tracking). Add/edit via `CanteenItemFormModal`. Soft-delete with confirm modal. FAB always rendered. All states (loading skeleton / empty / populated) handled without page restructure.
+- `CanteenItemFormModal.tsx`: name, price, track stock toggle, current stock field (conditional). ADD and EDIT modes.
+- `App.tsx`: `/canteen` route inside `<RequireAccess>`.
+- `TopBar.tsx`: cart icon button (w-9 h-9) navigates to `/canteen`. Now has 4 right-side elements (online dot, canteen, wallet, gear).
+- `AddItemBottomSheet.tsx`: canteen master-list chips (horizontally scrollable, out-of-stock chips disabled/greyed); qty stepper (−/N/+) with stock-max clamping; single flat `db.transaction('rw', db.canteenItems, db.sessionItems, ...)` with inlined stock logic for atomic stock decrement + session item add; low-stock / out-of-stock toast after commit.
+
+**Bugs fixed:**
+1. **Dexie boolean index quirk:** `.where('isActive').equals(1)` never matches boolean `true`. Fixed to `.filter(item => item.isActive === true)`. See Pattern D (new: boolean index rule).
+2. **Nested transaction crash (Pattern D7):** Calling `decrementCanteenItemStock` (which has its own `db.transaction()`) from inside an outer transaction caused the inner tx to commit early, leaving the outer broken. Stock decremented but session item was never written. Fixed by inlining the stock logic into the single outer transaction — `decrementCanteenItemStock` kept for standalone use.
+3. **Auth race condition — `/canteen` redirected to `/tables` on hard refresh (Pattern A6):** Between `loading=false` and `refreshProfile()` resolving, `subscription===null` was misread as `no_subscription` → redirect to `/subscribe` → Subscribe.tsx bounced active user to `/tables`. Fixed via `subscriptionLoaded: boolean` flag in authStore + new `'subscription_loading'` reason in `useAccessGuard` + spinner in `RequireAccess`.
+
+**Files touched:**
+- `src/types/index.ts` — `CanteenItem` interface + `lowStockThreshold` on `ClubSettings`
+- `src/db/database.ts` — v8 schema + `canteenItems!: Table<CanteenItem, number>`
+- `src/db/seed.ts` — `lowStockThreshold: 5` in `DEFAULT_SETTINGS`
+- `src/db/queries.ts` — 6 new canteen functions
+- `src/lib/validation.ts` — `validateCanteenItemName()`
+- `src/pages/Canteen.tsx` — new page
+- `src/components/CanteenItemFormModal.tsx` — new component
+- `src/components/AddItemBottomSheet.tsx` — chips + stepper + atomic tx
+- `src/components/TopBar.tsx` — canteen icon
+- `src/components/RequireAccess.tsx` — `subscription_loading` spinner
+- `src/hooks/useAccessGuard.ts` — `subscription_loading` reason + `subscriptionLoaded` gate
+- `src/store/authStore.ts` — `subscriptionLoaded` flag
+- `src/App.tsx` — `/canteen` route
+
+---
+
 ## 5 Jun 2026 — SubscriptionStatusBanner two-state trialing split + ConfirmationScreen date fix
 
 **Problem:** After completing the ₹5 UPI mandate (Razorpay `subscription.authenticated`), the banner on `/tables` still showed "7-day free trial — N days left · Manage →" — identical to before payment. Root cause: `subscription.authenticated` webhook writes `status='trialing'` (unchanged) and never touches `trial_ends_at`. Banner had no way to distinguish "pure trial" from "mandate registered, waiting for first charge."

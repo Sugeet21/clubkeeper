@@ -14,18 +14,20 @@ Database name is `ClubKeeperDB_<userId>` (Supabase UUID) for per-user isolation.
 | v4 | 27 May 2026 | Documents `upiId` field on settings (no index needed) |
 | v5 | 30 May 2026 | Adds `customers` + `walletTransactions` tables |
 | v6 | 30 May 2026 | `.upgrade()` backfill of legacy `type:'adjustment'` wallet tx rows |
-| **v7** | **31 May 2026** | **Adds optional alarm fields on sessions: `notifyAtMs`, `notifyAcknowledgedAt`; adds `alarmSoundEnabled`/`alarmVibrationEnabled` to ClubSettings** |
+| v7 | 31 May 2026 | Adds optional alarm fields on sessions: `notifyAtMs`, `notifyAcknowledgedAt`; adds `alarmSoundEnabled`/`alarmVibrationEnabled` to ClubSettings |
+| **v8** | **7 Jun 2026** | **Adds `canteenItems: '++id, name, isActive, sortOrder'`; adds `lowStockThreshold` to ClubSettings** |
 
-### Schema Version 7 (current)
+### Schema Version 8 (current)
 
 ```ts
-this.version(7).stores({
+this.version(8).stores({
   gameTables: '++id, name, gameType, sortOrder, outOfService',
   sessions: '++id, tableId, status, startedAt, endedAt',
   settings: 'id',
   sessionItems: '++id, sessionId, addedAt',
   customers: 'id, phone, walkInCode, lastVisitAt',
   walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+  canteenItems: '++id, name, isActive, sortOrder',
 })
 ```
 
@@ -109,6 +111,29 @@ interface WalletTransaction {
 
 **Compound index:** `[customerId+createdAt]` enables efficient reverse-chronological history queries per customer: `db.walletTransactions.where('[customerId+createdAt]').between([id, Dexie.minKey], [id, Dexie.maxKey]).reverse()`.
 
+### canteenItems Store (v8+)
+
+Master list of canteen items the club sells. Owner-curated. Used by `AddItemBottomSheet` to show tappable chips.
+
+```ts
+interface CanteenItem {
+  id?: number              // auto-incremented primary key
+  name: string             // 1-50 chars, alphanumeric + spaces + .-_; unique among active rows (case-insensitive enforced at write time)
+  defaultPrice: number     // integer rupees, 1-9999
+  stockEnabled: boolean    // if true, currentStock is tracked and decremented on session add
+  currentStock: number | null  // integer ≥0 when stockEnabled; null when stockEnabled=false
+  isActive: boolean        // soft-delete flag; false = hidden from default queries but row persists
+  createdAt: number        // Date.now() at creation
+  sortOrder: number        // ascending sort order in list display
+}
+```
+
+**Indexes:** `++id, name, isActive, sortOrder`
+
+**Boolean index quirk:** NEVER use `.where('isActive').equals(1)` — IndexedDB stores booleans as booleans, not integers. Always use `.filter(item => item.isActive === true)`. See Pattern D7 and B-canteen-2.
+
+**Stock decrement atomicity:** In `AddItemBottomSheet`, stock decrement + `sessionItems.add()` happen in ONE flat `db.transaction('rw', db.canteenItems, db.sessionItems, ...)`. The logic is inlined — do NOT call `decrementCanteenItemStock()` (which has its own internal transaction) from inside an outer transaction. See Pattern D7.
+
 ### Settings Store (Singleton)
 
 ```ts
@@ -122,6 +147,7 @@ interface ClubSettings {
   legacyAdjustmentsBackfilled?: boolean; // v6 migration audit flag
   alarmSoundEnabled?: boolean;    // v7: default true; stored in Dexie, NOT localStorage
   alarmVibrationEnabled?: boolean; // v7: default true; stored in Dexie, NOT localStorage
+  lowStockThreshold?: number;     // v8: default 5 if missing; triggers low-stock pill/toast
 }
 ```
 

@@ -3,6 +3,7 @@ import { db } from './database'
 import { calculateAmount, applyRounding } from '../lib/money'
 import { validatePlayerName, validateItemName, validateCanteenItemName } from '../lib/validation'
 import { seedIfEmpty } from './seed'
+import { normalizeName } from '../lib/canteenMatch'
 import type { GameTable, Session, ClubSettings, SessionItem, CanteenItem } from '../types'
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
@@ -313,6 +314,32 @@ export async function addSessionItem(
   })
 }
 
+export class InsufficientStockError extends Error {
+  constructor(public available: number, public itemName: string) {
+    super(available > 0 ? `Only ${available} in stock` : 'Out of stock')
+    this.name = 'InsufficientStockError'
+  }
+}
+
+// Finds the active canteen item matching a session item by (normalizedName, exactPrice).
+// Must be called inside a 'rw' transaction that includes db.canteenItems.
+async function findMatchingCanteenItemForRow(
+  name: string,
+  price: number
+): Promise<CanteenItem | null> {
+  const normalized = normalizeName(name)
+  if (!normalized) return null
+  const all = await db.canteenItems.toArray()
+  return (
+    all.find(
+      item =>
+        item.isActive === true &&
+        item.defaultPrice === price &&
+        normalizeName(item.name) === normalized
+    ) ?? null
+  )
+}
+
 export async function updateSessionItem(
   id: number,
   patch: Partial<Pick<SessionItem, 'name' | 'price' | 'quantity'>>
@@ -332,16 +359,108 @@ export async function updateSessionItem(
       throw new Error('Quantity must be 1–99')
     }
   }
-  await db.sessionItems.update(id, patch)
+  await db.transaction('rw', db.sessionItems, db.canteenItems, async () => {
+    const existing = await db.sessionItems.get(id)
+    if (!existing) throw new Error('Session item not found')
+
+    const newQuantity = patch.quantity ?? existing.quantity
+    const qtyDelta = newQuantity - existing.quantity
+
+    if (qtyDelta !== 0) {
+      // Stock match uses the ROW's original name+price (not the patched values)
+      const matched = await findMatchingCanteenItemForRow(existing.name, existing.price)
+      if (matched && matched.stockEnabled === true && matched.id !== undefined) {
+        const currentStock = matched.currentStock ?? 0
+        const newStock = currentStock - qtyDelta // qty-up → stock down; qty-down → stock up
+        if (newStock < 0) {
+          throw new InsufficientStockError(currentStock, matched.name)
+        }
+        await db.canteenItems.update(matched.id, { currentStock: newStock })
+      }
+    }
+
+    await db.sessionItems.update(id, patch)
+  })
 }
 
 export async function deleteSessionItem(id: number): Promise<void> {
-  await db.sessionItems.delete(id)
+  await db.transaction('rw', db.sessionItems, db.canteenItems, async () => {
+    const existing = await db.sessionItems.get(id)
+    if (!existing) return // idempotent — already gone
+
+    const matched = await findMatchingCanteenItemForRow(existing.name, existing.price)
+    if (matched && matched.stockEnabled === true && matched.id !== undefined) {
+      const currentStock = matched.currentStock ?? 0
+      await db.canteenItems.update(matched.id, {
+        currentStock: currentStock + existing.quantity,
+      })
+    }
+
+    await db.sessionItems.delete(id)
+  })
 }
 
-export async function restoreSessionItem(item: SessionItem): Promise<number> {
-  // for Undo after delete — preserves original addedAt
-  return db.sessionItems.add(item)
+export async function restoreSessionItem(item: SessionItem): Promise<void> {
+  await db.transaction('rw', db.sessionItems, db.canteenItems, async () => {
+    const matched = await findMatchingCanteenItemForRow(item.name, item.price)
+    if (matched && matched.stockEnabled === true && matched.id !== undefined) {
+      const currentStock = matched.currentStock ?? 0
+      const newStock = currentStock - item.quantity
+      if (newStock < 0) {
+        throw new InsufficientStockError(currentStock, matched.name)
+      }
+      await db.canteenItems.update(matched.id, { currentStock: newStock })
+    }
+    // Use add() not restore-by-id — Dexie autoincrement doesn't reuse ids
+    await db.sessionItems.add({
+      sessionId: item.sessionId,
+      name: item.name,
+      price: item.price,
+      quantity: item.quantity,
+      addedAt: item.addedAt, // preserve original timestamp for Undo semantics
+    })
+  })
+}
+
+/**
+ * Add a session item OR increment qty on an existing matching row.
+ * Match key: same sessionId + normalizeName(name) + exact price.
+ *
+ * IMPORTANT: Do NOT call this from inside an outer db.transaction() that
+ * includes db.sessionItems — its internal tx would partial-write (Pattern D7).
+ * For canteen-matched adds, INLINE the merge logic inside the outer tx instead.
+ * This helper is for the freeform (sessionItems-only) path.
+ */
+export async function addOrIncrementSessionItem(input: {
+  sessionId: number
+  name: string
+  price: number
+  quantity: number
+}): Promise<number> {
+  const { sessionId, name, price, quantity } = input
+  const normalized = normalizeName(name)
+
+  return db.transaction('rw', db.sessionItems, async () => {
+    const existing = await db.sessionItems
+      .where('sessionId')
+      .equals(sessionId)
+      .filter(item => normalizeName(item.name) === normalized && item.price === price)
+      .first()
+
+    if (existing && existing.id != null) {
+      const newQty = Math.min(99, existing.quantity + quantity)
+      await db.sessionItems.update(existing.id, { quantity: newQty })
+      return existing.id
+    }
+
+    return db.sessionItems.add({
+      sessionId,
+      name: name.trim(),
+      price,
+      quantity,
+      addedAt: Date.now(),
+    })
+  })
 }
 
 export interface RecentItem {

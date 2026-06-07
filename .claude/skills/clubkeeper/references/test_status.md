@@ -195,6 +195,50 @@ Run AFTER Vercel deploy + webhook setup.
 
 ---
 
+## Section O — Canteen Calculations (added 7 Jun 2026)
+
+File: `tests/canteen-calculations.spec.ts` — 26 scenarios × 3 viewports = 78 spec tests.
+
+All tests soft-pass when `.auth/user.json` is expired (matches existing convention).
+Re-run after refreshing auth state via `! npx playwright test --project=setup` (headed, re-login Google).
+
+| ID | Scenario | Status | Notes |
+|---|---|---|---|
+| A1 | ₹100/hr × 60min → ₹100 | ⬜ Pending auth | Pure Dexie — no UI needed |
+| A2 | ₹120/hr × 30min → ₹60 | ⬜ Pending auth | |
+| A3 | ₹100/hr, rounding=15min, 14min → ₹25 | ⬜ Pending auth | roundedDurationMs also asserted |
+| A4 | ₹100/hr, rounding=30min, 16min → ₹50 | ⬜ Pending auth | |
+| A5 | per_frame ₹50 × 3 frames → ₹150, rounding NOT applied | ⬜ Pending auth | roundedDurationMs must be undefined |
+| B1 | 1× ₹20 item → itemsTotal = 20 | ⬜ Pending auth | Dexie + UI check |
+| B2 | 3× ₹20 item → itemsTotal = 60 | ⬜ Pending auth | Dexie only |
+| B3 | 2×₹20 + 1×₹15 → itemsTotal = 55 | ⬜ Pending auth | Dexie only |
+| B4 | Edit item qty 2→5 via UI → itemsTotal recalculates | ⬜ Pending auth | UI interaction in AddItemBottomSheet |
+| B5 | Delete item, Undo dismissed → itemsTotal goes down | ⬜ Pending auth | Waits out 5s undo window |
+| B6 | Delete item, tap Undo → itemsTotal restored | ⬜ Pending auth | |
+| C1 | stock=10, add qty 3 → stock=7 AND sessionItem row exists (D7 check) | ⬜ Pending auth | The critical D7 regression test |
+| C2 | stockEnabled=false → no decrement, sessionItem added | ⬜ Pending auth | |
+| C3 | stock=2, try add qty 5 → clamped/blocked, conservation verified | ⬜ Pending auth | stock+added = 2 always |
+| C4 | stock=3, add qty 3 → stock=0, out-of-stock shown | ⬜ Pending auth | UI badge check |
+| C5 | stock=6, add qty 2 → stock=4, low-stock toast fires after commit | ⬜ Pending auth | Toast check |
+| D1 | ₹100/hr 60min + 2×₹30 → UI ₹160, Dexie ₹100 + ₹60 | ⬜ Pending auth | Both DB and UI asserted |
+| D2 | rounding=15min, 14min→₹25 + ₹15 → ₹40 | ⬜ Pending auth | |
+| D3 | per_frame 4×₹50 + 2×₹25 → ₹250 | ⬜ Pending auth | |
+| D4 | Pause/resume — paused time excluded from billing | ⬜ Pending auth | Dexie seed with pausedTotalMs |
+| D5 | Edit start time back 30min → items unchanged, grand total updates | ⬜ Pending auth | UI edit-start flow |
+| E1 | Pre-stop UI == payment screen == Dexie sum (BUG-022 regression) | ⬜ Pending auth | Three-way match |
+| E2 | Same as E1 with rounding=15min | ⬜ Pending auth | |
+| F1 | 3 sessions + items → /summary Today = correct sum | ⬜ Pending auth | |
+| F2 | /history CSV: Table Amount + Items + Total columns correct | ⬜ Pending auth | File download + parse |
+| G1 | 5 active + 2 inactive → /canteen shows 5; soft-delete → 4 (D9 boolean index) | ⬜ Pending auth | The critical D9 regression test |
+
+**To run with real auth:**
+```
+npx playwright test --project=setup   # headed, re-login if needed
+npx playwright test canteen-calculations.spec.ts --project=mobile-360-auth --project=tablet-768-auth --project=desktop-1280-auth
+```
+
+---
+
 ## Testing Notes
 
 **Sugeet's pattern:** Tests in section order, screenshots on failure, reports multiple bugs in one batch.

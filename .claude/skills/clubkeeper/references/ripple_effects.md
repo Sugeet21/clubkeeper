@@ -636,12 +636,13 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 
 ### If you change `TopBar.tsx`
 
-**Affects (updated 30 May 2026):**
+**Affects (updated 7 Jun 2026):**
 - `src/pages/Home.tsx` — only consumer. Now accepts optional `onWalletPress?: () => void` prop. Home does not pass this prop — TopBar's default handler `() => navigate('/wallet')` fires.
-- Right side now has 3 elements: online dot (6px), wallet button (w-9 h-9), gear button (w-9 h-9). At 360px this is tight — do NOT add a fourth element without removing one or redesigning the row.
+- Right side now has 4 elements: online dot (6px), canteen button (w-9 h-9) → `/canteen`, wallet button (w-9 h-9) → `/wallet`, gear button (w-9 h-9) → `/settings`. At 360px this is full — do NOT add a fifth element without removing one or redesigning the row.
+- The canteen button navigates to `/canteen`. If that route changes, update the `onClick` in `TopBar.tsx`.
 - The wallet button navigates to `/wallet`. If that route changes, update the default handler in `TopBar.tsx`.
 - The gear button navigates to `/settings`. Unchanged.
-- Touch targets: wallet and gear are `w-9 h-9` (36px) — they meet 44px when including the implicit tap zone on mobile. Do not shrink further.
+- Touch targets: all icon buttons are `w-9 h-9` (36px) — they meet 44px when including the implicit tap zone on mobile. Do not shrink further.
 
 ---
 
@@ -709,6 +710,111 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 - The v6 upgrade runs inside Dexie's own managed transaction — do NOT wrap it in an additional `db.transaction()` call.
 
 **Discovered when:** Wallet Phase 1 polish correction, 30 May 2026 — needed to fix existing rows with `type:'adjustment'` that were missing sign/₹ in TransactionRow.
+
+---
+
+## Authentication ripples — subscriptionLoaded flag (7 Jun 2026)
+
+- `authStore.subscriptionLoaded` must be set to `true` AFTER `refreshProfile()` resolves, in BOTH `initialize()` and `onAuthStateChange` handler.
+- On sign-out, `subscriptionLoaded` must be reset to `false` alongside `profile` / `subscription`.
+- `useAccessGuard` has a `'subscription_loading'` reason — `RequireAccess` treats it as a spinner, NOT a redirect. Do not add redirect logic for any transient loading reason.
+- **If you add any new field to `authStore` that `useAccessGuard` reads, add a corresponding `*Loaded: boolean` flag immediately.** Truthiness checks (`if (!subscription)`) are NOT safe for "is this loaded?" — `undefined` (not loaded) and `null` (loaded, empty) look identical.
+
+---
+
+## Canteen — added 7 Jun 2026
+
+### If you change the `CanteenItem` interface
+
+**Affects:**
+- `src/types/index.ts` — interface definition
+- `src/db/database.ts` — bump Dexie version (currently v8) if adding a new INDEX; field-only additions don't need a bump. Keep all prior version blocks.
+- `src/db/queries.ts` — `getCanteenItems`, `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`, `decrementCanteenItemStock`
+- `src/db/seed.ts` — `DEFAULT_SETTINGS.lowStockThreshold` (default 5)
+- `src/pages/Canteen.tsx` — list display + StockPill + CanteenItemFormModal
+- `src/components/CanteenItemFormModal.tsx` — add/edit form (name, price, stockEnabled, currentStock)
+- `src/components/AddItemBottomSheet.tsx` — canteen chips, qty stepper stock-max clamping, inline stock decrement transaction
+
+### If you change `getCanteenItems()` in queries.ts
+
+**CRITICAL:** This function uses `.filter(item => item.isActive === true)` NOT `.where('isActive').equals(1)`. IndexedDB stores JS booleans as booleans — `.equals(1)` will never match `true`. Always use `.filter()` for boolean fields in Dexie, even if the field is in the index schema string.
+
+### If you change the stock decrement logic in AddItemBottomSheet
+
+**CRITICAL — nested transaction rule:**
+`decrementCanteenItemStock` in `queries.ts` has its own internal `db.transaction('rw', db.canteenItems, ...)`. Calling it inside an outer `db.transaction('rw', db.canteenItems, db.sessionItems, ...)` causes the inner transaction to commit immediately before the outer can run `sessionItems.add()`. Result: stock decrements but session item is NOT added (silent partial write). The inner tx closes; the outer tx throws "Transaction has already completed or failed."
+
+**Rule:** In `AddItemBottomSheet.handleSubmit`, the stock logic is INLINED directly inside a single flat outer transaction. Do NOT call `decrementCanteenItemStock` from within any outer transaction. `decrementCanteenItemStock` may still be called standalone (outside any transaction) — it is NOT deprecated.
+
+**Files affected if you change this flow:**
+- `src/components/AddItemBottomSheet.tsx` — the inline tx block
+- `src/db/queries.ts` — `decrementCanteenItemStock` (keep as standalone utility)
+
+**Discovered when:** Canteen Phase 1, 7 Jun 2026 — stock decremented but session item was never written.
+
+### If you change `ClubSettings.lowStockThreshold`
+
+**Affects:**
+- `src/types/index.ts` — optional field on `ClubSettings`
+- `src/db/seed.ts` — default value (5)
+- `src/db/queries.ts` — `getLowStockThreshold()` reads it with `?? 5` fallback
+- `src/pages/Canteen.tsx` — `StockPill` and `StatsRow` use threshold
+- `src/components/AddItemBottomSheet.tsx` — low-stock crossing toast after commit
+
+### If you change item-matching logic in AddItemBottomSheet (8 Jun 2026)
+
+**Affects:**
+- `src/lib/canteenMatch.ts` — `normalizeName`, `findMatchingCanteenItem`, `findCanteenItemByName`
+- `src/components/AddItemBottomSheet.tsx` — Quick Add filter, canteen chip handler, quick-add chip handler, manual submit handler, price-mismatch warning UI, collapsible manual form
+
+**Rule:** ALL three add paths (canteen chip, quick-add chip, manual form) must run through `findMatchingCanteenItem` and use the SAME inline atomic transaction (`runCanteenAddTransaction`) when a canteen match is found. Quick Add chips are filtered to canteen-matched recent items only — non-canteen recent items do NOT appear as chips. Manual form collapses behind "+ Add other item" button. Price mismatch on manual submit shows inline warning (Pattern F7), not toast.
+
+**Why:** Before this change, Quick Add and manual form bypassed canteen stock decrement, causing the same logical item to behave differently depending on add path. Locked decision: no auto-save freeform to canteen (would let staff typos pollute master list).
+
+### If you change session-item add behavior in AddItemBottomSheet (8 Jun 2026)
+
+**Affects:**
+- `src/db/queries.ts` — `addOrIncrementSessionItem` (NEW, sessionItems-only tx — do NOT call from inside an outer tx, Pattern D7)
+- `src/components/AddItemBottomSheet.tsx` — all four add paths (canteen chip, quick-add chip, manual matched, manual freeform) now merge into an existing row when `(sessionId, normalizeName(name), exactPrice)` already exists
+
+**Rule:**
+- The three canteen-matched paths INLINE the merge logic inside their existing `db.transaction('rw', db.canteenItems, db.sessionItems, ...)`. They do NOT call `addOrIncrementSessionItem` (Pattern D7 — nested tx would partial-write).
+- The freeform path calls `addOrIncrementSessionItem` directly (no outer tx, no canteenItems write).
+- Pre-existing distinct rows in the DB are NOT auto-merged. Only NEW adds merge into existing rows.
+- qty is capped at 99 on merge.
+
+**Known limitation:** Editing qty down via the existing edit modal does NOT restore canteen stock. Tracked for a future fix.
+
+**Why:** Multiple identical-tap rows were unreadable during settlement disputes. Merging by (sessionId, name, price) gives staff one row with a quantity count.
+
+### If you change updateSessionItem / deleteSessionItem / restoreSessionItem (8 Jun 2026)
+
+**Affects:**
+- `src/db/queries.ts` — all three functions now open `db.transaction('rw', db.sessionItems, db.canteenItems, ...)` and INLINE canteen stock sync via `findMatchingCanteenItemForRow`. New `InsufficientStockError` class exported from queries.ts.
+- `src/components/AddItemBottomSheet.tsx` — `handleSubmit` edit path catches `InsufficientStockError` and shows inline error (Pattern F7, `setError`). `handleDeleteItem` Undo callback catches it and shows a toast (justified exception — no inline surface after toast dismisses).
+- `src/lib/canteenMatch.ts` — `normalizeName` reused inside `findMatchingCanteenItemForRow`.
+
+**Rule:**
+- All three operations sync canteen stock atomically when the sessionItem matches an active, `stockEnabled` canteen item. Freeform rows (no match) never touch stock.
+- Stock can never go negative. qty-up edit or Undo restore that would do so throws `InsufficientStockError`, rolling back both sessionItem and canteenItem writes in the same tx.
+- Pattern D7: all stock logic INLINED in the outer transaction. No calls to `decrementCanteenItemStock` or `addOrIncrementSessionItem` from inside these functions.
+- `restoreSessionItem` now returns `Promise<void>` (was `Promise<number>`). Return value was unused at the call site.
+
+**Why:** Closes the three-way stock leak — edits, deletes, and undos now keep canteen stock accurate.
+
+### If you add a new route behind RequireAccess that runs Dexie queries on mount
+
+**CRITICAL — subscriptionLoaded gate (7 Jun 2026):**
+There is a race window between `loading=false` (auth resolved) and `refreshProfile()` completing (subscription row fetched). During this window `subscription===null` which `useAccessGuard` previously misread as `no_subscription`, redirecting to `/subscribe`, which bounced active users back to `/tables` — overwriting the intended route.
+
+**Fix:** `authStore` has a `subscriptionLoaded: boolean` flag (false until `refreshProfile()` resolves, false again on sign-out). `useAccessGuard` returns `{ canAccess: false, reason: 'subscription_loading' }` while `!subscriptionLoaded`. `RequireAccess` shows spinner for this reason — no redirect.
+
+**Rule:** Any new `reason` added to `useAccessGuard` must be handled explicitly in `RequireAccess` (spinner or redirect). Default to spinner for transient loading states. Never redirect on a loading reason.
+
+**Files to update when adding a new loading gate:**
+- `src/hooks/useAccessGuard.ts` — add reason to `GuardResult` union + new if-block
+- `src/components/RequireAccess.tsx` — add reason to spinner condition
+- `src/store/authStore.ts` — add flag + set it in `initialize()`, `onAuthStateChange`, and sign-out
 
 ---
 

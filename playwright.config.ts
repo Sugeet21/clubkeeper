@@ -49,30 +49,33 @@ export default defineConfig({
     // ── Protected-route projects (Phase 1b — auth required) ───────────
     {
       name: 'mobile-360-auth',
-      testMatch: ['**/tables.spec.ts', '**/session.spec.ts', '**/history.spec.ts', '**/settings.spec.ts'],
+      testMatch: ['**/tables.spec.ts', '**/session.spec.ts', '**/history.spec.ts', '**/settings.spec.ts', '**/canteen-calculations.spec.ts'],
       dependencies: ['setup'],
       use: {
         viewport: { width: 360, height: 800 },
         deviceScaleFactor: 2,
         storageState: AUTH_FILE,
+        acceptDownloads: true,
       },
     },
     {
       name: 'tablet-768-auth',
-      testMatch: ['**/tables.spec.ts', '**/session.spec.ts', '**/history.spec.ts', '**/settings.spec.ts'],
+      testMatch: ['**/tables.spec.ts', '**/session.spec.ts', '**/history.spec.ts', '**/settings.spec.ts', '**/canteen-calculations.spec.ts'],
       dependencies: ['setup'],
       use: {
         viewport: { width: 768, height: 1024 },
         storageState: AUTH_FILE,
+        acceptDownloads: true,
       },
     },
     {
       name: 'desktop-1280-auth',
-      testMatch: ['**/tables.spec.ts', '**/session.spec.ts', '**/history.spec.ts', '**/settings.spec.ts'],
+      testMatch: ['**/tables.spec.ts', '**/session.spec.ts', '**/history.spec.ts', '**/settings.spec.ts', '**/canteen-calculations.spec.ts'],
       dependencies: ['setup'],
       use: {
         viewport: { width: 1280, height: 800 },
         storageState: AUTH_FILE,
+        acceptDownloads: true,
       },
     },
   ],

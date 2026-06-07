@@ -138,6 +138,94 @@ Files most affected: `src/db/*`, any component that mutates and re-renders.
 **Symptom signature:** Disabled-table edit pencil still clickable but looks ghostly.
 **Rule:** Apply `opacity-50` ONLY to text/info divs, NEVER to action buttons. Either disable an element properly (`pointer-events-none` + `aria-disabled`) or keep it at full opacity.
 
+### Pattern D9 — Dexie boolean index: use `.filter()`, never `.equals(1)` (7 Jun 2026)
+
+**Symptom signature:** `db.table.where('boolField').equals(1)` returns empty even though rows exist with `boolField=true`. Or `.equals(0)` returns empty even though rows exist with `boolField=false`.
+
+**Root cause:** IndexedDB stores JavaScript booleans as actual booleans, not as integers. `.equals(1)` does not match `true`. `.equals(0)` does not match `false`.
+
+**Detection:** Open DevTools → Application → IndexedDB → confirm rows exist with the correct boolean value. Then check the query.
+
+**Fix:** Use `.equals(true)` / `.equals(false)` — OR preferably use `.filter(row => row.boolField === true)` on a non-boolean index:
+```ts
+// WRONG
+db.canteenItems.where('isActive').equals(1).toArray()
+
+// RIGHT — option 1
+db.canteenItems.where('isActive').equals(true).toArray()
+
+// RIGHT — option 2 (preferred for small tables)
+db.canteenItems.orderBy('sortOrder').filter(item => item.isActive === true).toArray()
+```
+
+**Prevention:** When defining Dexie schemas with boolean fields, note "DO NOT use 0/1 in equals()." For small datasets, avoid boolean indexes entirely and use `.filter()` — it's more readable and avoids this footgun.
+
+### Pattern D8 — Page chrome must render from the URL, never from data queries (7 Jun 2026)
+
+**Symptom signature:** Navigating to a page shows only "Loading…" text — no header, no back button, no FAB. The loading state persists even after data loads because the page is stuck in an early return.
+
+**Root cause:** Component returns `<Loading />` (or equivalent) when `useLiveQuery` returns `undefined`, gating the ENTIRE render tree on the data query. `useLiveQuery` always returns `undefined` before the first Dexie result resolves.
+
+**Detection:** Open the route directly. If the header/back-button/FAB are missing from the DOM during loading, chrome is gated on the query.
+
+**Rule:** Always render page chrome unconditionally from the URL. Only the data-dependent section branches on loading/empty/items. Pattern:
+```tsx
+// CORRECT
+export default function MyPage() {
+  const items = useLiveQuery(...)  // undefined = loading; [] = empty; [...] = data
+  return (
+    <div>
+      <Header />                           {/* always renders */}
+      <StatsRow items={items} />           {/* handles undefined internally */}
+      <ListArea items={items} />           {/* skeleton / empty / cards */}
+      <FAB />                              {/* always renders */}
+    </div>
+  )
+}
+
+// WRONG
+export default function MyPage() {
+  const items = useLiveQuery(...)
+  if (!items) return <Loading />           {/* blocks ALL chrome */}
+  return <div>...</div>
+}
+```
+
+**Prevention:** When building a new page with `useLiveQuery`, separate the query consumer (a sub-component or section) from the page wrapper. The wrapper renders unconditionally.
+
+### Pattern D7 — Never call a function with its own internal `db.transaction()` from inside an outer transaction (7 Jun 2026)
+
+**Symptom signature:** Stock decrements correctly but the session item is never written. Console error: "Transaction has already completed or failed." Inner write succeeds, outer write silently fails.
+
+**Root cause:** Dexie does NOT support arbitrary nested transactions. When a function that calls `db.transaction('rw', tableA, ...)` is invoked from inside an outer `db.transaction('rw', tableA, tableB, ...)`, the inner transaction commits and closes before the outer can proceed. Any writes in the outer scope that come after the inner call run against the already-closed transaction and fail. This is a **partial write** — the inner write is durable, the outer write is lost.
+
+**Rule:** Never call a function containing its own `db.transaction()` from inside another `db.transaction()`. Inline the inner logic directly into the outer transaction instead. The standalone function can remain for solo use — it is NOT deprecated; just never nest it.
+
+**Correct pattern (AddItemBottomSheet, canteen stock + session item add):**
+```ts
+// WRONG — decrementCanteenItemStock has its own internal tx
+await db.transaction('rw', db.canteenItems, db.sessionItems, async () => {
+  await decrementCanteenItemStock(id, qty)  // inner tx commits here — outer is now broken
+  await db.sessionItems.add(...)            // fails: "Transaction already completed"
+})
+
+// CORRECT — inline the stock logic
+let crossingInfo: { oldStock: number; newStock: number } | null = null
+await db.transaction('rw', db.canteenItems, db.sessionItems, async () => {
+  const fresh = await db.canteenItems.get(id)
+  if (!fresh) throw new Error('Item not found')
+  const oldStock = fresh.currentStock ?? 0
+  const newStock = oldStock - qty
+  if (newStock < 0) throw new Error('Insufficient stock')
+  await db.canteenItems.update(id, { currentStock: newStock })
+  await db.sessionItems.add({ sessionId, name, price, quantity, addedAt: Date.now() })
+  crossingInfo = { oldStock, newStock }
+})
+// use crossingInfo after tx
+```
+
+**Files affected:** `src/components/AddItemBottomSheet.tsx` (fixed). `src/db/queries.ts` `decrementCanteenItemStock` kept as-is for standalone use.
+
 ### Pattern D6 — Never query `db` before `dbReady === true` (LIMIT-001 fix, 27 May 2026)
 **Symptom signature:** Dexie writes succeed but data appears to be lost; or two accounts see each other's data.
 **Root cause:** The `db` export is a Proxy over a mutable `_db` holder. Before `initDbForUser()` runs, `_db` points to a `ClubKeeperDB__pending` placeholder. Dexie ops against the placeholder are valid IndexedDB ops — they just write to the wrong database.
@@ -167,6 +255,18 @@ Files most affected: `src/store/authStore.ts`, `src/pages/Signup.tsx`, `src/page
 
 ### Pattern A4 — OAuth in-flight double-tap
 **Rule:** Use a `isOAuthInFlight` ref in Signup to prevent double-fires. `handleRetry` uses a 50ms tick to reset state cleanly.
+
+### Pattern A6 — `subscription_loading` gate prevents race between loading=false and refreshProfile() (7 Jun 2026)
+
+**Symptom signature:** Navigating to a new private route (e.g. `/canteen`) immediately redirects to `/tables`. Happens only on fresh page load or hard refresh, not on SPA navigation. No console errors. Active subscriber affected.
+
+**Root cause:** Race window between `loading=false` (Supabase session resolved) and `refreshProfile()` completing (subscription row fetched from Supabase). During this window `subscription===null`. `useAccessGuard` previously treated `null` subscription as `no_subscription` → redirected to `/subscribe` → `Subscribe.tsx` bounced active users back to `/tables` (which was `document.referrer` or a state-based redirect). Net result: intended route silently overwritten with `/tables`.
+
+**Fix:** `authStore.subscriptionLoaded: boolean` flag. Set `false` on init and sign-out. Set `true` after `refreshProfile()` resolves in BOTH `initialize()` and `onAuthStateChange`. `useAccessGuard` returns `{ canAccess: false, reason: 'subscription_loading' }` while `!subscriptionLoaded`. `RequireAccess` shows spinner for this reason — no redirect.
+
+**Rule:** Any time you add a new async loading flag to `useAccessGuard`, ALWAYS map it to a spinner in `RequireAccess`, never to a redirect. Redirects on transient loading states always cause race-condition bugs.
+
+**Files affected:** `src/store/authStore.ts`, `src/hooks/useAccessGuard.ts`, `src/components/RequireAccess.tsx`.
 
 ### Pattern A5 — Auth store initializer must use try/finally on loading flag (BUG-020)
 **Symptom signature:** OAuth succeeds (token visible in URL hash), page stuck forever on "Signing you in…". Refreshing is the only escape.

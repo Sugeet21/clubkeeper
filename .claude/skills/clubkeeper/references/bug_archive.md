@@ -20,6 +20,57 @@ Format for entries:
 
 ---
 
+### 07 Jun 2026 — Canteen page stuck on "Loading…" forever [B-canteen-1]
+
+**Symptom:** `/canteen` route showed only "Loading…" text. No header, no back button, no FAB. Entire page was gated on the `useLiveQuery` undefined initial state.
+**Root cause:** `useLiveQuery` returns `undefined` initially (before Dexie query resolves). `Canteen.tsx` returned `<Loading />` when query returned `undefined`, gating ALL page chrome — header, FAB, stats row — on the data query.
+**Fix:** Refactored page so header + FAB always render. Only the list area branches on `undefined` (skeleton) / `[]` (empty state) / `[items]` (cards). Added 3 skeleton pulse cards when `items === undefined`.
+**Files:** `src/pages/Canteen.tsx`
+**Lesson:** Page chrome must render from the URL, never from data queries. Loading states are local to the data they wait on — never gate the entire page on them.
+
+---
+
+### 07 Jun 2026 — Boolean index queried with integer in Dexie [B-canteen-2]
+
+**Symptom:** `getCanteenItems()` returned `[]` even when `canteenItems` table had rows with `isActive=true`.
+**Root cause:** Query used `.where('isActive').equals(1)`. IndexedDB stores JS booleans as booleans, not integers. `.equals(1)` never matched `true`.
+**Fix:** Changed to `.orderBy('sortOrder').filter(item => item.isActive === true)`.
+**Files:** `src/db/queries.ts`
+**Lesson:** Dexie boolean fields need `.equals(true)` or `.filter()`, never `.equals(1)`. Better to avoid boolean indexes entirely for small datasets and use `.filter()`.
+
+---
+
+### 07 Jun 2026 — /canteen URL navigation silently redirected to /tables [B-canteen-3]
+
+**Symptom:** Typing `localhost:5173/canteen` in the URL bar → URL flipped to `/tables`. Tables page rendered. No console errors. In-app navigation (click cart icon in TopBar) worked fine.
+**Root cause (two layered):** (1) React StrictMode + Vite HMR double-runs `initialize()`. (2) Brief window where `loading=false`, `dbReady=true`, but `subscription=undefined` (still loading). `useAccessGuard` treated `undefined` subscription as `no_subscription` → `RequireAccess` redirected to `/subscribe` → `Subscribe.tsx` saw active subscription on next tick → redirected back to `/tables`. Both used `replace: true`, making the URL flip invisible.
+**Fix:** Added `subscriptionLoaded: boolean` flag to `authStore`. Set `true` only after `refreshProfile()` resolves. Added `'subscription_loading'` reason to `useAccessGuard`. `RequireAccess` treats it as a spinner (no redirect).
+**Files:** `src/store/authStore.ts`, `src/hooks/useAccessGuard.ts`, `src/components/RequireAccess.tsx`
+**Note:** Fix didn't fully resolve localhost StrictMode behavior — a shorter timing window remains. Production is verified working on all routes. Accepting the localhost quirk.
+**Lesson:** Every field in authStore read by the guard MUST have an explicit "loaded" flag. `undefined` (not loaded yet) and `null` (definitely empty) look the same to a truthiness check — they must be disambiguated.
+
+---
+
+### 07 Jun 2026 — Delete UX looked like stock tracking toggle [B-canteen-4]
+
+**Symptom:** Canteen item list showed a green ON/OFF toggle next to each item. Staff would assume it controls stock tracking (because the stock pill was next to it). The toggle actually soft-deleted the item.
+**Root cause:** UI affordance (green toggle next to "50 in stock" pill) implied "enable/disable stock tracking" rather than "remove item permanently."
+**Fix:** Replaced toggle with a red trash icon + `ConfirmModal` ("Delete {item.name}? This item will be removed from the canteen list. Past sales history is preserved.")
+**Files:** `src/pages/Canteen.tsx`
+**Lesson:** Match UI affordance to action consequence. One-tap actions with destructive consequences need confirmation. Toggles should toggle state, not delete records.
+
+---
+
+### 07 Jun 2026 — Nested Dexie transaction caused silent partial write — CRITICAL money bug [B-canteen-5]
+
+**Symptom:** Adding a canteen item to a session showed error "Transaction has already completed or failed". Stock was decremented anyway. Session item was NOT added. Customer was undercharged. Stock count drifted from actual.
+**Root cause:** `AddItemBottomSheet` wrapped `decrementCanteenItemStock` + `addSessionItem` in an outer `db.transaction`. But `decrementCanteenItemStock` (in `queries.ts`) opens its OWN internal `db.transaction('rw', db.canteenItems, ...)`. The inner transaction committed and closed first. The outer transaction's subsequent `sessionItems.add()` ran on a dead transaction and failed. Stock change was already permanent — no rollback.
+**Fix:** Inlined the decrement logic directly inside the outer transaction in `AddItemBottomSheet`. One atomic `db.transaction('rw', db.canteenItems, db.sessionItems, ...)` does both the stock update AND the session item insert. Either both happen or neither. `decrementCanteenItemStock` preserved in `queries.ts` for standalone use but no longer called from `AddItemBottomSheet`.
+**Files:** `src/components/AddItemBottomSheet.tsx`
+**Lesson:** NEVER nest Dexie transactions. If a helper function opens its own `db.transaction()`, do not call it from inside another transaction — inline the logic instead. See Pattern D7.
+
+---
+
 ### 19 May 2026 — Toggle button misaligned
 
 **Symptom:** Out-of-Service toggle in TableFormModal had knob overlapping the track, looked broken.  
@@ -472,3 +523,48 @@ useEffect(() => {
 3. `expired` — existing `trial_ends_at` is ≤60s from now or in the past → `start_at = now+60s`, write `trial_ends_at = now` (mark trial ended)
 **Files changed:** `api/create-subscription.ts` (3-scenario math + conditional `trial_ends_at` write), `api/_shared/plans.ts` (added `'test'` tier, `Partial` map), `src/lib/razorpayPlans.ts` (added `'test'` tier, `Partial` map, exported `isLiveMode`)
 **Lesson:** See Pattern S8. Server must always read Supabase before computing billing dates. Frontend never sends timestamps — it sends only `{ tier, cycle }`. `trial_ends_at` is NEVER overwritten if existing value is in the future and still valid.
+
+---
+
+### B-canteen-3 — Quick Add and manual form bypassed canteen stock decrement (8 Jun 2026)
+
+**Symptom:** Tap canteen "Coke ₹25" chip → stock drops 1 ✓. Tap Quick Add "Coke ₹25" chip (same item) → stock does NOT drop ✗. Manual form add of "Coke ₹25" → same issue.
+
+**Root cause:** Three add paths in AddItemBottomSheet — only the canteen-chip path ran the inline stock-decrement transaction. Quick Add and manual form added sessionItems directly with no stock reconciliation. Quick Add derived chips from recent sessionItems (canteen or freeform indiscriminately).
+
+**Fix:** New `src/lib/canteenMatch.ts` with `normalizeName` + `findMatchingCanteenItem` + `findCanteenItemByName`. All three add paths now run through the matcher. Match → same inline atomic tx (`runCanteenAddTransaction` — Pattern D7). No match → freeform sessionItem, no stock touch. Quick Add chips filtered to canteen-matched recent items only. Manual form collapsed behind "+ Add other item" button. Price mismatch on manual submit → inline warning with one-tap "Use canteen price" button (Pattern F7).
+
+**Files touched:**
+- `src/lib/canteenMatch.ts` (NEW)
+- `src/components/AddItemBottomSheet.tsx`
+- `.claude/skills/clubkeeper/references/ripple_effects.md`, `decisions_active.md`, `bug_archive.md`
+
+---
+
+### B-canteen-4 — Duplicate session-item rows on repeated tap (8 Jun 2026)
+
+**Symptom:** Tapping "Coke ₹25" chip 5 times created 5 separate rows in "Already Added". Settlement disputes required scrolling + counting. Same problem after the canteen-matching fix shipped earlier today.
+
+**Root cause:** Add handlers in AddItemBottomSheet always called `db.sessionItems.add(...)` — never checked for existing matching rows on the same session.
+
+**Fix:** New `addOrIncrementSessionItem` query (sessionItems-only tx). All four add paths in AddItemBottomSheet now check `(sessionId, normalizeName(name), exactPrice)` for an existing row before inserting. Canteen-matched paths INLINE the merge inside their outer canteen+sessionItems tx (Pattern D7). Freeform path calls the new helper directly.
+
+**Files touched:**
+- `src/db/queries.ts` (added `addOrIncrementSessionItem`, imported `normalizeName`)
+- `src/components/AddItemBottomSheet.tsx` (import `normalizeName` + `addOrIncrementSessionItem`, inline merge in `runCanteenAddTransaction`, freeform via helper)
+- `.claude/skills/clubkeeper/references/ripple_effects.md`, `decisions_active.md`, `bug_archive.md`
+
+---
+
+### B-canteen-5 — Edit/Delete/Undo bypassed canteen stock sync (8 Jun 2026)
+
+**Symptom:** Tap canteen "Water Bottel ₹25" chip 8 times → row `8× Water Bottel`, stock −8. Open edit modal, change qty 8 → 12, save → row `12× Water Bottel`, stock STILL at −8 (no −4 applied). Same for delete (no stock restore) and Undo (no re-decrement).
+
+**Root cause:** updateSessionItem, deleteSessionItem, restoreSessionItem only touched db.sessionItems. Stock sync was only implemented in the add path.
+
+**Fix:** All three functions now open db.transaction('rw', db.sessionItems, db.canteenItems, ...) and INLINE stock sync via findMatchingCanteenItemForRow (private helper, not exported). New InsufficientStockError class blocks qty-up and Undo that would push stock negative — tx rolls back atomically. Edit path in handleSubmit catches InsufficientStockError and calls setError (Pattern F7). Undo callback catches it and shows a toast (justified exception — no inline surface available once toast is dismissed).
+
+**Files touched:**
+- src/db/queries.ts (3 functions extended + new findMatchingCanteenItemForRow + new InsufficientStockError; restoreSessionItem return type changed to Promise<void>)
+- src/components/AddItemBottomSheet.tsx (import InsufficientStockError; Undo callback now catches it with toast)
+- references/ripple_effects.md, decisions_active.md, bug_archive.md
