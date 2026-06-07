@@ -121,6 +121,13 @@ export default function Subscribe() {
   const avatarInitial = (firstName[0] ?? 'U').toUpperCase()
 
   function handleBack() {
+    // 'early' = mid-trial user tapped Manage from /tables — let them go back freely.
+    // 'expired' = trial is over, they MUST pick a plan — show the nag warning.
+    // 'welcome' = fresh signup somehow landed here without a trial row — also nag.
+    if (headline.kind === 'early') {
+      navigate('/tables')
+      return
+    }
     setShowBackWarning(true)
     if (warnTimerRef.current) clearTimeout(warnTimerRef.current)
     warnTimerRef.current = setTimeout(() => setShowBackWarning(false), 3500)
