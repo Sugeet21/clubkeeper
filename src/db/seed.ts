@@ -18,6 +18,7 @@ const SAMPLE_TABLES: Omit<GameTable, 'id'>[] = [
       { minutes: 180, price: 300 },
     ],
     toleranceMinutes: 10,
+    rateCardBilling: 'prorated',
   },
   {
     name: 'Pool 2',

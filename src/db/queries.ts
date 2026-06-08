@@ -80,6 +80,7 @@ export async function startSession(
       ? {
           rateCardSnapshot: structuredClone(table.rateCard),
           toleranceMinutesSnapshot: table.toleranceMinutes ?? 10,
+          rateCardBillingSnapshot: table.rateCardBilling ?? 'prorated',
         }
       : {}
 

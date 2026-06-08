@@ -47,6 +47,7 @@ export interface GameTable {
   sortOrder: number
   rateCard?: RateTier[]        // if present + non-empty → tier-based billing
   toleranceMinutes?: number    // default 10 when rateCard exists; ignored when absent
+  rateCardBilling?: 'minimum' | 'prorated'  // v11: default 'prorated' if omitted
 }
 
 export interface TableMove {
@@ -76,6 +77,7 @@ export interface Session {
   tableMoves?: TableMove[]            // v9: journey of table hops; undefined = no moves (legacy rows)
   rateCardSnapshot?: RateTier[]       // v10: captured at startSession; presence → tier billing
   toleranceMinutesSnapshot?: number   // v10: captured at startSession; default 10
+  rateCardBillingSnapshot?: 'minimum' | 'prorated'  // v11: captured at startSession; default 'prorated'
 }
 
 export interface ClubSettings {

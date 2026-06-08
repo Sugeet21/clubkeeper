@@ -67,7 +67,11 @@ export function validateCanteenItemName(name: string): { valid: boolean; error?:
 export function validateRateCard(
   tiers: RateTier[],
   toleranceMinutes: number,
+  billingMode?: string,
 ): { valid: boolean; error?: string; tierErrors?: (string | null)[] } {
+  if (billingMode !== undefined && billingMode !== 'minimum' && billingMode !== 'prorated') {
+    return { valid: false, error: 'Billing mode must be "minimum" or "prorated".' }
+  }
   if (tiers.length > 12) {
     return { valid: false, error: 'Rate card can have at most 12 tiers.' }
   }

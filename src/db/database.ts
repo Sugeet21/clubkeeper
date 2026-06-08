@@ -158,6 +158,18 @@ export class ClubKeeperDB extends Dexie {
       walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
       canteenItems: '++id, name, isActive, sortOrder',
     })
+    // Version 11: adds optional rateCardBilling to gameTables and
+    // rateCardBillingSnapshot to sessions ('minimum' | 'prorated' billing modes).
+    // No .upgrade() needed — undefined falls back to 'prorated' at read time.
+    this.version(11).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+    })
   }
 }
 

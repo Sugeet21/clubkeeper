@@ -56,6 +56,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
   const [rateCardOpen, setRateCardOpen] = useState(false)
   const [tiers, setTiers] = useState<{ minutes: string; price: string }[]>([])
   const [toleranceStr, setToleranceStr] = useState('10')
+  const [rateCardBilling, setRateCardBilling] = useState<'minimum' | 'prorated'>('prorated')
   const [tierErrors, setTierErrors] = useState<(string | null)[]>([])
   const [rateCardError, setRateCardError] = useState<string | null>(null)
 
@@ -77,10 +78,12 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
     if (existingCard && existingCard.length > 0) {
       setTiers(existingCard.map((t) => ({ minutes: String(t.minutes), price: String(t.price) })))
       setToleranceStr(String(table?.toleranceMinutes ?? 10))
+      setRateCardBilling(table?.rateCardBilling ?? 'prorated')
       setRateCardOpen(true)
     } else {
       setTiers([])
       setToleranceStr('10')
+      setRateCardBilling('prorated')
       setRateCardOpen(false)
     }
 
@@ -165,6 +168,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
     // Validate rate card if tiers present
     let finalRateCard: RateTier[] | undefined
     let finalTolerance: number | undefined
+    let finalBilling: 'minimum' | 'prorated' | undefined
 
     if (tiers.length > 0) {
       const parsed = parsedTiers()
@@ -179,7 +183,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
       }
       // Sort tiers ascending by minutes before validating
       const sorted = [...parsed].sort((a, b) => a.minutes - b.minutes)
-      const validation = validateRateCard(sorted, tol)
+      const validation = validateRateCard(sorted, tol, rateCardBilling)
       if (!validation.valid) {
         if (validation.tierErrors) {
           setTierErrors(validation.tierErrors)
@@ -189,6 +193,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
       }
       finalRateCard = sorted
       finalTolerance = tol
+      finalBilling = rateCardBilling
     }
 
     setSaving(true)
@@ -201,6 +206,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
           ratePerFrame: gameType === 'snooker' ? frameRate : undefined,
           rateCard: finalRateCard,
           toleranceMinutes: finalTolerance,
+          rateCardBilling: finalBilling,
         })
       } else {
         const maxOrder = existingTables.reduce((m, t) => Math.max(m, t.sortOrder), 0)
@@ -214,6 +220,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
           sortOrder: maxOrder + 1,
           rateCard: finalRateCard,
           toleranceMinutes: finalTolerance,
+          rateCardBilling: finalBilling,
         })
       }
       onClose()
@@ -496,6 +503,42 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
                     />
                     <p className="text-xs text-text-faint mt-1 leading-relaxed">
                       If a player plays within this many minutes past a tier, they're still charged the lower price.
+                    </p>
+                  </div>
+
+                  {/* Billing behavior toggle */}
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint block">
+                      Billing Behavior
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRateCardBilling('prorated')}
+                        className={`min-h-[44px] rounded-2xl border text-[13px] font-semibold transition-colors ${
+                          rateCardBilling === 'prorated'
+                            ? 'bg-accent text-bg border-accent'
+                            : 'bg-bg-card text-text-dim border-border'
+                        }`}
+                      >
+                        Pro-rated
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRateCardBilling('minimum')}
+                        className={`min-h-[44px] rounded-2xl border text-[13px] font-semibold transition-colors ${
+                          rateCardBilling === 'minimum'
+                            ? 'bg-accent text-bg border-accent'
+                            : 'bg-bg-card text-text-dim border-border'
+                        }`}
+                      >
+                        Minimum charge
+                      </button>
+                    </div>
+                    <p className="text-xs text-text-faint leading-relaxed">
+                      {rateCardBilling === 'prorated'
+                        ? 'Below tier 1, charge proportionally (₹0 at start, full tier price at the tier mark). Plateau at each tier for the tolerance window, then climb smoothly to the next tier. Fair and trust-building.'
+                        : 'Charge the minimum tier price even for short plays. Each tier price holds until the next tier + tolerance is crossed. Traditional Indian club model.'}
                     </p>
                   </div>
 
