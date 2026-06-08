@@ -76,7 +76,7 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 8 Jun 2026 (Table Move feature + Subscribe back-button fix)*
+*Last updated: 8 Jun 2026 (Summary dashboard rebuild + calendar icon date picker fix)*
 
 **Built and live on app.handbookhq.in (primary) / clubkeeper.vercel.app (backup):**
 - 11 screens: Tables (`/tables`), StartSession, SessionDetail, Settings, History, Summary + **Wallet (`/wallet`), WalletNewCustomer (`/wallet/new`), WalletTopup (`/wallet/topup/:id`), CustomerProfile (`/customer/:id`)** + **Canteen (`/canteen`)**
@@ -89,6 +89,7 @@ Read MULTIPLE files when the question spans domains.
 - Stop Session confirm: shows rounded time preview + items + grand total before stopping
 - Recent-items chips: top 8 from last 30 days appear in AddItemBottomSheet
 - Summary + History: all row/day totals include items; CSV has Table Amount / Items / Total columns
+- **Summary dashboard rebuild (8 Jun 2026):** `src/pages/Summary.tsx` rebuilt as end-of-day dashboard. Pure aggregation in `src/lib/summaryMath.ts`. Sub-components in `src/pages/summary/`: `RevenueDeltas.tsx` (yesterday/last week/7d avg delta chips), `RevenueSplitBar.tsx` (tables vs canteen), `HourlyHeatmap.tsx` (collapsible, default collapsed, peak hour labelled), `TopTablesList.tsx` (medal ranked), `LowStockStrip.tsx` (navigates to /canteen), `TopCanteenItems.tsx`. Header has compact 44×44 calendar icon button for date navigation. Pattern T4 compliant — DB-static in `useLiveQuery`, running sessions computed in render body. History.tsx date inputs have `cursor-pointer`. **Date picker pattern: Pattern U9** — opacity-0 full-size input overlaid over a label, NOT clip/sr-only. See bug_patterns.md §Pattern U9.
 - Rounding change: warns when active sessions exist (change only affects future stops)
 - **Wallet / Prepaid Credit (Phase 1 + polish + Phase 1.5):** Customers table (UUID PK, phone, walkInCode, walletBalance), WalletTransactions table (compound index `[customerId+createdAt]`). TopUp with amount/bonus chips + payment mode + UPI QR (`<UpiQrCard>`). Manual adjustment (credit/debit, mandatory notes). Walk-in codes (WALK-001…). WhatsApp receipt link. Duplicate phone blocked (inline error + "View profile →" link, no toast). Transaction history with correct ₹ sign and color for all row types. Dexie v6 backfill migration for legacy `type:'adjustment'` rows. `<UpiQrCard>` shared between WalletTopup and SessionDetail post-stop screen. TopBar has wallet icon (right side, between online dot and gear). **Phase 1.5:** `src/lib/customerDisplay.ts` centralizes display name logic — `customerDisplayName` / `phoneTail` / `customerFullLabel` / `formattedPhone`. "Walk-in" label now only for truly anonymous (no name + no phone). `EditCustomerModal.tsx` (renamed from `EditPhoneModal`) supports editing both name and phone. Entire name+phone block in CustomerProfile header is tappable. `buildWhatsAppReceiptUrl` takes `Customer` directly.
 - **V1-LAUNCH plan filter:** Subscribe page and landing `/pricing` show ONLY Standard Monthly (₹599). Starter and Pro hidden via `VISIBLE_PLAN_IDS` filter in `PlanSelection.tsx` + hidden cards in `PricingSection.tsx`. All 6 Razorpay plan IDs and `PLANS` array untouched. Revert = remove filter + restore cards.

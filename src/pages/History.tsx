@@ -232,7 +232,7 @@ export default function History() {
             value={fromStr}
             max={today}
             onChange={(e) => handleFromChange(e.target.value)}
-            className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text font-mono text-sm focus:border-accent outline-none [color-scheme:dark]"
+            className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text font-mono text-sm focus:border-accent outline-none cursor-pointer [color-scheme:dark]"
           />
         </div>
         <div>
@@ -244,7 +244,7 @@ export default function History() {
             value={toStr}
             max={today}
             onChange={(e) => handleToChange(e.target.value)}
-            className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text font-mono text-sm focus:border-accent outline-none [color-scheme:dark]"
+            className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text font-mono text-sm focus:border-accent outline-none cursor-pointer [color-scheme:dark]"
           />
         </div>
       </div>

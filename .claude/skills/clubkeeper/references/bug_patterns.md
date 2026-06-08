@@ -424,6 +424,34 @@ Files most affected: ALL UI components.
 **Root cause:** `fixed inset-0` positions the overlay full-screen but does not set a stacking context. The bottom nav has its own z-index (or sits later in DOM order) and renders on top of the overlay's footer.
 **Rule:** Any full-screen overlay that must cover the bottom nav uses `z-50` (same tier as Modal Pattern M1's sheet). Also: the footer inside the overlay must use `paddingBottom: 'max(16px, env(safe-area-inset-bottom))'` so the action button clears the iOS/Android home indicator. Do NOT raise above z-50 (conflicts with Modal Pattern M1) and do NOT hide the bottom nav via `display:none` — the overlay covering it is the correct approach.
 
+### Pattern U9 — Native date picker: opacity-0 overlay, NOT clip/sr-only (8 Jun 2026)
+**Symptom signature:** Calendar icon button only opens the date picker when tapped on the right ~40% of the icon. Left half does nothing. OR picker opens once and never again.
+**Root cause:** Chrome's `<input type="date">` renders an internal calendar icon in its right portion. Clicks on the left portion of the input don't trigger the picker. `clip: rect(0,0,0,0)` or `position:absolute; width:1px; height:1px` (sr-only pattern) tricks Chrome into treating the input as "not user-visible", which silently blocks picker activation even via `label htmlFor` forwarding.
+**Rule:** Use an opacity-0 full-size overlay input, NOT a clipped/tiny hidden input:
+```tsx
+<div className="relative w-11 h-11">
+  {/* Label behind — provides the visual icon */}
+  <label
+    htmlFor={inputId}
+    className="absolute inset-0 flex items-center justify-center rounded-2xl bg-bg-card border border-border cursor-pointer ..."
+  >
+    <CalendarSVG />
+  </label>
+  {/* Input in front — opacity-0 but real 44×44 element, Chrome accepts it as visible */}
+  <input
+    id={inputId}
+    type="date"
+    value={isoValue}
+    max={todayISO}
+    onChange={handleChange}
+    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer [color-scheme:dark]"
+  />
+</div>
+```
+**Why it works:** The input is on top in DOM order (later sibling), so direct clicks hit it first and open the picker immediately. The label is a visual fallback. The input has real dimensions (44×44 via `inset-0` inside a sized parent) — Chrome sees it as user-visible.
+**Never use:** `showPicker()` (throws NotAllowedError on opacity-0 inputs in some browsers), `clip: rect(0,0,0,0)`, `sr-only` Tailwind class (purged if unused), `pointer-events-none`, or `width:1px; height:1px` patterns.
+**Files using this pattern:** `src/pages/Summary.tsx` (SummaryHeader). History.tsx uses plain visible inputs (no overlay needed there).
+
 ---
 
 ## Modals & Overlays (z-index, escape paths)

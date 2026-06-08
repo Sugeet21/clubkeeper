@@ -4,6 +4,35 @@ Chronological record of what shipped, when, and what manual setup was done. Read
 
 ---
 
+## 8 Jun 2026 — Summary dashboard rebuild + calendar icon date picker fix
+
+**What shipped:**
+- `src/lib/summaryMath.ts` (NEW): pure aggregation helpers — `computeDelta`, `bucketByHour`, `rankTables`, `topCanteenItems`, `computeTotalRevenue`. No Dexie imports.
+- `src/pages/summary/RevenueDeltas.tsx` (NEW): yesterday / last week / 7d avg delta chips.
+- `src/pages/summary/RevenueSplitBar.tsx` (NEW): tables vs canteen split bar with two tiles.
+- `src/pages/summary/HourlyHeatmap.tsx` (NEW): hourly bar chart, tappable rows, tooltip strip, peak hour labelled.
+- `src/pages/summary/TopTablesList.tsx` (NEW): medal-ranked top tables with revenue + avg duration.
+- `src/pages/summary/LowStockStrip.tsx` (NEW): yellow strip linking to /canteen, only visible when count > 0.
+- `src/pages/summary/TopCanteenItems.tsx` (NEW): dot-separated top canteen items with qty.
+- `src/pages/Summary.tsx` (REBUILT): end-of-day dashboard. Pattern T4 compliant. Date navigation via compact 44×44 calendar icon in header. Heatmap collapsible (default collapsed). Sessions list at bottom.
+- `src/pages/History.tsx` (minor): added `cursor-pointer` to both date inputs.
+
+**Date picker pattern established (Pattern U9):**
+After 5 failed attempts with various approaches (`showPicker()`, clipped/sr-only hidden inputs, label-only forwarding), the correct cross-browser pattern is: a `relative` sized container; `<label>` with `absolute inset-0` as the visual element; `<input type="date">` with `absolute inset-0 w-full h-full opacity-0` on top in DOM order. The input is real-sized so Chrome treats it as user-visible. Direct clicks hit the input (on top); label is accessibility backup. See Pattern U9 in bug_patterns.md.
+
+**Files touched:**
+- `src/lib/summaryMath.ts` — new
+- `src/pages/summary/RevenueDeltas.tsx` — new
+- `src/pages/summary/RevenueSplitBar.tsx` — new
+- `src/pages/summary/HourlyHeatmap.tsx` — new
+- `src/pages/summary/TopTablesList.tsx` — new
+- `src/pages/summary/LowStockStrip.tsx` — new
+- `src/pages/summary/TopCanteenItems.tsx` — new
+- `src/pages/Summary.tsx` — rebuilt
+- `src/pages/History.tsx` — cursor-pointer on date inputs
+
+---
+
 ## 7 Jun 2026 — Canteen management (full Phase 1) + auth race fix
 
 **What shipped:**
