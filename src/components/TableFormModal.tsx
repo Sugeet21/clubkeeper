@@ -13,13 +13,10 @@ const GAME_TYPES: { value: GameType; label: string }[] = [
   { value: 'other', label: 'Other' },
 ]
 
-const STANDARD_TIERS: RateTier[] = [
-  { minutes: 30, price: 70 },
-  { minutes: 60, price: 100 },
-  { minutes: 90, price: 170 },
-  { minutes: 120, price: 200 },
-  { minutes: 150, price: 270 },
-  { minutes: 180, price: 300 },
+const STANDARD_TIERS: { minutes: number }[] = [
+  { minutes: 30 },
+  { minutes: 60 },
+  { minutes: 90 },
 ]
 
 interface Props {
@@ -119,7 +116,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
   }
 
   function handlePresetStandard() {
-    setTiers(STANDARD_TIERS.map((t) => ({ minutes: String(t.minutes), price: String(t.price) })))
+    setTiers(STANDARD_TIERS.map((t) => ({ minutes: String(t.minutes), price: '' })))
     setToleranceStr('10')
     setTierErrors([])
     setRateCardError(null)
@@ -249,31 +246,77 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
     ? `Edit · ${table?.name ?? ''}`
     : 'Add Table'
 
+  const footerContent = confirmDisable ? (
+    <div className="grid grid-cols-2 gap-3">
+      <button
+        onClick={() => setConfirmDisable(false)}
+        className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold min-h-[44px]"
+      >
+        Cancel
+      </button>
+      <button
+        onClick={handleDisable}
+        className="py-3.5 bg-busy text-white rounded-xl text-[14px] font-bold min-h-[44px]"
+      >
+        Yes, Disable
+      </button>
+    </div>
+  ) : (
+    <div>
+      <div className="flex flex-col-reverse sm:grid sm:gap-3 gap-2"
+        style={{ gridTemplateColumns: isEditing ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)' }}
+      >
+        {isEditing && (
+          isDisabled ? (
+            <button
+              onClick={handleEnable}
+              className="py-3.5 bg-free/10 text-free border border-free/30 rounded-xl text-[13px] font-semibold min-h-[44px]"
+            >
+              Enable Table
+            </button>
+          ) : (
+            <button
+              onClick={() => !hasActiveSession && setConfirmDisable(true)}
+              disabled={hasActiveSession}
+              className={`py-3.5 bg-busy/10 text-busy border border-busy/30 rounded-xl text-[13px] font-semibold min-h-[44px] ${
+                hasActiveSession ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+            >
+              Disable Table
+            </button>
+          )
+        )}
+        <button
+          onClick={onClose}
+          className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold min-h-[44px]"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving || Boolean(nameError)}
+          className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold disabled:opacity-60 min-h-[44px]"
+        >
+          {saving ? 'Saving…' : isEditing ? 'Update' : 'Add Table'}
+        </button>
+      </div>
+      {isEditing && !isDisabled && hasActiveSession && (
+        <p className="text-[12px] text-busy mt-2">
+          Cannot disable — this table has a running session. End the session first.
+        </p>
+      )}
+    </div>
+  )
+
   return (
-    <Modal open={open} onClose={onClose} title={modalTitle}>
+    <Modal open={open} onClose={onClose} title={modalTitle} footer={footerContent}>
       {open && isEditing && !table ? null : confirmDisable ? (
-        <div>
-          <p className="text-text-dim text-[14px] mb-5">
-            "{table?.name ?? 'This table'}" will be hidden from the home screen. Past sessions will
-            be preserved. You can re-enable it anytime from Settings.
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => setConfirmDisable(false)}
-              className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold min-h-[44px]"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleDisable}
-              className="py-3.5 bg-busy text-white rounded-xl text-[14px] font-bold min-h-[44px]"
-            >
-              Yes, Disable
-            </button>
-          </div>
-        </div>
+        <p className="text-text-dim text-[14px] pb-2">
+          "{table?.name ?? 'This table'}" will be hidden from the home screen. Past sessions will
+          be preserved. You can re-enable it anytime from Settings.
+        </p>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-4 pb-2">
           {error && (
             <div className="rounded-xl border border-busy/30 bg-busy/10 px-3 py-2.5 text-busy text-[13px]">
               {error}
@@ -461,7 +504,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
                     onClick={handlePresetStandard}
                     className="text-[12px] text-accent font-semibold min-h-[44px] flex items-center"
                   >
-                    Use standard preset (30 / 60 / 90 / 120 / 150 / 180 min) →
+                    Use standard preset (30 / 60 / 90 min) →
                   </button>
 
                   {rateCardError && (
@@ -471,51 +514,6 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
               </div>
             </div>
           </div>
-
-          {/* Action buttons — single column on mobile, side-by-side on sm+ */}
-          <div className="flex flex-col-reverse sm:grid sm:gap-3 sm:pt-1 gap-2 pt-1"
-            style={{ gridTemplateColumns: isEditing ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)' }}
-          >
-            {isEditing && (
-              isDisabled ? (
-                <button
-                  onClick={handleEnable}
-                  className="py-3.5 bg-free/10 text-free border border-free/30 rounded-xl text-[13px] font-semibold min-h-[44px]"
-                >
-                  Enable Table
-                </button>
-              ) : (
-                <button
-                  onClick={() => !hasActiveSession && setConfirmDisable(true)}
-                  disabled={hasActiveSession}
-                  className={`py-3.5 bg-busy/10 text-busy border border-busy/30 rounded-xl text-[13px] font-semibold min-h-[44px] ${
-                    hasActiveSession ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                >
-                  Disable Table
-                </button>
-              )
-            )}
-            <button
-              onClick={onClose}
-              className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold min-h-[44px]"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving || Boolean(nameError)}
-              className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold disabled:opacity-60 min-h-[44px]"
-            >
-              {saving ? 'Saving…' : isEditing ? 'Update' : 'Add Table'}
-            </button>
-          </div>
-
-          {isEditing && !isDisabled && hasActiveSession && (
-            <p className="text-[12px] text-busy mt-2">
-              Cannot disable — this table has a running session. End the session first.
-            </p>
-          )}
         </div>
       )}
     </Modal>
