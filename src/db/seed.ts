@@ -9,6 +9,15 @@ const SAMPLE_TABLES: Omit<GameTable, 'id'>[] = [
     outOfService: false,
     createdAt: Date.now(),
     sortOrder: 1,
+    rateCard: [
+      { minutes: 30, price: 70 },
+      { minutes: 60, price: 100 },
+      { minutes: 90, price: 170 },
+      { minutes: 120, price: 200 },
+      { minutes: 150, price: 270 },
+      { minutes: 180, price: 300 },
+    ],
+    toleranceMinutes: 10,
   },
   {
     name: 'Pool 2',

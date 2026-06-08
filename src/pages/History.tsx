@@ -26,7 +26,7 @@ function gameTypeBadgeClass(type: GameType | undefined): string {
 
 function sessionBaseAmt(s: Session): number {
   if (s.status === 'completed') return s.amount
-  return calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
+  return calculateAmount(s, getElapsedMs(s))
 }
 
 function dayLabel(date: Date): string {

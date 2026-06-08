@@ -66,7 +66,7 @@ export function bucketByHour(
     const sessionRevenue =
       s.status === 'completed'
         ? s.amount
-        : calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
+        : calculateAmount(s, getElapsedMs(s))
     const items = itemsBySessionId.get(s.id!) ?? []
     const itemsRevenue = calculateItemsTotal(items)
     buckets[hour].revenue += sessionRevenue + itemsRevenue
@@ -108,7 +108,7 @@ export function rankTables(
     const sessionRevenue =
       s.status === 'completed'
         ? s.amount
-        : calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
+        : calculateAmount(s, getElapsedMs(s))
     const items = itemsBySessionId.get(s.id!) ?? []
     const itemsRevenue = calculateItemsTotal(items)
     const elapsedMs = getElapsedMs(s)
@@ -178,7 +178,7 @@ export function computeTotalRevenue(
       s.status === 'completed'
         ? s.amount
         : isViewedDateToday
-        ? calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
+        ? calculateAmount(s, getElapsedMs(s))
         : s.amount // past dates shouldn't have running sessions, but safe fallback
 
     tablesRevenue += sessionAmt

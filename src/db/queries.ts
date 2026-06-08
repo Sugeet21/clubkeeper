@@ -72,6 +72,17 @@ export async function startSession(
     typeof notifyAfterMs === 'number' && notifyAfterMs > 0
       ? { notifyAtMs: startedAt + notifyAfterMs, notifyAcknowledgedAt: null }
       : {}
+
+  // Snapshot rate card at session start (Pattern T3)
+  const table = await db.gameTables.get(data.tableId)
+  const rateCardFields =
+    table?.rateCard && table.rateCard.length > 0
+      ? {
+          rateCardSnapshot: structuredClone(table.rateCard),
+          toleranceMinutesSnapshot: table.toleranceMinutes ?? 10,
+        }
+      : {}
+
   return db.sessions.add({
     ...data,
     startedAt,
@@ -81,6 +92,7 @@ export async function startSession(
     status: 'running',
     amount: 0,
     ...alarmFields,
+    ...rateCardFields,
   })
 }
 
@@ -163,22 +175,18 @@ export async function stopSession(sessionId: number): Promise<Session> {
 
   const rawElapsedMs = now - session.startedAt - pausedTotalMs
 
-  // Apply time rounding (per-hour sessions only)
+  // Apply time rounding (linear per-hour sessions only; rate card sessions ignore rounding)
   const settings = await db.settings.get(1)
   let billableMs = rawElapsedMs
   let roundedDurationMs: number | undefined
 
-  if (session.billingMode === 'per_hour' && settings && settings.rounding !== 'none') {
+  const isRateCard = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
+  if (!isRateCard && session.billingMode === 'per_hour' && settings && settings.rounding !== 'none') {
     roundedDurationMs = applyRounding(rawElapsedMs, settings.rounding)
     billableMs = roundedDurationMs
   }
 
-  const amount = calculateAmount(
-    session.billingMode,
-    billableMs,
-    session.rateSnapshot,
-    session.framesPlayed,
-  )
+  const amount = calculateAmount(session, billableMs, settings?.rounding ?? 'none')
 
   await db.sessions.update(sessionId, {
     endedAt: now,

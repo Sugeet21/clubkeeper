@@ -145,6 +145,19 @@ export class ClubKeeperDB extends Dexie {
       walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
       canteenItems: '++id, name, isActive, sortOrder',
     })
+    // Version 10: adds optional rateCard + toleranceMinutes to gameTables, and
+    // rateCardSnapshot + toleranceMinutesSnapshot to sessions (rate card billing).
+    // No .upgrade() needed — all fields are optional; existing rows with undefined
+    // fall back to linear ₹/hr billing (Pattern T3 invariant preserved).
+    this.version(10).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+    })
   }
 }
 

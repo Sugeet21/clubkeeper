@@ -1,5 +1,10 @@
 export type GameType = 'pool' | 'snooker' | 'carrom' | 'playstation' | 'other'
 
+export interface RateTier {
+  minutes: number   // 1-720; must be unique and sorted ascending within a card
+  price: number     // integer rupees, 1-99999
+}
+
 // ─── Razorpay ────────────────────────────────────────────────────────────────
 
 export interface RazorpayCheckoutOptions {
@@ -40,6 +45,8 @@ export interface GameTable {
   outOfService: boolean
   createdAt: number
   sortOrder: number
+  rateCard?: RateTier[]        // if present + non-empty → tier-based billing
+  toleranceMinutes?: number    // default 10 when rateCard exists; ignored when absent
 }
 
 export interface TableMove {
@@ -67,6 +74,8 @@ export interface Session {
   notifyAtMs?: number | null          // absolute Unix ms when alarm should fire; undefined/null = no alarm
   notifyAcknowledgedAt?: number | null // Unix ms when owner tapped Stop or Snooze; null = alarm pending
   tableMoves?: TableMove[]            // v9: journey of table hops; undefined = no moves (legacy rows)
+  rateCardSnapshot?: RateTier[]       // v10: captured at startSession; presence → tier billing
+  toleranceMinutesSnapshot?: number   // v10: captured at startSession; default 10
 }
 
 export interface ClubSettings {

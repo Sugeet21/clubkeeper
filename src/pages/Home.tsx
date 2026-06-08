@@ -98,7 +98,7 @@ export default function Home() {
 
   // Running/paused sessions recalculate on every useTick() re-render
   const runningAmount = activeSessions.reduce(
-    (sum, s) => sum + calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed),
+    (sum, s) => sum + calculateAmount(s, getElapsedMs(s)),
     0,
   )
 

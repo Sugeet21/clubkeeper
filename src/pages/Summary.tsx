@@ -354,7 +354,7 @@ export default function Summary() {
       .filter((s) => s.startedAt >= todayStart)
       .reduce(
         (sum, s) =>
-          sum + calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed),
+          sum + calculateAmount(s, getElapsedMs(s)),
         0,
       )
   }, [activeSessions, isViewedToday, viewedDateMs]) // useTick re-renders drive this
@@ -374,7 +374,7 @@ export default function Summary() {
       s.status === 'completed'
         ? s.amount
         : isViewedToday
-        ? calculateAmount(s.billingMode, getElapsedMs(s), s.rateSnapshot, s.framesPlayed)
+        ? calculateAmount(s, getElapsedMs(s))
         : s.amount
     tablesRevenue += sessionAmt
     const items = detailItemsMap.get(s.id!) ?? []
@@ -470,7 +470,7 @@ export default function Summary() {
       .map((s) => {
         const t = tableMap.get(s.tableId)
         const elapsed = getElapsedMs(s)
-        const tableAmt = s.status === 'completed' ? s.amount : calculateAmount(s.billingMode, elapsed, s.rateSnapshot, s.framesPlayed)
+        const tableAmt = s.status === 'completed' ? s.amount : calculateAmount(s, elapsed)
         const items = detailItemsMap.get(s.id!) ?? []
         const itemsAmt = calculateItemsTotal(items)
         return [
@@ -639,12 +639,7 @@ export default function Summary() {
                 const base =
                   session.status === 'completed'
                     ? session.amount
-                    : calculateAmount(
-                        session.billingMode,
-                        getElapsedMs(session),
-                        session.rateSnapshot,
-                        session.framesPlayed,
-                      )
+                    : calculateAmount(session, getElapsedMs(session))
                 const itemsAmt = calculateItemsTotal(items)
                 return (
                   <SessionRow

@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { useTables, useSettings } from '../hooks/useLiveData'
 import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport } from '../db/queries'
 import { TableFormModal } from '../components/TableFormModal'
@@ -178,6 +179,12 @@ export default function Settings() {
   const tables = useTables()
   const settings = useSettings()
   const { subscription, user } = useAuthStore()
+
+  // Count tables with active rate cards (for rounding hint)
+  const rateCardTableCount = useLiveQuery(
+    () => db.gameTables.filter((t) => Array.isArray(t.rateCard) && (t.rateCard?.length ?? 0) > 0).count(),
+    [],
+  ) ?? 0
 
   // Single open section — only one open at a time
   const [openSection, setOpenSection] = useState<string>('club-info')
@@ -510,6 +517,11 @@ export default function Settings() {
                 </button>
               ))}
             </div>
+            {rateCardTableCount > 0 && (
+              <p className="text-[11px] text-text-faint mt-2 opacity-70">
+                Rounding is ignored on tables with a rate card.
+              </p>
+            )}
           </div>
         </SettingsSection>
 

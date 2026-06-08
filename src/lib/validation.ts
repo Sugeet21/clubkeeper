@@ -1,3 +1,5 @@
+import type { RateTier } from '../types'
+
 export const PLAYER_NAME_MAX = 50
 export const PLAYER_NAME_REGEX = /^[a-zA-Z0-9\s.,'+\-_&()]+$/
 
@@ -60,6 +62,48 @@ export function validateCanteenItemName(name: string): { valid: boolean; error?:
     return { valid: false, error: 'Name can only contain letters, numbers, spaces, dots, dashes, underscores' }
   }
   return { valid: true }
+}
+
+export function validateRateCard(
+  tiers: RateTier[],
+  toleranceMinutes: number,
+): { valid: boolean; error?: string; tierErrors?: (string | null)[] } {
+  if (tiers.length > 12) {
+    return { valid: false, error: 'Rate card can have at most 12 tiers.' }
+  }
+  if (!Number.isInteger(toleranceMinutes) || toleranceMinutes < 0 || toleranceMinutes > 60) {
+    return { valid: false, error: 'Tolerance must be 0–60 minutes.' }
+  }
+  const tierErrors: (string | null)[] = tiers.map(() => null)
+  let hasError = false
+  const seenMinutes = new Set<number>()
+  for (let i = 0; i < tiers.length; i++) {
+    const t = tiers[i]
+    if (!Number.isInteger(t.minutes) || t.minutes < 1 || t.minutes > 720) {
+      tierErrors[i] = 'Minutes must be 1–720.'
+      hasError = true
+      continue
+    }
+    if (!Number.isInteger(t.price) || t.price < 1 || t.price > 99999) {
+      tierErrors[i] = 'Price must be 1–99,999.'
+      hasError = true
+      continue
+    }
+    if (seenMinutes.has(t.minutes)) {
+      tierErrors[i] = 'Duplicate minutes value.'
+      hasError = true
+      continue
+    }
+    seenMinutes.add(t.minutes)
+  }
+  if (hasError) return { valid: false, tierErrors }
+  // Check ascending order
+  for (let i = 1; i < tiers.length; i++) {
+    if (tiers[i].minutes <= tiers[i - 1].minutes) {
+      return { valid: false, error: 'Tiers must be in ascending order of minutes. Save to sort them.' }
+    }
+  }
+  return { valid: true, tierErrors }
 }
 
 export function validateItemName(name: string): string | null {

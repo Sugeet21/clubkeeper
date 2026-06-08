@@ -409,14 +409,11 @@ export default function SessionDetail() {
 
   // For the confirm preview: compute what WOULD be billed on stop
   const rawElapsedMs = elapsedMs
+  const isRateCard = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
+  // Rate card sessions ignore rounding — pass raw elapsed; linear sessions round up
   const roundedElapsedMs =
-    session.billingMode === 'per_hour' ? applyRounding(rawElapsedMs, rounding) : rawElapsedMs
-  const previewTableAmount = calculateAmount(
-    session.billingMode,
-    roundedElapsedMs,
-    session.rateSnapshot,
-    session.framesPlayed,
-  )
+    !isRateCard && session.billingMode === 'per_hour' ? applyRounding(rawElapsedMs, rounding) : rawElapsedMs
+  const previewTableAmount = calculateAmount(session, roundedElapsedMs)
   const previewItemsTotal = calculateItemsTotal(items)
   const previewGrandTotal = previewTableAmount + previewItemsTotal
 
@@ -424,7 +421,7 @@ export default function SessionDetail() {
   const currentSessionAmount =
     session.status === 'completed'
       ? session.amount
-      : calculateAmount(session.billingMode, elapsedMs, session.rateSnapshot, session.framesPlayed)
+      : calculateAmount(session, elapsedMs)
   const itemsTotal = calculateItemsTotal(items)
   const grandTotal = currentSessionAmount + itemsTotal
   const totalItemQty = items.reduce((s, i) => s + i.quantity, 0)
@@ -471,11 +468,10 @@ export default function SessionDetail() {
       // Capture billable values BEFORE stopping so the payment screen shows
       // exactly what was stored — stopSession() uses the same math
       const nowElapsed = getElapsedMs(session)
+      const isRateCardSession = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
       const billableMs =
-        session.billingMode === 'per_hour' ? applyRounding(nowElapsed, rounding) : nowElapsed
-      const tableAmt = calculateAmount(
-        session.billingMode, billableMs, session.rateSnapshot, session.framesPlayed,
-      )
+        !isRateCardSession && session.billingMode === 'per_hour' ? applyRounding(nowElapsed, rounding) : nowElapsed
+      const tableAmt = calculateAmount(session, billableMs)
       const itemsNow = calculateItemsTotal(items)
       setFinalRoundedMs(billableMs)
       setFinalGrandTotal(tableAmt + itemsNow)

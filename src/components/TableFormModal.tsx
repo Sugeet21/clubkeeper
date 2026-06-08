@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { Modal } from './Modal'
 import { addTable, updateTable, getActiveSessionForTable } from '../db/queries'
-import { validateTableName, TABLE_NAME_MAX } from '../lib/validation'
+import { validateTableName, validateRateCard, TABLE_NAME_MAX } from '../lib/validation'
 import { useToastStore } from '../store/toastStore'
-import type { GameTable, GameType } from '../types'
+import type { GameTable, GameType, RateTier } from '../types'
 
 const GAME_TYPES: { value: GameType; label: string }[] = [
   { value: 'pool', label: 'Pool' },
@@ -11,6 +11,15 @@ const GAME_TYPES: { value: GameType; label: string }[] = [
   { value: 'carrom', label: 'Carrom' },
   { value: 'playstation', label: 'PlayStation' },
   { value: 'other', label: 'Other' },
+]
+
+const STANDARD_TIERS: RateTier[] = [
+  { minutes: 30, price: 70 },
+  { minutes: 60, price: 100 },
+  { minutes: 90, price: 170 },
+  { minutes: 120, price: 200 },
+  { minutes: 150, price: 270 },
+  { minutes: 180, price: 300 },
 ]
 
 interface Props {
@@ -46,6 +55,13 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
   const [saving, setSaving] = useState(false)
   const [hasActiveSession, setHasActiveSession] = useState(false)
 
+  // Rate card state
+  const [rateCardOpen, setRateCardOpen] = useState(false)
+  const [tiers, setTiers] = useState<{ minutes: string; price: string }[]>([])
+  const [toleranceStr, setToleranceStr] = useState('10')
+  const [tierErrors, setTierErrors] = useState<(string | null)[]>([])
+  const [rateCardError, setRateCardError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!open) return
     setName(table?.name ?? '')
@@ -57,6 +73,19 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
     setConfirmDisable(false)
     setSaving(false)
     setHasActiveSession(false)
+    setRateCardError(null)
+    setTierErrors([])
+
+    const existingCard = table?.rateCard
+    if (existingCard && existingCard.length > 0) {
+      setTiers(existingCard.map((t) => ({ minutes: String(t.minutes), price: String(t.price) })))
+      setToleranceStr(String(table?.toleranceMinutes ?? 10))
+      setRateCardOpen(true)
+    } else {
+      setTiers([])
+      setToleranceStr('10')
+      setRateCardOpen(false)
+    }
 
     if (table?.id !== undefined) {
       getActiveSessionForTable(table.id).then((s) => setHasActiveSession(s !== undefined))
@@ -70,8 +99,46 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
     setError(null)
   }
 
+  function handleAddTier() {
+    setTiers((prev) => [...prev, { minutes: '', price: '' }])
+    setTierErrors((prev) => [...prev, null])
+    setRateCardError(null)
+  }
+
+  function handleRemoveTier(i: number) {
+    setTiers((prev) => prev.filter((_, idx) => idx !== i))
+    setTierErrors((prev) => prev.filter((_, idx) => idx !== i))
+    setRateCardError(null)
+  }
+
+  function handleTierChange(i: number, field: 'minutes' | 'price', val: string) {
+    const digits = val.replace(/\D/g, '').slice(0, 5)
+    setTiers((prev) => prev.map((t, idx) => (idx === i ? { ...t, [field]: digits } : t)))
+    setTierErrors((prev) => prev.map((e, idx) => (idx === i ? null : e)))
+    setRateCardError(null)
+  }
+
+  function handlePresetStandard() {
+    setTiers(STANDARD_TIERS.map((t) => ({ minutes: String(t.minutes), price: String(t.price) })))
+    setToleranceStr('10')
+    setTierErrors([])
+    setRateCardError(null)
+  }
+
+  function parsedTiers(): RateTier[] | null {
+    const result: RateTier[] = []
+    for (const t of tiers) {
+      const m = parseInt(t.minutes, 10)
+      const p = parseInt(t.price, 10)
+      if (isNaN(m) || isNaN(p)) return null
+      result.push({ minutes: m, price: p })
+    }
+    return result
+  }
+
   async function handleSave() {
     setError(null)
+    setRateCardError(null)
     const trimmedName = name.trim()
 
     const nameValidation = validateTableName(trimmedName)
@@ -98,6 +165,35 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
       }
     }
 
+    // Validate rate card if tiers present
+    let finalRateCard: RateTier[] | undefined
+    let finalTolerance: number | undefined
+
+    if (tiers.length > 0) {
+      const parsed = parsedTiers()
+      if (!parsed) {
+        setRateCardError('Fill in all tier values.')
+        return
+      }
+      const tol = parseInt(toleranceStr, 10)
+      if (isNaN(tol)) {
+        setRateCardError('Tolerance must be a number.')
+        return
+      }
+      // Sort tiers ascending by minutes before validating
+      const sorted = [...parsed].sort((a, b) => a.minutes - b.minutes)
+      const validation = validateRateCard(sorted, tol)
+      if (!validation.valid) {
+        if (validation.tierErrors) {
+          setTierErrors(validation.tierErrors)
+        }
+        setRateCardError(validation.error ?? 'Fix the errors in the rate card.')
+        return
+      }
+      finalRateCard = sorted
+      finalTolerance = tol
+    }
+
     setSaving(true)
     try {
       if (isEditing && table?.id !== undefined) {
@@ -106,7 +202,8 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
           gameType,
           ratePerHour: hourRate,
           ratePerFrame: gameType === 'snooker' ? frameRate : undefined,
-          // outOfService is intentionally NOT updated here — use Disable/Enable button
+          rateCard: finalRateCard,
+          toleranceMinutes: finalTolerance,
         })
       } else {
         const maxOrder = existingTables.reduce((m, t) => Math.max(m, t.sortOrder), 0)
@@ -118,6 +215,8 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
           outOfService: false,
           createdAt: Date.now(),
           sortOrder: maxOrder + 1,
+          rateCard: finalRateCard,
+          toleranceMinutes: finalTolerance,
         })
       }
       onClose()
@@ -130,7 +229,6 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
 
   async function handleDisable() {
     if (!table?.id) return
-    // Race condition guard: re-check for active session before disabling
     const active = await getActiveSessionForTable(table.id)
     if (active) {
       useToastStore.getState().show('Cannot disable — active session detected.', 'error')
@@ -153,9 +251,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
 
   return (
     <Modal open={open} onClose={onClose} title={modalTitle}>
-      {/* Guard: if the table was just soft-deleted while modal was open, show nothing */}
       {open && isEditing && !table ? null : confirmDisable ? (
-        // ── Disable confirmation ──────────────────────────────────────────────
         <div>
           <p className="text-text-dim text-[14px] mb-5">
             "{table?.name ?? 'This table'}" will be hidden from the home screen. Past sessions will
@@ -164,20 +260,19 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
           <div className="grid grid-cols-2 gap-3">
             <button
               onClick={() => setConfirmDisable(false)}
-              className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold"
+              className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold min-h-[44px]"
             >
               Cancel
             </button>
             <button
               onClick={handleDisable}
-              className="py-3.5 bg-busy text-white rounded-xl text-[14px] font-bold"
+              className="py-3.5 bg-busy text-white rounded-xl text-[14px] font-bold min-h-[44px]"
             >
               Yes, Disable
             </button>
           </div>
         </div>
       ) : (
-        // ── Main form ─────────────────────────────────────────────────────────
         <div className="space-y-4">
           {error && (
             <div className="rounded-xl border border-busy/30 bg-busy/10 px-3 py-2.5 text-busy text-[13px]">
@@ -215,7 +310,7 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
             </div>
           </Field>
 
-          <Field label="Rate per Hour" hint="₹">
+          <Field label="Rate per Hour" hint="₹ — fallback if no rate card">
             <input
               type="text"
               inputMode="numeric"
@@ -245,23 +340,155 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
             </Field>
           )}
 
-          {/* Context-aware destructive button + Cancel + Update/Add */}
-          <div className={`grid gap-3 pt-1 ${isEditing ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          {/* ── Rate Card (collapsible) ────────────────────────────────────── */}
+          <div className="border border-border rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setRateCardOpen((v) => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 min-h-[44px] text-left"
+            >
+              <div>
+                <span className="text-[13px] font-semibold text-text">Tiered Pricing</span>
+                {tiers.length > 0 && (
+                  <span className="ml-2 text-[11px] text-accent font-mono">{tiers.length} tiers</span>
+                )}
+                {tiers.length === 0 && (
+                  <span className="ml-2 text-[11px] text-text-faint">optional</span>
+                )}
+              </div>
+              <svg
+                width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2"
+                className={`text-text-faint shrink-0 transition-transform duration-200 ${rateCardOpen ? 'rotate-90' : ''}`}
+              >
+                <path d="M9 6l6 6-6 6" />
+              </svg>
+            </button>
+
+            <div
+              className={`grid transition-all duration-200 ease-out ${
+                rateCardOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+              }`}
+            >
+              <div className="overflow-hidden">
+                <div className="px-4 pb-4 pt-1 border-t border-border space-y-3">
+                  <p className="text-xs text-text-faint leading-relaxed">
+                    If set, replaces the per-hour rate above. Save to auto-sort tiers ascending.
+                  </p>
+
+                  {/* Column labels — aligned to the two inputs */}
+                  {tiers.length > 0 && (
+                    <div className="grid grid-cols-2 gap-3 pr-11 px-1">
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint">Minutes</span>
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint">Price (₹)</span>
+                    </div>
+                  )}
+
+                  {/* Tier rows */}
+                  {tiers.map((tier, i) => (
+                    <div key={i}>
+                      <div className="relative">
+                        <div className="grid grid-cols-2 gap-3 pr-11">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={tier.minutes}
+                            onChange={(e) => handleTierChange(i, 'minutes', e.target.value)}
+                            placeholder="e.g. 30"
+                            className={`w-full bg-bg border rounded-xl px-3 py-2.5 text-text text-[14px] placeholder-text-faint focus:outline-none transition-colors min-h-[44px] ${
+                              tierErrors[i] ? 'border-busy' : 'border-border focus:border-accent'
+                            }`}
+                          />
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={tier.price}
+                            onChange={(e) => handleTierChange(i, 'price', e.target.value)}
+                            placeholder="e.g. 70"
+                            className={`w-full bg-bg border rounded-xl px-3 py-2.5 text-text text-[14px] placeholder-text-faint focus:outline-none transition-colors min-h-[44px] ${
+                              tierErrors[i] ? 'border-busy' : 'border-border focus:border-accent'
+                            }`}
+                          />
+                        </div>
+                        <button
+                          onClick={() => handleRemoveTier(i)}
+                          className="absolute right-0 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center text-text-faint hover:text-busy transition-colors"
+                          aria-label="Remove tier"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 6L6 18M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      {tierErrors[i] && (
+                        <p className="text-[11px] text-busy mt-1">{tierErrors[i]}</p>
+                      )}
+                    </div>
+                  ))}
+
+                  {tiers.length < 12 && (
+                    <button
+                      onClick={handleAddTier}
+                      className="w-full min-h-[44px] py-2 bg-bg border border-border rounded-xl text-[13px] font-semibold text-text-dim"
+                    >
+                      + Add Tier
+                    </button>
+                  )}
+
+                  {/* Tolerance */}
+                  <div>
+                    <label className="text-[11px] uppercase tracking-widest text-text-faint font-mono block mb-1.5">
+                      Tolerance (minutes)
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={toleranceStr}
+                      onChange={(e) => {
+                        setToleranceStr(e.target.value.replace(/\D/g, '').slice(0, 2))
+                        setRateCardError(null)
+                      }}
+                      placeholder="10"
+                      className="w-full bg-bg border border-border rounded-xl px-3 py-2.5 text-text text-[14px] placeholder-text-faint focus:border-accent focus:outline-none transition-colors min-h-[44px]"
+                    />
+                    <p className="text-xs text-text-faint mt-1 leading-relaxed">
+                      If a player plays within this many minutes past a tier, they're still charged the lower price.
+                    </p>
+                  </div>
+
+                  {/* Standard preset */}
+                  <button
+                    onClick={handlePresetStandard}
+                    className="text-[12px] text-accent font-semibold min-h-[44px] flex items-center"
+                  >
+                    Use standard preset (30 / 60 / 90 / 120 / 150 / 180 min) →
+                  </button>
+
+                  {rateCardError && (
+                    <p className="text-[12px] text-busy">{rateCardError}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Action buttons — single column on mobile, side-by-side on sm+ */}
+          <div className="flex flex-col-reverse sm:grid sm:gap-3 sm:pt-1 gap-2 pt-1"
+            style={{ gridTemplateColumns: isEditing ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)' }}
+          >
             {isEditing && (
               isDisabled ? (
-                // Table is already disabled — offer to re-enable
                 <button
                   onClick={handleEnable}
-                  className="py-3.5 bg-free/10 text-free border border-free/30 rounded-xl text-[13px] font-semibold"
+                  className="py-3.5 bg-free/10 text-free border border-free/30 rounded-xl text-[13px] font-semibold min-h-[44px]"
                 >
                   Enable Table
                 </button>
               ) : (
-                // Active table — offer to disable (blocked if session running)
                 <button
                   onClick={() => !hasActiveSession && setConfirmDisable(true)}
                   disabled={hasActiveSession}
-                  className={`py-3.5 bg-busy/10 text-busy border border-busy/30 rounded-xl text-[13px] font-semibold ${
+                  className={`py-3.5 bg-busy/10 text-busy border border-busy/30 rounded-xl text-[13px] font-semibold min-h-[44px] ${
                     hasActiveSession ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
                 >
@@ -271,20 +498,19 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
             )}
             <button
               onClick={onClose}
-              className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold"
+              className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold min-h-[44px]"
             >
               Cancel
             </button>
             <button
               onClick={handleSave}
               disabled={saving || Boolean(nameError)}
-              className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold disabled:opacity-60"
+              className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold disabled:opacity-60 min-h-[44px]"
             >
               {saving ? 'Saving…' : isEditing ? 'Update' : 'Add Table'}
             </button>
           </div>
 
-          {/* Warning shown below grid when disable is blocked */}
           {isEditing && !isDisabled && hasActiveSession && (
             <p className="text-[12px] text-busy mt-2">
               Cannot disable — this table has a running session. End the session first.
