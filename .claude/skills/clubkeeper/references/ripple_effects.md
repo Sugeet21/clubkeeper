@@ -955,3 +955,117 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 **Affects:** `src/pages/StartSession.tsx` alarm chips AND `src/pages/SessionDetail.tsx` edit bottom sheet. Both import from this file — change once, both screens update.
 
 **Discovered when:** Alarm Phase 2, 1 Jun 2026.
+
+---
+
+## Split payments + Quick Sale + Piggy (v13) — added 10 Jun 2026
+
+### If you change `Session.paymentBreakdown` or `recordSessionPaymentBreakdown`
+
+**Affects:**
+- `src/types/index.ts` — `PaymentBreakdown` interface + optional field on `Session`
+- `src/db/database.ts` — v13 `.upgrade()` writes the field for completed sessions. Never touch this upgrade block.
+- `src/db/queries.ts` — `recordSessionPaymentBreakdown`, `PaymentBreakdownInvalidError`, `WalletInsufficientError`
+- `src/components/PaymentSplitSheet.tsx` — sheet UI consumed by SessionDetail + QuickSale
+- `src/pages/SessionDetail.tsx` — captures breakdown after `stopSession`; auto-resume effect for completed-without-breakdown
+- `src/pages/summary/PaymentModeStrip.tsx` — reads `paymentBreakdown` for stopped sessions on viewed date
+- `src/pages/Summary.tsx` — PAYMENT MODE aggregation in render body; piggy `cashIn` math
+
+**CRITICAL invariants:**
+- `cash + upi + wallet === session.amount + Σ(sessionItems.price × quantity)` (computed inside the tx — `session.amount` alone is the time portion ONLY, not the grand total).
+- `wallet > 0` requires `customerId`; sheet enforces in UI, queries layer enforces at runtime.
+- `paymentBreakdown` is set ONCE at "Record payment" confirm, NOT at stopSession. Between Stop and confirm, the field is `undefined`.
+- Phase 4 PAYMENT MODE tile + Phase 5 piggy `cashIn` both filter on `paymentBreakdown !== undefined` to exclude this transient state.
+- ADDENDUM-4: re-mounting a completed session with no `paymentBreakdown` auto-resumes the payment flow via a `useEffect` guarded by `autoOpenHandled` + `paymentScreenOpen`. Do NOT remove the second guard — without it the auto-open re-fires immediately after a normal Stop and robs the user of the QR view.
+- ADDENDUM-5: zero-amount sessions write `{0, 0, 0}` directly without opening the sheet. Both the manual button AND the auto-open path handle this.
+- `Session` has NO `customerId` field. Wallet customer is captured in sheet state only; the durable link is `WalletTransaction.referenceId = sessionId.toString()`.
+
+**Discovered when:** Phase 2 build (8 Jun 2026 — wait, this whole feature shipped 10 Jun 2026; reference Phase 2 in the prompt sequence). The `session.amount` vs `grandTotal` mismatch shipped first as a P0 bug: the DB-layer check used `session.amount` alone, rejecting valid breakdowns whenever items were present and table time was small. Fix: compute `grandTotal` inside the tx by reading `sessionItems` for the session. See bug_patterns.md Pattern M3.
+
+---
+
+### If you change `CanteenSale` or `createCanteenSale`
+
+**Affects:**
+- `src/types/index.ts` — `CanteenSale` interface
+- `src/db/database.ts` — v13 stores `canteenSales: 'id, createdAt, customerId'`
+- `src/db/queries.ts` — `createCanteenSale`, `CanteenSaleInvalidError`, `CanteenSaleStockError`, `CanteenSaleLineInput`, `getCanteenSalesByDate`
+- `src/pages/QuickSale.tsx` — only writer (v1: no edit flow)
+- `src/pages/Summary.tsx` — `canteenSalesForDate` live query feeds the canteen revenue tile + PAYMENT MODE + piggy `cashIn`
+- `src/types/walletTransaction.ts` — `WalletReferenceType` includes `'canteen_sale'`
+
+**Pattern D7 invariant:** `createCanteenSale` opens ONE flat `db.transaction('rw', db.canteenSales, db.canteenItems, db.customers, db.walletTransactions)`. Inside:
+1. Stock decrement per `canteenItemId` (aggregated qty across duplicate lines first), throws `CanteenSaleStockError(itemName, available)` if would go negative.
+2. Wallet debit + WalletTransaction(`referenceType:'canteen_sale'`) if `wallet > 0`.
+3. CanteenSale insert LAST (so any earlier throw rolls everything back).
+
+**Out-of-scope (v1):** free-text items (every line MUST match a CanteenItem.id); discount; edit/refund/void of a sale.
+
+---
+
+### If you change `StockPurchase` or `recordStockPurchase`
+
+**Affects:**
+- `src/types/index.ts` — `StockPurchase` interface
+- `src/db/database.ts` — v13 stores `stockPurchases: 'id, createdAt, canteenItemId, source'`
+- `src/db/queries.ts` — `recordStockPurchase`, `StockPurchaseInvalidError`, `listStockPurchases`, `listStockPurchasesForItem`, `getPiggyBalance`
+- `src/components/RestockSheet.tsx` — only writer
+- `src/pages/Canteen.tsx` — opens RestockSheet from each item card
+- `src/pages/Piggy.tsx` — lists restocks split by source; reads `getPiggyBalance`
+- `src/pages/Summary.tsx` — CASH FLOW strip reads piggy + sums `stockPurchasesForDate`
+- `src/pages/summary/CashFlowStrip.tsx` — tile UI
+
+**Atomicity:** single flat `db.transaction('rw', db.stockPurchases, db.canteenItems)`. Insert StockPurchase + (when `stockEnabled=true`) `currentStock += quantityAdded`. Stock can only grow via restock.
+
+**Piggy radio rule:** RestockSheet disables the Piggy chip when `cost > piggyBalance`. If the user had Piggy selected when cost rose past piggy, `effectiveSource` snaps to Other before write. Never write a StockPurchase with `source='piggy'` if it would put piggy under ₹0 — the UI is the only enforcement point. The piggy formula tolerates a negative `current` (UI clamps to 0 + warning) but that's a data-weirdness escape hatch, not a normal path.
+
+---
+
+### If you change `getPiggyBalance` or piggy settings
+
+**Affects:**
+- `src/db/queries.ts` — `getPiggyBalance`, `updatePiggyOpeningBalance`
+- `src/types/index.ts` — `ClubSettings.piggyOpeningBalance?` + `piggyStartedAt?`
+- `src/pages/Piggy.tsx` — current balance + cash-by-week sections
+- `src/pages/Settings.tsx` — Piggy section (current balance display)
+- `src/pages/summary/CashFlowStrip.tsx` — PIGGY tile
+- `src/pages/Summary.tsx` — `piggy` live query
+
+**Aggregation window invariant:** every "cash collected" sum MUST intersect with `piggyStartedAt`. Same for cash-by-week sums inside Piggy.tsx — `winStart = Math.max(weekStart, since)`. NEVER aggregate cash-in from before piggy was started; that's how historic data leaks in and breaks the owner's mental model.
+
+**Piggy is a derived value.** There is no ledger table. Single source of truth = the four underlying tables (sessions / canteenSales / walletTransactions / stockPurchases) + the two settings fields. Do NOT add a piggy_balance column or a piggy_ledger table without an explicit decision.
+
+---
+
+### If you change `PaymentSplitSheet`
+
+**Two consumers — verify both:**
+- `src/pages/SessionDetail.tsx` — `total = finalGrandTotal` (table-time + items); `onConfirm` calls `recordSessionPaymentBreakdown`
+- `src/pages/QuickSale.tsx` — `total = subtotal` (`Σ price*qty` from the cart); `onConfirm` calls `createCanteenSale`
+
+**Single-source-of-truth invariant (Pattern M3):** `canConfirm = matches && !submitting && totalIsValid`. This boolean drives BOTH the status line (green ✓ vs orange short vs red over) AND the Confirm button's `disabled` prop AND its visual styling (NOT just `disabled:opacity-40` — explicit className branching). The error slot REPLACES the status line when present; the two never stack. Do NOT split this boolean into separate `enabled` / `displayMatch` / `buttonStyle` variables that can drift.
+
+**`total` prop must be the actual amount being collected.** For sessions: `session.amount + Σ(sessionItems.price * quantity)`. For QuickSale: cart subtotal. Never pass `session.amount` alone (see Pattern M3).
+
+**Customer linking is sheet-local.** No `Session.customerId` field exists. The wallet portion's durability comes from `WalletTransaction.referenceId`.
+
+---
+
+### If you change the TopBar layout
+
+**Affects (10 Jun 2026 update):**
+- Now renders TWO stacked rows inside the outer container. Row 1: "Today" heading + icon group (`flex items-start justify-between`). Row 2: date subtitle + optional `+ Quick Sale` pill (`flex items-center justify-between mt-1 py-1 gap-2`). The pill is conditional on `onQuickSalePress?: () => void` prop. Date `<p>` is `truncate min-w-0`; pill is `shrink-0` so it never compresses.
+- `src/pages/Home.tsx` passes `onQuickSalePress={() => navigate('/quick-sale')}`. Other consumers (none currently — TopBar is single-use) omit the prop and the pill is absent.
+- Icon group at the right (canteen / wallet / settings) is unchanged. Do not add a fifth icon at 360px width per existing rule.
+
+---
+
+### If you change PAYMENT MODE aggregation in Summary
+
+**Affects:**
+- `src/pages/Summary.tsx` — `paymentMode` useMemo. Deps: `[detailSessions, canteenSalesForDate]`.
+- `src/pages/summary/PaymentModeStrip.tsx` — tile + bar UI
+
+**Pattern T4 invariant:** Running sessions are EXCLUDED from this tile (no `paymentBreakdown` yet). They are still added to the HEADLINE `totalRevenue` via the render-body `runningRevenueToday` reducer. Do NOT move the PAYMENT MODE math into `useLiveQuery` — it would drift behind ticks; the source data IS db-static (`paymentBreakdown` only changes on confirm), so it's correct in the render body either way, but keep the `useMemo` to avoid the per-tick reducer cost.
+
+**Largest-remainder percent rounding:** `PaymentModeStrip.computePercents` ensures tiles sum to exactly 100. If you change the rounding strategy, the bar widths and tile percents must stay consistent (both read from the same return value).

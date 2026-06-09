@@ -592,3 +592,47 @@ Never change `status` values or webhook behavior to encode this distinction — 
 - `expired` — existing `trial_ends_at` ≤ now+60s → `start_at = now+60s`, write `trial_ends_at = now`
 
 Frontend sends `{ tier, cycle }` only — never timestamps, flags, or scenario intent. `trial_ends_at` is NEVER overwritten if the existing value is in the future and still valid. Scenario is logged to console + stored in Razorpay `notes` for dashboard debugging. Supabase update errors after a successful Razorpay create are logged but not thrown — webhook reconciles DB state when `subscription.authenticated` fires.
+
+---
+
+## Payment & Money invariants
+
+Files most affected: `src/db/queries.ts` (recordSessionPaymentBreakdown, createCanteenSale), `src/components/PaymentSplitSheet.tsx`, `src/pages/SessionDetail.tsx`, `src/pages/QuickSale.tsx`, `src/pages/Summary.tsx`.
+
+### Pattern P1 — `session.amount` is the TIME portion only; the bill total is `session.amount + Σ(sessionItems)` (10 Jun 2026)
+**Symptom signature:** Recording a perfectly valid payment breakdown fails with "Breakdown sum ₹X does not match total ₹Y" where Y is suspiciously low (or zero) compared to what the sheet showed.
+**Root cause:** A queries-layer invariant check (`cash + upi + wallet === session.amount`) compared the breakdown to `session.amount` alone. But `stopSession` only writes the time-cost portion to `session.amount`; canteen items live in a separate `sessionItems` table. When a brand-new session is stopped fast with items added, `session.amount ≈ 0` and the DB rejects the valid `paymentBreakdown` summing to the item total.
+**Rule:** Any check, aggregation, or UI display that needs the BILL TOTAL for a session MUST compute `grandTotal = session.amount + Σ(sessionItems.price × quantity)`. Never use `session.amount` standalone as a bill total. For `recordSessionPaymentBreakdown` this means reading `db.sessionItems.where('sessionId').equals(sessionId)` inside the same transaction and summing. For Summary/Home aggregations the existing `useLiveQuery` already does this via `calculateItemsTotal` — preserve that pattern.
+**Where it does NOT apply:** `CanteenSale.total === CanteenSale.subtotal === Σ(items)` — there is no table-time component, so the canteen-sale total is whole. PaymentSplitSheet's `total` prop is the grand total in both cases; the math at the CALL SITE differs.
+**Files affected:** `src/db/queries.ts` (`recordSessionPaymentBreakdown`), `src/pages/SessionDetail.tsx` (`finalGrandTotal` computation), `src/components/PaymentSplitSheet.tsx` (the `total` prop).
+
+### Pattern P2 — Single boolean drives status line AND button disabled state (10 Jun 2026)
+**Symptom signature:** A payment sheet shows green "✓ Matches total" but the Confirm button is muted/disabled; OR it shows red "₹X over" but the Confirm button is bright accent and clickable. Two indicators contradict each other.
+**Root cause:** `disabled={...}` on the button reads one expression; the status-line ternary reads a different expression. Even small drift (one includes `submitting`, the other doesn't; one excludes a guard) produces UI that lies to the user.
+**Rule:** Derive ONE boolean (e.g. `canConfirm = matches && !submitting && totalIsValid`) and route BOTH the status line's green-state branch AND the button's `disabled` prop AND the button's className through it. Don't trust `disabled:opacity-40` alone — explicit className branching (`canConfirm ? 'accent...' : 'muted...'`) avoids any state where `disabled=true` but the accent background still leaks through. Add `if (!canConfirm) return` at the top of the handler as defence in depth.
+**Rule for stacked error messages:** If a separate `error` state (from a thrown exception) is present, REPLACE the status line — never stack the two. Otherwise the user sees green ✓ alongside a red error and can't tell what's wrong. Clear `error` on any input change so the status line restores.
+**Files affected:** `src/components/PaymentSplitSheet.tsx`.
+
+### Pattern P3 — Route param IDs are strings — coerce at the boundary, runtime-guard at queries (10 Jun 2026)
+**Symptom signature:** `db.sessions.get(routeId)` silently returns `undefined`; downstream `session?.amount ?? 0` becomes 0; user sees nonsensical errors like "₹X doesn't match total ₹0". OR: random data corruption when a numeric ID stringifies through a code path that wasn't typed.
+**Root cause:** `useParams()` from react-router-dom returns route params as strings. Dexie autoincrement primary keys are NUMBERS. `db.sessions.get("2")` does not match the row stored with `id=2` — it returns undefined with no error.
+**Rule:** At every component where `useParams` is called, coerce immediately: `const id = Number(rawId); if (!Number.isFinite(id) || id <= 0) renderNotFound()`. Pass the numeric `id` to all downstream calls; never let the string leak. At the queries-layer entry for any function that takes an id, add a runtime guard: `if (typeof id !== 'number' || !Number.isFinite(id) || id <= 0) throw new Error('...')`. TypeScript's `id: number` parameter type is NOT enough — JS callers (or untyped wrappers) can sneak a string past it.
+**Files affected:** every page using `useParams` (`SessionDetail.tsx`, `StartSession.tsx`, `WalletTopup.tsx`, `CustomerProfile.tsx`), every queries function taking an autoincrement id (e.g. `recordSessionPaymentBreakdown` runtime-guards at top).
+
+### Pattern P4 — `paymentBreakdown` is set at "Record payment" confirm, NOT at `stopSession` — running and "stopped-but-unrecorded" are distinct states (10 Jun 2026)
+**Symptom signature:** Closing the browser tab during the payment sheet leaves the session stopped (`endedAt` set, status `completed`) but with `paymentBreakdown === undefined`. Re-opening the session shows no obvious indication that payment was missed.
+**Root cause:** `stopSession` writes `amount` and flips `status`, but does NOT write `paymentBreakdown`. The breakdown is a separate write after the user confirms in the sheet. There's a window where the session is "done playing but not done collecting".
+**Rule:** Treat `session.status === 'completed' && paymentBreakdown === undefined` as a valid state, NOT an edge case. SessionDetail auto-resumes the payment flow on mount when this state is detected (ADDENDUM-4). The auto-open `useEffect` must be guarded by both `autoOpenHandled` (run-once per mount) AND `paymentScreenOpen` (don't fight the normal Stop path which already opened the QR screen). Without the second guard, the auto-open fires immediately after a normal Stop, robbing the user of the QR view.
+**Aggregation rule:** Any reducer over "sessions paid in cash/UPI/wallet" MUST filter on `paymentBreakdown !== undefined`. Otherwise stopped-but-unrecorded sessions silently contribute 0 to every tile and skew the breakdown.
+**Files affected:** `src/pages/SessionDetail.tsx` (auto-resume effect), `src/pages/Summary.tsx` (PAYMENT MODE filter), `src/db/queries.ts` (`getPiggyBalance` filter).
+
+### Pattern P5 — ADDENDUM-5: zero-amount sessions skip the sheet entirely (10 Jun 2026)
+**Symptom signature:** Sheet opens for a free session with `total=0`. User sees three steppers at 0/0/0 which already "match" — confusing UX, and possibly a runtime error if any downstream code assumes `total > 0`.
+**Rule:** If `finalGrandTotal === 0` at "Record payment" tap (or in the auto-resume path), call `recordSessionPaymentBreakdown(sid, {cash:0, upi:0, wallet:0})` directly and flip the footer to "Done — back to tables". Button label becomes "Mark as paid" when total is 0. PaymentSplitSheet itself also guards with `totalIsValid = total > 0` and renders a "No amount to record" error state if a caller still mounts it with zero total — defence in depth.
+**Files affected:** `src/pages/SessionDetail.tsx` (footer + auto-resume effect), `src/components/PaymentSplitSheet.tsx` (totalIsValid guard).
+
+### Pattern P6 — Piggy is a derived value, never a stored column (10 Jun 2026)
+**Symptom signature:** Someone proposes adding a `piggy_balance` column or a `piggy_ledger` table to "make the math faster" or "fix a drift". This always introduces sync bugs because three tables already write to piggy (sessions/canteenSales/walletTransactions for cash-in, stockPurchases for cash-out).
+**Rule:** `getPiggyBalance()` derives the balance live from the four underlying tables + the two `piggyOpeningBalance` / `piggyStartedAt` settings. Single source of truth = those tables. Do NOT add a stored piggy balance without an explicit decision and a migration plan for every write site.
+**Aggregation window invariant:** every "cash collected" sum MUST intersect with `piggyStartedAt`. Same for cash-by-week sums in `Piggy.tsx` — `winStart = Math.max(weekStart, piggyStartedAt)`. NEVER aggregate cash-in from before piggy was started — that's how historic data leaks in and breaks the owner's mental model.
+**Files affected:** `src/db/queries.ts` (`getPiggyBalance`), `src/pages/Piggy.tsx` (cash-by-week computation), `src/pages/Summary.tsx` (`cashInOnDate` computation).

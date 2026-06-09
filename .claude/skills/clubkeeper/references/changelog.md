@@ -613,3 +613,59 @@ Every inline `customer.name ?? customer.walkInCode ?? 'Customer'` chain replaced
 - Sign in as Sugeet on LIVE mode → Subscribe page shows ₹10 "Test ₹10 / month" card with 🔴 badge
 - Subscribe with ₹10 → Razorpay charges real ₹10 immediately if trial expired, or defers to trial end if mid-trial
 - Scenario (`new` / `mid_trial` / `expired`) visible in Razorpay dashboard under subscription notes
+
+---
+
+## 10 Jun 2026 — Split payments + Walk-in Quick Sale + PAYMENT MODE + Piggy (Dexie v13)
+
+**Commit:** `576c07c feat(money): split payments + walk-in canteen sale + piggy bank`
+**Branch:** `main` (local; not pushed)
+**Files:** 17 changed, +2614 / −50.
+
+### Schema (Phase 1)
+- Dexie v13 with `.upgrade()` backfill.
+- `Session.paymentBreakdown?: { cash, upi, wallet }` — backfilled for completed sessions as `{cash: amount, upi: 0, wallet: 0}` (⚠ items-revenue gap documented).
+- New tables `canteenSales` (`id, createdAt, customerId`) and `stockPurchases` (`id, createdAt, canteenItemId, source`).
+- `ClubSettings.piggyOpeningBalance?` + `piggyStartedAt?`. Initialised to `0` and `Date.now()` only if absent (no overwrite of owner-set values).
+- `WalletReferenceType` adds `'canteen_sale'`.
+
+### Split payment at session stop (Phase 2)
+- `src/components/PaymentSplitSheet.tsx` — shared 3-stepper sheet (cash/UPI/wallet) with quick-fill chips, single `canConfirm` boolean for status line + button state + button styling. Inline customer-link picker for wallet payments.
+- `recordSessionPaymentBreakdown` — atomic session + wallet + walletTransaction write. Grand total computed inside the tx as `session.amount + Σ(sessionItems)`.
+- SessionDetail: existing UPI QR screen preserved (ADDENDUM-1). New "Record payment" button opens the sheet. ADDENDUM-4: "Skip for now" removed; auto-resume on re-mount. ADDENDUM-5: zero-amount sessions auto-write `{0,0,0}`.
+- Fixed in-flight: P1 `session.amount` vs `grandTotal` bug; P2 status-line / button-state drift; P3 route-param coercion.
+
+### Walk-in Quick Sale (Phase 3)
+- `src/pages/QuickSale.tsx` at `/quick-sale` — tappable item cards, cart, sticky bottom bar, reuses PaymentSplitSheet.
+- "+ Quick Sale" pill on TopBar's date subtitle row (right-aligned in row 2 of restructured TopBar).
+- `createCanteenSale` — atomic stock aggregation + decrement + wallet debit + CanteenSale insert (Pattern D7).
+- Summary canteen tile + headline include walk-in revenue.
+
+### Summary PAYMENT MODE strip (Phase 4)
+- `src/pages/summary/PaymentModeStrip.tsx` — three tiles (CASH=accent, UPI=text-dim, WALLET=paused) + 6px split bar between Tables-vs-Canteen and the heatmap.
+- Aggregates across stopped sessions + canteen sales for the viewed date. Excludes running sessions with "Excludes N running session(s)" caveat (Pattern T4 preserved on headline).
+- Largest-remainder percent rounding so tiles sum to exactly 100. Section hidden when total is zero.
+
+### Piggy bank + Restock (Phase 5)
+- `getPiggyBalance()` derives live: `opening + Σ cash(sessions/sales/wallet-credits) − Σ piggy-restocks`, scoped to `piggyStartedAt`. Returns negative as-is; UI clamps to ≥ 0 + warning.
+- `recordStockPurchase()` — atomic StockPurchase insert + currentStock increment (when stockEnabled).
+- `src/components/RestockSheet.tsx` — bottom sheet on each canteen item card. Piggy chip disabled when `cost > piggy`.
+- `src/pages/summary/CashFlowStrip.tsx` — PIGGY + STOCK BOUGHT TODAY tiles between PAYMENT MODE and the heatmap.
+- `src/pages/Piggy.tsx` at `/piggy` — current balance, opening-balance editor, cash collected by week, restocks split by source.
+- Settings "Piggy (cash float)" section between Subscription and Data & Backup.
+
+### Business impact
+- Ball Bender can split a bill across cash + UPI + wallet at session end and at walk-in canteen sales.
+- Daily PAYMENT MODE breakdown on Summary for ledger reconciliation.
+- Piggy bank tracks the till's cash float without an extra ledger table — derived from existing rows + `piggyStartedAt` window.
+
+### Known gaps (deferred)
+- Pre-v13 sessions' items revenue not included in `paymentBreakdown.cash` (the upgrade used `session.amount` alone). PAYMENT MODE tile understates cash for historic dates. Piggy unaffected (cuts off at migration time). Fix only when Ball Bender notices.
+- No CSV export columns for paymentBreakdown yet.
+- No edit/refund flow for paymentBreakdown in v1.
+
+### What's now testable
+- Stop a session → Record payment → split cash + UPI + wallet → DB has `paymentBreakdown` set, customer wallet debited atomically.
+- Tap + Quick Sale on Home → cart items → pay → CanteenSale row + stock decrement + (optional) wallet debit all atomic.
+- Summary PAYMENT MODE strip aggregates today's payment splits across both sessions and canteen sales.
+- Settings → Piggy → Set opening balance → Summary PIGGY tile reflects it. Restock from /canteen with source=Piggy → piggy drops by cost; source=Other → unchanged.

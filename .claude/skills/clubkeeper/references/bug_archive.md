@@ -568,3 +568,43 @@ useEffect(() => {
 - src/db/queries.ts (3 functions extended + new findMatchingCanteenItemForRow + new InsufficientStockError; restoreSessionItem return type changed to Promise<void>)
 - src/components/AddItemBottomSheet.tsx (import InsufficientStockError; Undo callback now catches it with toast)
 - references/ripple_effects.md, decisions_active.md, bug_archive.md
+
+---
+
+### 10 Jun 2026 — PaymentSplitSheet: "Breakdown sum ₹20 does not match total ₹0" on valid input [B-payment-1]
+
+**Symptom:** New session on Pool 1 + ~30s elapsed + ₹20 of canteen items added → tap Stop → Record payment → type Cash=10 UPI=10 → sheet shows green ✓ "Matches total" → tap Confirm → red error "Breakdown sum ₹20 does not match total ₹0". Confirm button stayed bright accent throughout.
+
+**Root cause:** `recordSessionPaymentBreakdown` in queries.ts checked `cash + upi + wallet === session.amount`. But `session.amount` is the TIME portion only — items revenue lives in a separate `sessionItems` table. For a fast-stopped session with items, `session.amount ≈ ₹0` and the breakdown summing to the items total was rejected.
+
+Secondary bug: when the catch block set `error`, the sheet rendered BOTH the green ✓ status line AND the red error simultaneously. The Confirm button stayed bright accent because `matches` (its local check) was still true (sum 20 === total 20).
+
+**Fix:**
+- `recordSessionPaymentBreakdown` now reads `db.sessionItems.where('sessionId').equals(sid).toArray()` inside the transaction and computes `grandTotal = session.amount + Σ(items.price × quantity)`. `db.sessionItems` added to the transaction's table list.
+- PaymentSplitSheet now has a single `canConfirm` boolean driving BOTH the status line green-state branch AND the Confirm `disabled` prop AND the Confirm className branching (no more `disabled:opacity-40` alone).
+- Status line slot has `min-h-[20px]` and shows exactly one message — `error` REPLACES the status line when present (never stacks). Editing any input clears `error`.
+- Bad-total guard (`!totalIsValid`) hides the steppers entirely; sheet renders "No amount to record" when caller mounts with `total <= 0`.
+- Route-param coercion + runtime guard at top of `recordSessionPaymentBreakdown` against stringified IDs (defence in depth — not the root cause but adjacent).
+
+**Lesson:** `session.amount` is the time portion only. Bill total = `session.amount + Σ(sessionItems)`. See Pattern P1, P2, P3 in bug_patterns.md. Single boolean → status line + button disabled + button styling, always.
+
+**Files touched:**
+- src/db/queries.ts (grandTotal computation + sessionItems in tx scope + runtime sessionId guard)
+- src/components/PaymentSplitSheet.tsx (canConfirm boolean, error replaces status, totalIsValid guard, explicit className branching, clear error on input change)
+- src/pages/SessionDetail.tsx (route param coercion + Number(session.id) defensive cast at call site)
+
+---
+
+### 10 Jun 2026 — Quick Sale pill orphaned on its own right-aligned row [B-ui-quicksale-pill]
+
+**Symptom:** First implementation put the "+ Quick Sale" pill on a standalone row between TopBar and SummaryStrip, right-aligned. At 320–360px the entire left side of the row was empty, the pill looked orphaned, and it visually overlapped the Today section.
+
+**Root cause:** Wrong placement decision — putting the pill on its own row breaks the visual rhythm of the page.
+
+**Fix:** Restructured TopBar into two stacked rows. Row 1: heading + icon group (unchanged). Row 2: date subtitle `<p>` + optional pill (`flex items-center justify-between mt-1 py-1 gap-2`). Pill `h-9 px-3.5 text-[12px]` to fit the subtitle row rhythm. Date `<p>` uses `truncate min-w-0`, pill uses `shrink-0` — at 320px the date truncates with an ellipsis rather than pushing the pill off-screen. Removed the standalone row from Home.tsx; passes `onQuickSalePress={() => navigate('/quick-sale')}` to TopBar instead.
+
+**Lesson:** Don't add standalone rows for single right-aligned actions. Find an existing row with content on the left and put the action on it via `justify-between`. Always test at 320 / 360 / 412.
+
+**Files touched:**
+- src/components/TopBar.tsx (two-row restructure + onQuickSalePress prop)
+- src/pages/Home.tsx (removed standalone row, passes prop)

@@ -87,6 +87,25 @@ For rejected ideas, historical decisions that have been superseded, and full rea
 
 ---
 
+## Split payments + walk-in canteen + piggy (v13, 10 Jun 2026)
+
+- **Split payment = 3-way (cash + UPI + wallet).** All three must sum to grand total exactly. Any one can be zero. UI uses numeric steppers + quick-fill chips, not radio buttons.
+- **`paymentBreakdown` is captured at "Record payment" confirm, NOT at `stopSession`.** Between Stop and confirm, the session is `status:'completed'` with `paymentBreakdown:undefined`. SessionDetail auto-resumes the payment flow on re-mount if it finds this state (ADDENDUM-4).
+- **No "Skip for now" on the post-stop QR screen.** Payment capture is mandatory. Cancel inside the sheet returns to the QR; closing the tab is the only escape; reopening re-prompts.
+- **Zero-amount sessions write `{0,0,0}` directly without opening the sheet (ADDENDUM-5).** Button label becomes "Mark as paid".
+- **`Session` has NO `customerId` field.** Wallet linking on sessions is captured in PaymentSplitSheet state only; the durable link is `WalletTransaction.referenceId = sessionId.toString()`. Avoids a schema change for a feature that's needed in 2 places.
+- **Existing UPI QR screen preserved (ADDENDUM-1).** PaymentSplitSheet is the staff-side capture; the QR is the customer-facing display. Two distinct UIs, sequenced not merged.
+- **PaymentSplitSheet is shared between SessionDetail and QuickSale.** `total` prop is the grand total — caller computes it (`session.amount + Σ items` for sessions, `subtotal` for QuickSale). The sheet itself knows nothing about sessions vs sales.
+- **Walk-in Quick Sale = structured items only.** No free-text items in v1 (would let staff typos pollute master list and break stock tracking). If owner needs a one-off item, add it to /canteen first.
+- **No edit / refund / void flow for `paymentBreakdown` in v1.** BUG-022 lesson applied — post-stop drift is prevented by never allowing the field to be re-written. Future refund flow will use a separate WalletTransaction row with `referenceType:'refund'`.
+- **Piggy is a derived value (Pattern P6).** No `piggy_balance` column, no `piggy_ledger` table. Single source of truth = sessions + canteenSales + walletTransactions + stockPurchases + `piggyOpeningBalance` + `piggyStartedAt`.
+- **Piggy aggregation window is `piggyStartedAt`-bounded EVERYWHERE.** Total balance, cash-in-today, cash-by-week — all scoped via `Math.max(windowStart, piggyStartedAt)`. Historic data never leaks in.
+- **Wallet top-ups paid in cash count toward piggy but NOT toward PAYMENT MODE.** The cash is physically in the till (piggy) but it's a deposit not revenue (so it's excluded from the revenue breakdown tile). This is the only place where piggy and PAYMENT MODE diverge in their cash-in sources.
+- **Restock paid-from = Piggy | Other.** Owner picks at restock time. Only `source='piggy'` deducts from piggy. `'other'` still writes a StockPurchase row so future inventory cost reports can include it.
+- **Piggy radio disabled when `cost > piggy`.** UI is the only enforcement; piggy can technically go negative in computation (clamped to ₹0 in UI + warning) but the disabled-chip rule prevents it on the happy path.
+
+---
+
 ## Decisions Pending (Open)
 
 ### How to bill: per-table or flat tier?

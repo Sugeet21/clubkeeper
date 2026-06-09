@@ -19,12 +19,13 @@ Database name is `ClubKeeperDB_<userId>` (Supabase UUID) for per-user isolation.
 | v9 | 8 Jun 2026 | Adds optional `tableMoves?: TableMove[]` field to sessions (no index) |
 | v10 | 9 Jun 2026 | Adds optional `rateCard`/`toleranceMinutes` to `GameTable`; `rateCardSnapshot`/`toleranceMinutesSnapshot` to `Session` |
 | v11 | 9 Jun 2026 | Adds optional `rateCardBilling` to `GameTable`; `rateCardBillingSnapshot` to `Session` |
-| **v12** | **9 Jun 2026** | **Additive: adds optional `isBackEntry?: boolean` on sessions. No new index. No `.upgrade()`. Current version.** |
+| v12 | 9 Jun 2026 | Additive: adds optional `isBackEntry?: boolean` on sessions. No new index. No `.upgrade()`. |
+| **v13** | **10 Jun 2026** | **Split payments + walk-in canteen sale + piggy. New tables `canteenSales` and `stockPurchases`. Adds optional `Session.paymentBreakdown`, `ClubSettings.piggyOpeningBalance` + `piggyStartedAt`. `.upgrade()` backfills completed sessions with `{cash: amount, upi: 0, wallet: 0}` and initialises piggy settings. Current version.** |
 
-### Schema Version 12 (current)
+### Schema Version 13 (current)
 
 ```ts
-this.version(12).stores({
+this.version(13).stores({
   gameTables: '++id, name, gameType, sortOrder, outOfService',
   sessions: '++id, tableId, status, startedAt, endedAt',
   settings: 'id',
@@ -32,9 +33,15 @@ this.version(12).stores({
   customers: 'id, phone, walkInCode, lastVisitAt',
   walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
   canteenItems: '++id, name, isActive, sortOrder',
+  canteenSales: 'id, createdAt, customerId',
+  stockPurchases: 'id, createdAt, canteenItemId, source',
+}).upgrade(async (tx) => {
+  // Backfill paymentBreakdown for completed sessions as { cash: amount, upi: 0, wallet: 0 }.
+  // ⚠ This uses session.amount only — time-portion. Items revenue from pre-v13 stopped
+  // sessions is missing from paymentBreakdown.cash. Documented gap; fix deferred.
+  // Initialise piggyOpeningBalance=0 and piggyStartedAt=Date.now() on the settings row
+  // only if absent — does not overwrite owner-set values.
 })
-// v10, v11, and v12 are field-only additions — no new indexes, no .upgrade() block needed.
-// Existing rows read undefined for new fields, which calculates correctly via ?? fallbacks.
 ```
 
 ### Tables Store
@@ -88,6 +95,15 @@ interface Session {
   toleranceMinutesSnapshot?: number;                    // captured from table.toleranceMinutes at session start
   rateCardBillingSnapshot?: 'minimum' | 'prorated';    // captured from table.rateCardBilling at session start
   isBackEntry?: boolean;                               // v12: true when logged via Back Entry flow, not live timer
+  paymentBreakdown?: PaymentBreakdown;                 // v13: how the bill was paid; sum === session.amount + Σ(items).
+                                                        //      Backfilled for completed sessions with { cash: amount, upi: 0, wallet: 0 } (items gap documented).
+                                                        //      Undefined while running/paused — set at "Record payment" confirm (NOT at stopSession).
+}
+
+interface PaymentBreakdown {
+  cash: number;        // integer rupees ≥ 0
+  upi: number;         // integer rupees ≥ 0
+  wallet: number;      // integer rupees ≥ 0
 }
 
 interface TableMove {
@@ -161,6 +177,52 @@ interface CanteenItem {
 
 **Stock decrement atomicity:** In `AddItemBottomSheet`, stock decrement + `sessionItems.add()` happen in ONE flat `db.transaction('rw', db.canteenItems, db.sessionItems, ...)`. The logic is inlined — do NOT call `decrementCanteenItemStock()` (which has its own internal transaction) from inside an outer transaction. See Pattern D7.
 
+### canteenSales Store (v13+)
+
+Walk-in canteen sale — no table session. Atomic — one row written at confirm time. Stock decrements happen in the same Dexie tx.
+
+```ts
+interface CanteenSale {
+  id: string                                                // UUID v4
+  createdAt: number                                         // Unix ms
+  items: Array<{
+    name: string
+    price: number                                           // integer rupees
+    quantity: number                                        // integer ≥ 1
+    canteenItemId?: number                                  // matched CanteenItem.id; absent for unmatched (v1: always matched — no free-text)
+  }>
+  subtotal: number                                          // Σ price*qty
+  paymentBreakdown: PaymentBreakdown                        // sum === total
+  total: number                                             // === subtotal in v1 (no discount)
+  customerId?: string                                       // present only when wallet portion > 0
+  notes?: string                                            // max 200 chars
+}
+```
+
+**Indexes:** `id, createdAt, customerId`
+
+**Atomicity:** `createCanteenSale()` opens a single flat `db.transaction('rw', db.canteenSales, db.canteenItems, db.customers, db.walletTransactions)`. Order: aggregate qty per canteenItemId → decrement stock per item (throws `CanteenSaleStockError` if would go negative) → wallet debit + WalletTransaction insert (if wallet > 0) → insert CanteenSale row LAST. Any earlier throw rolls everything back. Stock for `stockEnabled=false` items is NOT mutated but the sale still succeeds.
+
+### stockPurchases Store (v13+)
+
+Canteen restock log. Source `'piggy'` deducts from piggy balance; `'other'` does not.
+
+```ts
+interface StockPurchase {
+  id: string                  // UUID v4
+  canteenItemId: number       // FK → CanteenItem.id
+  quantityAdded: number       // integer ≥ 1
+  cost: number                // integer rupees ≥ 0 (total cost paid; NOT per unit)
+  source: 'piggy' | 'other'
+  createdAt: number           // Unix ms
+  notes?: string              // max 200 chars
+}
+```
+
+**Indexes:** `id, createdAt, canteenItemId, source`
+
+**Atomicity:** `recordStockPurchase()` opens a single flat `db.transaction('rw', db.stockPurchases, db.canteenItems)`. Insert StockPurchase + (when `stockEnabled=true`) `currentStock += quantityAdded`. Stock can only grow via restock — never goes negative through this path.
+
 ### Settings Store (Singleton)
 
 ```ts
@@ -175,8 +237,35 @@ interface ClubSettings {
   alarmSoundEnabled?: boolean;    // v7: default true; stored in Dexie, NOT localStorage
   alarmVibrationEnabled?: boolean; // v7: default true; stored in Dexie, NOT localStorage
   lowStockThreshold?: number;     // v8: default 5 if missing; triggers low-stock pill/toast
+  piggyOpeningBalance?: number;   // v13: owner-settable opening cash float; treat missing as 0
+  piggyStartedAt?: number;        // v13: Unix ms; aggregation window start. Set at v13 upgrade if absent.
 }
 ```
+
+### Piggy formula (computed live via `getPiggyBalance()`)
+
+There is no piggy ledger table — the balance is derived from the existing
+session/canteenSale/walletTransaction/stockPurchase rows, scoped to
+`piggyStartedAt`. Single source of truth = those four tables + the
+`piggyOpeningBalance` setting.
+
+```
+opening    = settings.piggyOpeningBalance ?? 0
+since      = settings.piggyStartedAt ?? 0
+
+cashIn     = Σ session.paymentBreakdown.cash       for completed sessions where endedAt >= since
+           + Σ canteenSale.paymentBreakdown.cash   where createdAt >= since
+           + Σ walletTransaction.amount            where type='credit' AND paymentMode='cash' AND createdAt >= since
+
+restockOut = Σ stockPurchase.cost                  where source='piggy' AND createdAt >= since
+
+current    = opening + cashIn − restockOut         // returned raw; UI clamps to ≥ 0 and shows warning when underlying < 0
+```
+
+**Wallet-credit-paid-in-cash is in piggy but NOT in PAYMENT MODE:** the cash
+physically enters the till when a customer tops up via cash, so it counts
+toward piggy. The PAYMENT MODE tile aggregates revenue (sessions + canteen
+sales) only — top-ups are deposits, not revenue.
 
 ## Indexes Explained
 
