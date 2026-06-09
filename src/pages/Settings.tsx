@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useTables, useSettings } from '../hooks/useLiveData'
-import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport } from '../db/queries'
+import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport, getPiggyBalance } from '../db/queries'
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
 import { Toggle } from '../components/Toggle'
@@ -185,6 +185,10 @@ export default function Settings() {
     () => db.gameTables.filter((t) => Array.isArray(t.rateCard) && (t.rateCard?.length ?? 0) > 0).count(),
     [],
   ) ?? 0
+
+  // Piggy live balance — used by the Piggy settings section
+  const piggy = useLiveQuery(() => getPiggyBalance(), [])
+  const piggyStartedAt = settings?.piggyStartedAt
 
   // Single open section — only one open at a time
   const [openSection, setOpenSection] = useState<string>('club-info')
@@ -720,6 +724,45 @@ export default function Settings() {
                 </button>
               </div>
             )}
+          </div>
+        </SettingsSection>
+
+        {/* ── 4.5: Piggy ────────────────────────────────────────────────── */}
+        <SettingsSection
+          id="piggy"
+          title="Piggy (cash float)"
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 10h-1a7 7 0 0 0-14 0H3a1 1 0 0 0 0 2h1v2a4 4 0 0 0 4 4h1v2a1 1 0 0 0 2 0v-2h4v2a1 1 0 0 0 2 0v-2h0a4 4 0 0 0 4-4v-2h1a1 1 0 0 0 0-2z" />
+              <circle cx="15" cy="9" r="1" fill="currentColor" />
+            </svg>
+          }
+          isOpen={openSection === 'piggy'}
+          onToggle={() => toggleSection('piggy')}
+        >
+          <div className="mt-3 space-y-3">
+            <div className="bg-bg rounded-xl p-3 border border-border">
+              <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Current piggy</p>
+              <p className="text-[24px] font-mono font-bold text-text tabular-nums mt-1">
+                ₹{Math.max(0, piggy?.current ?? 0).toLocaleString('en-IN')}
+              </p>
+              <div className="text-[11px] text-text-faint font-mono mt-2 space-y-0.5">
+                <p>Opening ₹{(piggy?.opening ?? 0).toLocaleString('en-IN')}</p>
+                <p>+ ₹{(piggy?.cashIn ?? 0).toLocaleString('en-IN')} collected · − ₹{(piggy?.restockOut ?? 0).toLocaleString('en-IN')} restocks</p>
+                {piggyStartedAt && (
+                  <p>Started {format(new Date(piggyStartedAt), 'd MMM yyyy')}</p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => navigate('/piggy')}
+              className="w-full min-h-[44px] flex flex-col items-start px-4 py-3 rounded-xl bg-bg border border-border active:bg-bg-card transition-colors"
+            >
+              <span className="text-[14px] text-text font-semibold">View piggy details</span>
+              <span className="text-[11px] text-text-faint mt-0.5">
+                Edit opening balance, see restock log, view cash collected by week.
+              </span>
+            </button>
           </div>
         </SettingsSection>
 

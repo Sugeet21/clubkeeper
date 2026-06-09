@@ -11,6 +11,7 @@ import {
   updateSession,
   updateSessionNotify,
   moveSessionToTable,
+  recordSessionPaymentBreakdown,
   IncompatibleTableError,
   TableOccupiedError,
 } from '../db/queries'
@@ -22,6 +23,7 @@ import { NOTIFY_PRESETS } from '../lib/notifyPresets'
 import { Modal } from '../components/Modal'
 import { AddItemBottomSheet } from '../components/AddItemBottomSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
+import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
 import type { Session, GameTable } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -331,14 +333,19 @@ function formatPlayers(s: Session): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SessionDetail() {
-  const { sessionId } = useParams<{ sessionId: string }>()
+  const { sessionId: rawSessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
-  const sid = Number(sessionId)
+  // Coerce route param at the boundary. Anything downstream gets `sid: number`.
+  const sid = Number(rawSessionId)
+  const sidValid = Number.isFinite(sid) && sid > 0
 
   // undefined = loading, null = not found, Session = loaded
   const session = useLiveQuery<Session | null>(
-    async () => (await db.sessions.get(sid)) ?? null,
-    [sid],
+    async () => {
+      if (!sidValid) return null
+      return (await db.sessions.get(sid)) ?? null
+    },
+    [sid, sidValid],
   )
 
   const table = useTable(session != null ? session.tableId : undefined)
@@ -367,6 +374,14 @@ export default function SessionDetail() {
   const [paymentScreenOpen, setPaymentScreenOpen] = useState(false)
   const [finalRoundedMs, setFinalRoundedMs] = useState(0)
   const [finalGrandTotal, setFinalGrandTotal] = useState(0)
+  // v13: split-payment capture sheet (sits above the QR screen)
+  const [splitSheetOpen, setSplitSheetOpen] = useState(false)
+  const [breakdownRecorded, setBreakdownRecorded] = useState(false)
+  // ADDENDUM-4: if we land on a session that's already stopped but has no
+  // paymentBreakdown (the user closed the tab during Phase 2 capture), we
+  // re-enter the payment flow on mount. Tracked here so the auto-open effect
+  // fires exactly once per mount.
+  const [autoOpenHandled, setAutoOpenHandled] = useState(false)
 
   // Populate edit-start fields whenever the modal is opened
   useEffect(() => {
@@ -377,6 +392,50 @@ export default function SessionDetail() {
     setEditError(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editStartOpen])
+
+  // ADDENDUM-4: Auto-resume payment capture if we land on a completed session
+  // whose paymentBreakdown was never recorded (e.g. user closed the tab during
+  // the Phase 2 sheet). We compute the grand total from current DB state and
+  // open the payment screen + split sheet automatically. Runs once per mount,
+  // after `session` and `items` finish loading.
+  // ADDENDUM-5: if grand total is 0 (free / zero-amount session), skip the
+  // sheet entirely and record {0,0,0} directly.
+  useEffect(() => {
+    if (autoOpenHandled) return
+    if (!session || session.status !== 'completed') return
+    if (session.paymentBreakdown !== undefined) return
+    // items is always an array (useLiveQuery default), but bail until loaded
+    if (items === undefined) return
+    // If the payment screen is already open, the user just went through the
+    // normal Stop flow on THIS mount — handleConfirmStop has populated
+    // finalGrandTotal / finalRoundedMs and is showing the QR. Do not auto-
+    // open the sheet (that's a re-entry-only behaviour). Mark handled so
+    // we never run again this mount.
+    if (paymentScreenOpen) {
+      setAutoOpenHandled(true)
+      return
+    }
+    const itemsTotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
+    const grandTotal = session.amount + itemsTotal
+    setAutoOpenHandled(true)
+    setFinalGrandTotal(grandTotal)
+    setFinalRoundedMs(
+      session.roundedDurationMs ??
+        ((session.endedAt ?? Date.now()) - session.startedAt - session.pausedTotalMs),
+    )
+    setPaymentScreenOpen(true)
+    if (grandTotal === 0) {
+      // ADDENDUM-5: zero-amount path. Write {0,0,0} immediately, mark recorded,
+      // and let the QR screen render the "Done — back to tables" button.
+      const sid = Number(session.id)
+      void recordSessionPaymentBreakdown(sid, { cash: 0, upi: 0, wallet: 0 })
+        .then(() => setBreakdownRecorded(true))
+        .catch(() => { /* leave to user via standard sheet flow */ })
+    } else {
+      setSplitSheetOpen(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, items, autoOpenHandled])
 
   // ─── Loading / not-found guards ───────────────────────────────────────────
 
@@ -613,13 +672,55 @@ export default function SessionDetail() {
               Works with GPay, PhonePe, Paytm, BHIM
             </p>
           )}
-          <button
-            onClick={() => navigate('/tables', { replace: true })}
-            className="w-full min-h-[48px] rounded-xl bg-accent text-bg font-semibold text-base active:scale-[0.98] transition-transform"
-          >
-            Done — back to tables
-          </button>
+          {breakdownRecorded ? (
+            <button
+              onClick={() => navigate('/tables', { replace: true })}
+              className="w-full min-h-[48px] rounded-xl bg-accent text-bg font-semibold text-base active:scale-[0.98] transition-transform"
+            >
+              Done — back to tables
+            </button>
+          ) : (
+            // ADDENDUM-4: no "Skip for now" — payment capture is mandatory.
+            // Cancel inside the sheet still closes it; the user can re-tap
+            // Record payment. Closing the tab is the only escape; reopening
+            // the session auto-re-prompts via the mount effect above.
+            <button
+              onClick={async () => {
+                // ADDENDUM-5: zero-amount sessions skip the sheet entirely.
+                if (finalGrandTotal === 0) {
+                  const sid = Number(session.id)
+                  await recordSessionPaymentBreakdown(sid, { cash: 0, upi: 0, wallet: 0 })
+                  setBreakdownRecorded(true)
+                  return
+                }
+                setSplitSheetOpen(true)
+              }}
+              className="w-full min-h-[48px] rounded-xl bg-accent text-bg font-semibold text-base active:scale-[0.98] transition-transform"
+            >
+              {finalGrandTotal === 0 ? 'Mark as paid' : 'Record payment'}
+            </button>
+          )}
         </footer>
+
+        <PaymentSplitSheet
+          open={splitSheetOpen}
+          total={finalGrandTotal}
+          headline={summaryLine}
+          onCancel={() => setSplitSheetOpen(false)}
+          onConfirm={async (breakdown, customerId) => {
+            // Defense: coerce session.id to a number before crossing the
+            // queries.ts boundary. Dexie autoincrement keys are numbers,
+            // but explicit Number() guards against any string leakage.
+            const numericSessionId = Number(session.id)
+            await recordSessionPaymentBreakdown(
+              numericSessionId,
+              breakdown,
+              customerId ?? undefined,
+            )
+            setSplitSheetOpen(false)
+            setBreakdownRecorded(true)
+          }}
+        />
       </div>
     )
   }

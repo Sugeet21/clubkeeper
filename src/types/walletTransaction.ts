@@ -1,6 +1,6 @@
 export type WalletTransactionType = 'credit' | 'debit' | 'adjustment'
 export type WalletPaymentMode = 'cash' | 'upi' | 'card'
-export type WalletReferenceType = 'topup' | 'session' | 'item' | 'manual' | 'refund'
+export type WalletReferenceType = 'topup' | 'session' | 'item' | 'manual' | 'refund' | 'canteen_sale'
 
 export interface WalletTransaction {
   id: string                            // UUID v4

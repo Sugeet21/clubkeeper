@@ -5,10 +5,12 @@ import { useToastStore } from '../store/toastStore'
 import {
   getCanteenItems,
   getLowStockThreshold,
+  getPiggyBalance,
   softDeleteCanteenItem,
 } from '../db/queries'
 import { Modal } from '../components/Modal'
 import { CanteenItemFormModal } from '../components/CanteenItemFormModal'
+import { RestockSheet } from '../components/RestockSheet'
 import type { CanteenItem } from '../types'
 
 function formatINR(n: number): string {
@@ -70,11 +72,13 @@ function ListArea({
   threshold,
   onEdit,
   onDelete,
+  onRestock,
 }: {
   items: CanteenItem[] | undefined
   threshold: number
   onEdit: (item: CanteenItem) => void
   onDelete: (item: CanteenItem) => void
+  onRestock: (item: CanteenItem) => void
 }) {
   if (items === undefined) {
     return (
@@ -112,40 +116,52 @@ function ListArea({
       {items.map((item) => (
         <div
           key={item.id}
-          className="bg-bg-card border border-border rounded-2xl p-4 flex items-center gap-3"
+          className="bg-bg-card border border-border rounded-2xl p-4"
         >
-          {/* Name + price */}
-          <div className="flex-1 min-w-0">
-            <p className="text-[17px] font-bold text-text truncate">{item.name}</p>
-            <p className="text-sm text-text-dim mt-0.5">{formatINR(item.defaultPrice)}</p>
+          {/* Row 1: Name + price + Stock pill + Edit + Delete */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-[17px] font-bold text-text truncate">{item.name}</p>
+              <p className="text-sm text-text-dim mt-0.5">{formatINR(item.defaultPrice)}</p>
+            </div>
+
+            <StockPill item={item} threshold={threshold} />
+
+            <button
+              onClick={() => onEdit(item)}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim shrink-0"
+              aria-label={`Edit ${item.name}`}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+            </button>
+
+            <button
+              onClick={() => onDelete(item)}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-busy shrink-0"
+              aria-label={`Delete ${item.name}`}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+            </button>
           </div>
 
-          {/* Stock pill */}
-          <StockPill item={item} threshold={threshold} />
-
-          {/* Edit */}
+          {/* Row 2: Restock button (full-width-ish, secondary style) */}
           <button
-            onClick={() => onEdit(item)}
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim shrink-0"
-            aria-label={`Edit ${item.name}`}
+            onClick={() => onRestock(item)}
+            className="mt-3 bg-bg border border-border h-9 px-3 rounded-xl text-text-dim text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.98] transition-transform"
+            aria-label={`Restock ${item.name}`}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-3-6.7" />
+              <path d="M21 4v6h-6" />
             </svg>
-          </button>
-
-          {/* Delete */}
-          <button
-            onClick={() => onDelete(item)}
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center text-busy shrink-0"
-            aria-label={`Delete ${item.name}`}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 6h18" />
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-            </svg>
+            Restock
           </button>
         </div>
       ))}
@@ -161,11 +177,15 @@ export default function Canteen() {
   const [editingItem, setEditingItem] = useState<CanteenItem | undefined>()
   const [deletingItem, setDeletingItem] = useState<CanteenItem | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [restockItem, setRestockItem] = useState<CanteenItem | null>(null)
 
   // undefined = still loading; [] = loaded, empty; [...] = loaded, has items
   const items = useLiveQuery<CanteenItem[] | undefined>(() => getCanteenItems(false), [])
   const allItems = useLiveQuery<CanteenItem[] | undefined>(() => getCanteenItems(true), [])
   const threshold = useLiveQuery(() => getLowStockThreshold(), [], 5) ?? 5
+  // Piggy balance — live, used by RestockSheet to gate the Piggy source option
+  const piggy = useLiveQuery(() => getPiggyBalance(), [])
+  const piggyCurrent = Math.max(0, piggy?.current ?? 0)
 
   function openAdd() {
     setEditingItem(undefined)
@@ -217,6 +237,7 @@ export default function Canteen() {
           threshold={threshold}
           onEdit={openEdit}
           onDelete={setDeletingItem}
+          onRestock={setRestockItem}
         />
       </div>
 
@@ -236,6 +257,23 @@ export default function Canteen() {
         onClose={() => setModalOpen(false)}
         item={editingItem}
         existingItems={allItems ?? []}
+      />
+
+      {/* Restock bottom sheet */}
+      <RestockSheet
+        open={restockItem !== null}
+        item={restockItem}
+        piggyBalance={piggyCurrent}
+        onCancel={() => setRestockItem(null)}
+        onSaved={({ quantityAdded, cost, source }) => {
+          const name = restockItem?.name ?? 'Item'
+          const piggyTail =
+            source === 'piggy'
+              ? ` · piggy ₹${Math.max(0, piggyCurrent - cost).toLocaleString('en-IN')}`
+              : ''
+          showToast(`Restocked: ${name} +${quantityAdded}${piggyTail}`, 'success')
+          setRestockItem(null)
+        }}
       />
 
       {/* Delete confirm modal */}

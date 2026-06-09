@@ -9,7 +9,7 @@ import {
 } from 'date-fns'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/database'
-import { getCanteenItems, getLowStockThreshold } from '../db/queries'
+import { getCanteenItems, getLowStockThreshold, getPiggyBalance } from '../db/queries'
 import { useTables, useActiveSessions, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatDuration } from '../lib/time'
@@ -30,6 +30,8 @@ import HourlyHeatmap from './summary/HourlyHeatmap'
 import TopTablesList from './summary/TopTablesList'
 import LowStockStrip from './summary/LowStockStrip'
 import TopCanteenItems from './summary/TopCanteenItems'
+import PaymentModeStrip from './summary/PaymentModeStrip'
+import CashFlowStrip from './summary/CashFlowStrip'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -344,6 +346,123 @@ export default function Summary() {
   const detailSessions = currentDateItems?.sessions ?? []
   const detailItemsMap = currentDateItems?.itemsBySessionId ?? new Map<number, SessionItem[]>()
 
+  // Walk-in canteen sales for the viewed date — rolls into canteen revenue.
+  // Phase 4 will reuse this query for the PAYMENT MODE breakdown tile.
+  const canteenSalesForDate = useLiveQuery(
+    async () => {
+      const start = startOfDay(viewedDate).getTime()
+      const end = endOfDay(viewedDate).getTime()
+      return db.canteenSales
+        .where('createdAt')
+        .between(start, end, true, true)
+        .toArray()
+    },
+    [viewedDateMs],
+    [],
+  )
+  const walkInCanteenRevenue = canteenSalesForDate.reduce(
+    (sum, sale) => sum + sale.total,
+    0,
+  )
+
+  // ── PAYMENT MODE breakdown (Pattern T4 — excludes running sessions) ───────
+  // Source data:
+  //   (a) stopped sessions on the viewed date that have paymentBreakdown
+  //   (b) walk-in canteen sales on the viewed date (always have breakdown)
+  // Running sessions have no breakdown yet; they are EXCLUDED here and a
+  // small caveat reports the count. The headline revenue total continues
+  // to include their live amounts (computed elsewhere in render body).
+  const paymentMode = useMemo(() => {
+    let cash = 0
+    let upi = 0
+    let wallet = 0
+    let runningCount = 0
+    for (const s of detailSessions) {
+      if (s.status !== 'completed') {
+        runningCount += 1
+        continue
+      }
+      const pb = s.paymentBreakdown
+      if (!pb) continue // legacy/edge — skip rather than guess
+      cash += pb.cash
+      upi += pb.upi
+      wallet += pb.wallet
+    }
+    for (const sale of canteenSalesForDate) {
+      const pb = sale.paymentBreakdown
+      cash += pb.cash
+      upi += pb.upi
+      wallet += pb.wallet
+    }
+    return { cash, upi, wallet, runningCount }
+  }, [detailSessions, canteenSalesForDate])
+  const paymentModeTotal = paymentMode.cash + paymentMode.upi + paymentMode.wallet
+
+  // ── CASH FLOW — piggy + today's restocks ─────────────────────────────────
+  // Piggy balance is live (re-fires on any session/canteenSale/walletTx/restock write).
+  const piggy = useLiveQuery(() => getPiggyBalance(), [])
+  // Restocks on the viewed date (any source for the "stock bought today" tile)
+  const stockPurchasesForDate = useLiveQuery(
+    async () => {
+      const start = startOfDay(viewedDate).getTime()
+      const end = endOfDay(viewedDate).getTime()
+      return db.stockPurchases
+        .where('createdAt')
+        .between(start, end, true, true)
+        .toArray()
+    },
+    [viewedDateMs],
+    [],
+  )
+  const spentOnStockTodayTotal = stockPurchasesForDate.reduce(
+    (sum, p) => sum + p.cost,
+    0,
+  )
+  const spentOnStockTodayPiggy = stockPurchasesForDate
+    .filter((p) => p.source === 'piggy')
+    .reduce((sum, p) => sum + p.cost, 0)
+  const stockPurchaseCount = stockPurchasesForDate.length
+
+  // Cash added to piggy on the viewed date — sums all three cash-in sources
+  // restricted to viewed date AND piggyStartedAt (settings.piggyStartedAt is
+  // baked into the piggy.cashIn aggregate, so we re-derive only for the viewed
+  // date here — past dates before piggyStartedAt naturally show 0).
+  const cashInOnDate = useLiveQuery(
+    async () => {
+      const start = startOfDay(viewedDate).getTime()
+      const end = endOfDay(viewedDate).getTime()
+      const settings = await db.settings.get(1)
+      const since = settings?.piggyStartedAt ?? 0
+      const winStart = Math.max(start, since)
+      if (winStart > end) return 0
+
+      const [sessions, sales, walletCredits] = await Promise.all([
+        db.sessions
+          .where('endedAt')
+          .between(winStart, end, true, true)
+          .filter(
+            (s) => s.status === 'completed' && s.paymentBreakdown !== undefined,
+          )
+          .toArray(),
+        db.canteenSales
+          .where('createdAt')
+          .between(winStart, end, true, true)
+          .toArray(),
+        db.walletTransactions
+          .where('createdAt')
+          .between(winStart, end, true, true)
+          .filter((t) => t.type === 'credit' && t.paymentMode === 'cash')
+          .toArray(),
+      ])
+      const a = sessions.reduce((sum, s) => sum + (s.paymentBreakdown?.cash ?? 0), 0)
+      const b = sales.reduce((sum, c) => sum + c.paymentBreakdown.cash, 0)
+      const c = walletCredits.reduce((sum, t) => sum + t.amount, 0)
+      return a + b + c
+    },
+    [viewedDateMs],
+    0,
+  )
+
   // ── Pattern T4: render-body running-session addition ────────────────────────
   // Only add live amounts when viewing today (past dates have no running sessions)
   const runningRevenueToday = useMemo(() => {
@@ -360,10 +479,12 @@ export default function Summary() {
   }, [activeSessions, isViewedToday, viewedDateMs]) // useTick re-renders drive this
 
   // Total revenue = DB-static completed + items + live running (today only)
+  // + walk-in canteen sales (Phase 3 — atomic rows, no "running" equivalent)
   const totalRevenue =
     (currentData?.sessionsRevenue ?? 0) +
     (currentData?.itemsRevenue ?? 0) +
-    runningRevenueToday
+    runningRevenueToday +
+    walkInCanteenRevenue
 
   // ── Revenue split (tables vs canteen) ──────────────────────────────────────
   // Compute from detail sessions + items
@@ -380,6 +501,8 @@ export default function Summary() {
     const items = detailItemsMap.get(s.id!) ?? []
     canteenRevenue += calculateItemsTotal(items)
   }
+  // Walk-in canteen sales roll into the same canteen tile
+  canteenRevenue += walkInCanteenRevenue
   // Add today's running items from active sessions if not already counted
   // (active sessions that haven't stopped yet don't have items via detailItemsMap
   // unless the query caught them — it does since startedAt filter covers them)
@@ -544,6 +667,27 @@ export default function Summary() {
 
       {/* Revenue split — Tables vs Canteen */}
       <RevenueSplitBar tablesRevenue={tablesRevenue} canteenRevenue={canteenRevenue} />
+
+      {/* Payment mode breakdown — hidden when zero totals */}
+      {paymentModeTotal > 0 && (
+        <PaymentModeStrip
+          cash={paymentMode.cash}
+          upi={paymentMode.upi}
+          wallet={paymentMode.wallet}
+          runningSessionsExcluded={paymentMode.runningCount}
+        />
+      )}
+
+      {/* Cash flow — piggy + today's restocks */}
+      <CashFlowStrip
+        piggyCurrent={piggy?.current ?? 0}
+        piggyOpening={piggy?.opening ?? 0}
+        cashInToday={cashInOnDate}
+        spentOnStockToday={spentOnStockTodayPiggy}
+        spentOnStockTodayCount={stockPurchaseCount}
+        spentOnStockTodayTotal={spentOnStockTodayTotal}
+        warnNegative={(piggy?.current ?? 0) < 0}
+      />
 
       {/* Key metrics strip */}
       <div className="grid grid-cols-3 gap-2 px-5 mt-5">

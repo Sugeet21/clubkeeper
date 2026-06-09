@@ -1,5 +1,13 @@
 import Dexie, { type Table } from 'dexie'
-import type { GameTable, Session, ClubSettings, SessionItem, CanteenItem } from '../types'
+import type {
+  GameTable,
+  Session,
+  ClubSettings,
+  SessionItem,
+  CanteenItem,
+  CanteenSale,
+  StockPurchase,
+} from '../types'
 import type { Customer } from '../types/customer'
 import type { WalletTransaction } from '../types/walletTransaction'
 
@@ -17,6 +25,8 @@ export class ClubKeeperDB extends Dexie {
   customers!: Table<Customer, string>
   walletTransactions!: Table<WalletTransaction, string>
   canteenItems!: Table<CanteenItem, number>
+  canteenSales!: Table<CanteenSale, string>
+  stockPurchases!: Table<StockPurchase, string>
 
   constructor(dbName: string) {
     super(dbName)
@@ -181,6 +191,59 @@ export class ClubKeeperDB extends Dexie {
       walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
       canteenItems: '++id, name, isActive, sortOrder',
     })
+    // Version 13: split payments + walk-in canteen sale + piggy bank.
+    // Adds:
+    //  - canteenSales table (walk-in / direct canteen sale, no table session)
+    //  - stockPurchases table (canteen restock log; source 'piggy' | 'other')
+    //  - Session.paymentBreakdown (optional; populated for stopped sessions by upgrade)
+    //  - ClubSettings.piggyOpeningBalance (default 0), piggyStartedAt (set to now if missing)
+    // .upgrade() backfills paymentBreakdown for every completed session as
+    // { cash: amount, upi: 0, wallet: 0 } (assume historic was all-cash) and
+    // initialises piggy settings if absent. Running sessions are left untouched —
+    // their breakdown is set at stopSession in Phase 2.
+    this.version(13)
+      .stores({
+        gameTables: '++id, name, gameType, sortOrder, outOfService',
+        sessions: '++id, tableId, status, startedAt, endedAt',
+        settings: 'id',
+        sessionItems: '++id, sessionId, addedAt',
+        customers: 'id, phone, walkInCode, lastVisitAt',
+        walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+        canteenItems: '++id, name, isActive, sortOrder',
+        canteenSales: 'id, createdAt, customerId',
+        stockPurchases: 'id, createdAt, canteenItemId, source',
+      })
+      .upgrade(async (tx) => {
+        const sessionsTable = tx.table<Session, number>('sessions')
+        const settingsTable = tx.table<ClubSettings, number>('settings')
+
+        // Backfill paymentBreakdown for completed sessions only.
+        // Existing payments were entirely cash before split-payment support.
+        const completed = await sessionsTable
+          .filter((s) => s.endedAt !== null && s.paymentBreakdown === undefined)
+          .toArray()
+        for (const s of completed) {
+          if (s.id === undefined) continue
+          await sessionsTable.update(s.id, {
+            paymentBreakdown: {
+              cash: s.amount ?? 0,
+              upi: 0,
+              wallet: 0,
+            },
+          })
+        }
+
+        // Initialise piggy settings if absent. Do not overwrite owner-set values.
+        const settingsRow = await settingsTable.get(1)
+        if (settingsRow) {
+          const patch: Partial<ClubSettings> = {}
+          if (settingsRow.piggyOpeningBalance === undefined) patch.piggyOpeningBalance = 0
+          if (settingsRow.piggyStartedAt === undefined) patch.piggyStartedAt = Date.now()
+          if (Object.keys(patch).length > 0) {
+            await settingsTable.update(1, patch)
+          }
+        }
+      })
   }
 }
 

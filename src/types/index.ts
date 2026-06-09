@@ -79,6 +79,54 @@ export interface Session {
   toleranceMinutesSnapshot?: number   // v10: captured at startSession; default 10
   rateCardBillingSnapshot?: 'minimum' | 'prorated'  // v11: captured at startSession; default 'prorated'
   isBackEntry?: boolean               // v12: true if logged via Back Entry flow, not live timer
+  paymentBreakdown?: PaymentBreakdown // v13: cash/UPI/wallet split captured at stopSession; sum === amount
+}
+
+/**
+ * How a bill was paid. All three values are integer rupees ≥ 0.
+ * Invariant (enforced at write time in Phase 2+):
+ *   paymentBreakdown.cash + paymentBreakdown.upi + paymentBreakdown.wallet === total
+ * Backfill rule: existing completed sessions get { cash: amount, upi: 0, wallet: 0 }.
+ */
+export interface PaymentBreakdown {
+  cash: number
+  upi: number
+  wallet: number
+}
+
+/**
+ * Walk-in canteen sale (no table session). Atomic — no start/end, just one
+ * row written at confirm time. Stock decrements happen in the same Dexie tx.
+ */
+export interface CanteenSale {
+  id: string                                                  // UUID v4
+  createdAt: number                                           // Unix ms
+  items: Array<{
+    name: string
+    price: number                                             // integer rupees
+    quantity: number                                          // integer ≥ 1
+    canteenItemId?: number                                    // matched CanteenItem.id; absent for unmatched (v1: always matched)
+  }>
+  subtotal: number                                            // sum of price * quantity (integer rupees)
+  paymentBreakdown: PaymentBreakdown                          // cash + upi + wallet === total
+  total: number                                               // === subtotal in v1 (no discount); kept for future-proofing
+  customerId?: string                                         // present only when wallet portion > 0
+  notes?: string                                              // max 200 chars
+}
+
+/**
+ * Canteen restock log entry. Source 'piggy' deducts from piggy balance;
+ * 'other' does not. Inserted atomically with CanteenItem.currentStock
+ * increment when stockEnabled=true.
+ */
+export interface StockPurchase {
+  id: string                  // UUID v4
+  canteenItemId: number       // FK → CanteenItem.id
+  quantityAdded: number       // integer ≥ 1
+  cost: number                // total cost paid for this restock (integer rupees, ≥ 0)
+  source: 'piggy' | 'other'
+  createdAt: number           // Unix ms
+  notes?: string              // max 200 chars
 }
 
 export interface ClubSettings {
@@ -92,6 +140,8 @@ export interface ClubSettings {
   alarmSoundEnabled?: boolean    // default true; stored in Dexie, NOT localStorage
   alarmVibrationEnabled?: boolean // default true; stored in Dexie, NOT localStorage
   lowStockThreshold?: number     // default 5; treat missing as 5
+  piggyOpeningBalance?: number   // v13: owner-settable opening cash float; treat missing as 0
+  piggyStartedAt?: number        // v13: Unix ms; piggy aggregation window start. Set at v13 upgrade if absent.
 }
 
 export interface CanteenItem {

@@ -182,7 +182,7 @@ export default function Home() {
       )}
 
       <div className={showInstall || orphanedSessions.length > 0 ? 'px-4 mt-0' : 'pt-safe px-4'}>
-        <TopBar />
+        <TopBar onQuickSalePress={() => navigate('/quick-sale')} />
         <SummaryStrip totalTables={totalTables} runningCount={runningCount} todayTotal={todayTotal} currency={currency} />
         <FilterPills pills={pills} active={activeFilter} onChange={setActiveFilter} />
       </div>

@@ -4,9 +4,10 @@ import { format } from 'date-fns'
 
 interface Props {
   onWalletPress?: () => void
+  onQuickSalePress?: () => void
 }
 
-export default function TopBar({ onWalletPress }: Props) {
+export default function TopBar({ onWalletPress, onQuickSalePress }: Props) {
   const navigate = useNavigate()
   const subtitle = format(new Date(), "EEE · d MMM · h:mm a")
   const [online, setOnline] = useState(navigator.onLine)
@@ -23,12 +24,11 @@ export default function TopBar({ onWalletPress }: Props) {
   }, [])
 
   return (
-    <div className="flex items-start justify-between pt-4 pb-3">
-      <div>
+    <div className="pt-4 pb-3">
+      {/* Top row: heading + icons (icon group unchanged) */}
+      <div className="flex items-start justify-between">
         <h1 className="text-[22px] font-bold tracking-tight text-text leading-tight">Today</h1>
-        <p className="text-[12px] text-text-dim font-mono mt-0.5">{subtitle}</p>
-      </div>
-      <div className="flex items-center gap-1 mt-0.5">
+        <div className="flex items-center gap-1 mt-0.5">
         {!online && (
           <span className="flex items-center gap-1 text-[10px] font-mono text-text-faint mr-1">
             <span className="w-1.5 h-1.5 rounded-full bg-text-faint shrink-0" />
@@ -77,6 +77,25 @@ export default function TopBar({ onWalletPress }: Props) {
             />
           </svg>
         </button>
+        </div>
+      </div>
+      {/* Subtitle row — date on the left, optional Quick Sale pill on the right.
+          py-1 keeps the visible row height ≥ 12px text + ~16px button = 36px,
+          and the pill's own h-9 (36px) inside py-1 (8px each side) gives a
+          52px total tap zone — comfortably above 44px. */}
+      <div className="flex items-center justify-between mt-1 py-1 gap-2">
+        <p className="text-[12px] text-text-dim font-mono truncate min-w-0">{subtitle}</p>
+        {onQuickSalePress && (
+          <button
+            onClick={onQuickSalePress}
+            className="h-9 px-3.5 rounded-full bg-accent text-bg text-[12px] font-semibold flex items-center gap-1 shrink-0 active:scale-95 transition-transform"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            Quick Sale
+          </button>
+        )}
       </div>
     </div>
   )

@@ -4,7 +4,15 @@ import { calculateAmount, applyRounding } from '../lib/money'
 import { validatePlayerName, validateItemName, validateCanteenItemName } from '../lib/validation'
 import { seedIfEmpty } from './seed'
 import { normalizeName, findMatchingCanteenItem } from '../lib/canteenMatch'
-import type { GameTable, Session, ClubSettings, SessionItem, CanteenItem } from '../types'
+import type {
+  GameTable,
+  Session,
+  ClubSettings,
+  SessionItem,
+  CanteenItem,
+  CanteenSale,
+  StockPurchase,
+} from '../types'
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -853,4 +861,524 @@ export async function moveSessionToTable(
       tableMoves: [...existingMoves, move],
     })
   })
+}
+
+/**
+ * Errors thrown by recordSessionPaymentBreakdown.
+ */
+export class PaymentBreakdownInvalidError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PaymentBreakdownInvalidError'
+  }
+}
+
+export class WalletInsufficientError extends Error {
+  available: number
+  requested: number
+  constructor(available: number, requested: number) {
+    super(`Wallet has ₹${available.toLocaleString('en-IN')}, requested ₹${requested.toLocaleString('en-IN')}.`)
+    this.name = 'WalletInsufficientError'
+    this.available = available
+    this.requested = requested
+  }
+}
+
+/**
+ * Atomically persist a session's paymentBreakdown and, if a wallet portion was
+ * used, debit the linked customer's wallet + write a WalletTransaction row.
+ *
+ * Pre-conditions (validated inside the tx):
+ *  - cash, upi, wallet are non-negative integers
+ *  - cash + upi + wallet === session.amount EXACTLY
+ *  - if wallet > 0: customerId must be provided AND customer.walletBalance >= wallet
+ *
+ * All writes happen in ONE Dexie transaction (Pattern D7). Inner walletTransactions
+ * helpers are inlined here — never call this from inside another transaction.
+ */
+export async function recordSessionPaymentBreakdown(
+  sessionId: number,
+  breakdown: { cash: number; upi: number; wallet: number },
+  customerId?: string,
+): Promise<void> {
+  // Defense-in-depth: TypeScript's `sessionId: number` cannot prevent a string
+  // sneaking in via untyped JS or route param leakage. db.sessions.get('2')
+  // silently returns undefined (autoincrement keys are numbers), which causes
+  // session.amount to read as 0 downstream — exact bug shipped in Phase 2.
+  if (typeof sessionId !== 'number' || !Number.isFinite(sessionId) || sessionId <= 0) {
+    throw new Error(`recordSessionPaymentBreakdown: invalid sessionId (got ${typeof sessionId} ${String(sessionId)})`)
+  }
+  const { cash, upi, wallet } = breakdown
+  if (
+    !Number.isInteger(cash) || cash < 0 ||
+    !Number.isInteger(upi) || upi < 0 ||
+    !Number.isInteger(wallet) || wallet < 0
+  ) {
+    throw new PaymentBreakdownInvalidError('Cash, UPI, and wallet must be non-negative integers.')
+  }
+  if (wallet > 0 && !customerId) {
+    throw new PaymentBreakdownInvalidError('A linked customer is required for wallet payments.')
+  }
+
+  await db.transaction(
+    'rw',
+    db.sessions,
+    db.sessionItems,
+    db.customers,
+    db.walletTransactions,
+    async () => {
+      const session = await db.sessions.get(sessionId)
+      if (!session) throw new Error(`Session ${sessionId} not found`)
+      if (session.status !== 'completed') {
+        throw new PaymentBreakdownInvalidError('Session must be stopped before recording payment.')
+      }
+      // Grand total = table amount (session.amount) + canteen items total.
+      // session.amount is the time-cost only; canteen items live in a separate
+      // table and must be summed here so the breakdown invariant matches the
+      // total the sheet displayed to the user.
+      const sessionItems = await db.sessionItems
+        .where('sessionId')
+        .equals(sessionId)
+        .toArray()
+      const itemsTotal = sessionItems.reduce(
+        (sum, i) => sum + i.price * i.quantity,
+        0,
+      )
+      const grandTotal = session.amount + itemsTotal
+      if (cash + upi + wallet !== grandTotal) {
+        throw new PaymentBreakdownInvalidError(
+          `Breakdown sum ₹${cash + upi + wallet} does not match total ₹${grandTotal}.`,
+        )
+      }
+
+      if (wallet > 0) {
+        const customer = await db.customers.get(customerId!)
+        if (!customer) throw new Error('Customer not found')
+        if (customer.walletBalance < wallet) {
+          throw new WalletInsufficientError(customer.walletBalance, wallet)
+        }
+        const now = Date.now()
+        const newBalance = customer.walletBalance - wallet
+        await db.walletTransactions.add({
+          id: crypto.randomUUID(),
+          customerId: customer.id,
+          type: 'debit',
+          amount: wallet,
+          balanceAfter: newBalance,
+          paymentMode: null,
+          referenceType: 'session',
+          referenceId: sessionId.toString(),
+          notes: null,
+          createdAt: now,
+        })
+        await db.customers.update(customer.id, {
+          walletBalance: newBalance,
+          lastVisitAt: now,
+        })
+      }
+
+      await db.sessions.update(sessionId, {
+        paymentBreakdown: { cash, upi, wallet },
+      })
+    },
+  )
+}
+
+/**
+ * Errors thrown by createCanteenSale.
+ */
+export class CanteenSaleInvalidError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CanteenSaleInvalidError'
+  }
+}
+
+export class CanteenSaleStockError extends Error {
+  itemName: string
+  available: number
+  constructor(itemName: string, available: number) {
+    super(`Insufficient stock for "${itemName}". Available: ${available}.`)
+    this.name = 'CanteenSaleStockError'
+    this.itemName = itemName
+    this.available = available
+  }
+}
+
+export interface CanteenSaleLineInput {
+  canteenItemId: number
+  name: string
+  price: number
+  quantity: number
+}
+
+/**
+ * Atomically persist a walk-in canteen sale.
+ *
+ * In ONE flat Dexie transaction (Pattern D7):
+ *   1. Aggregate qty across duplicate lines per canteenItemId so the stock
+ *      sufficiency check sees the true total per item.
+ *   2. For every line whose CanteenItem has stockEnabled=true: decrement
+ *      currentStock by the aggregated qty; throws CanteenSaleStockError
+ *      (tx rolls back) if any line would push stock negative.
+ *   3. Insert the CanteenSale row.
+ *   4. If wallet portion > 0: write a WalletTransaction (debit,
+ *      referenceType='canteen_sale') AND decrement customer.walletBalance.
+ *
+ * Invariant: paymentBreakdown.cash + .upi + .wallet === total EXACTLY.
+ * customerId is REQUIRED iff wallet > 0.
+ */
+export async function createCanteenSale(input: {
+  items: CanteenSaleLineInput[]
+  paymentBreakdown: { cash: number; upi: number; wallet: number }
+  customerId?: string
+  notes?: string
+}): Promise<string> {
+  const { cash, upi, wallet } = input.paymentBreakdown
+  if (
+    !Number.isInteger(cash) || cash < 0 ||
+    !Number.isInteger(upi) || upi < 0 ||
+    !Number.isInteger(wallet) || wallet < 0
+  ) {
+    throw new CanteenSaleInvalidError('Cash, UPI, and wallet must be non-negative integers.')
+  }
+  if (wallet > 0 && !input.customerId) {
+    throw new CanteenSaleInvalidError('A linked customer is required for wallet payments.')
+  }
+  if (input.items.length === 0) {
+    throw new CanteenSaleInvalidError('Cannot create an empty canteen sale.')
+  }
+  // Validate each line
+  for (const line of input.items) {
+    if (!Number.isInteger(line.canteenItemId) || line.canteenItemId <= 0) {
+      throw new CanteenSaleInvalidError('Invalid canteen item reference.')
+    }
+    if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
+      throw new CanteenSaleInvalidError('Line quantity must be a positive integer.')
+    }
+    if (!Number.isInteger(line.price) || line.price < 0) {
+      throw new CanteenSaleInvalidError('Line price must be a non-negative integer.')
+    }
+  }
+
+  const subtotal = input.items.reduce(
+    (sum, line) => sum + line.price * line.quantity,
+    0,
+  )
+  const total = subtotal
+  if (cash + upi + wallet !== total) {
+    throw new CanteenSaleInvalidError(
+      `Breakdown sum ₹${cash + upi + wallet} does not match total ₹${total}.`,
+    )
+  }
+
+  // Aggregate qty per canteenItemId for stock sufficiency
+  const qtyByItem = new Map<number, number>()
+  for (const line of input.items) {
+    qtyByItem.set(
+      line.canteenItemId,
+      (qtyByItem.get(line.canteenItemId) ?? 0) + line.quantity,
+    )
+  }
+
+  const saleId = crypto.randomUUID()
+  const now = Date.now()
+
+  await db.transaction(
+    'rw',
+    db.canteenSales,
+    db.canteenItems,
+    db.customers,
+    db.walletTransactions,
+    async () => {
+      // Stock decrement (Pattern D7 — inlined; never call decrementCanteenItemStock here)
+      for (const [itemId, totalQty] of qtyByItem.entries()) {
+        const fresh = await db.canteenItems.get(itemId)
+        if (!fresh) {
+          throw new CanteenSaleInvalidError(`Canteen item ${itemId} not found.`)
+        }
+        if (fresh.isActive !== true) {
+          throw new CanteenSaleInvalidError(`"${fresh.name}" is no longer available.`)
+        }
+        if (fresh.stockEnabled === true) {
+          const oldStock = fresh.currentStock ?? 0
+          const newStock = oldStock - totalQty
+          if (newStock < 0) {
+            throw new CanteenSaleStockError(fresh.name, oldStock)
+          }
+          await db.canteenItems.update(itemId, { currentStock: newStock })
+        }
+      }
+
+      // Wallet debit if applicable
+      if (wallet > 0) {
+        const customer = await db.customers.get(input.customerId!)
+        if (!customer) throw new CanteenSaleInvalidError('Customer not found.')
+        if (customer.walletBalance < wallet) {
+          throw new WalletInsufficientError(customer.walletBalance, wallet)
+        }
+        const newBalance = customer.walletBalance - wallet
+        await db.walletTransactions.add({
+          id: crypto.randomUUID(),
+          customerId: customer.id,
+          type: 'debit',
+          amount: wallet,
+          balanceAfter: newBalance,
+          paymentMode: null,
+          referenceType: 'canteen_sale',
+          referenceId: saleId,
+          notes: null,
+          createdAt: now,
+        })
+        await db.customers.update(customer.id, {
+          walletBalance: newBalance,
+          lastVisitAt: now,
+        })
+      }
+
+      // Insert the sale row last so any earlier throw rolls everything back.
+      await db.canteenSales.add({
+        id: saleId,
+        createdAt: now,
+        items: input.items.map((line) => ({
+          name: line.name,
+          price: line.price,
+          quantity: line.quantity,
+          canteenItemId: line.canteenItemId,
+        })),
+        subtotal,
+        paymentBreakdown: { cash, upi, wallet },
+        total,
+        customerId: wallet > 0 ? input.customerId : undefined,
+        notes: input.notes && input.notes.trim() ? input.notes.trim().slice(0, 200) : undefined,
+      })
+    },
+  )
+
+  return saleId
+}
+
+// ─── Split payment / canteen sale / piggy — v13 stubs ────────────────────────
+// These query helpers are added in Phase 1 for type safety and to centralise
+// aggregation logic. They are NOT wired to any UI yet — Phase 2+ consumers
+// will import them. Do not call from components in Phase 1.
+
+/**
+ * Return all stopped sessions in [date, date+1day) that have a non-null
+ * paymentBreakdown. Used by Summary PAYMENT MODE (Phase 4) and the piggy
+ * cash-in aggregation (Phase 5).
+ *
+ * Excludes running/paused sessions — their breakdown is unknown until stop.
+ * Back-entry sessions are included (ADDENDUM-3: treated identically).
+ */
+export async function getSessionsWithBreakdownByDate(date: Date): Promise<Session[]> {
+  const start = startOfDay(date).getTime()
+  const end = endOfDay(date).getTime()
+  const rows = await db.sessions
+    .where('startedAt')
+    .between(start, end, true, true)
+    .toArray()
+  return rows.filter(
+    (s) => s.status === 'completed' && s.paymentBreakdown !== undefined,
+  )
+}
+
+/**
+ * Return all canteen sales whose createdAt falls in [date, date+1day).
+ * Used by Summary PAYMENT MODE and CANTEEN tile (Phase 3/4) and piggy
+ * cash-in aggregation (Phase 5).
+ */
+export async function getCanteenSalesByDate(date: Date): Promise<CanteenSale[]> {
+  const start = startOfDay(date).getTime()
+  const end = endOfDay(date).getTime()
+  return db.canteenSales
+    .where('createdAt')
+    .between(start, end, true, true)
+    .toArray()
+}
+
+/**
+ * Compute the current piggy balance.
+ *
+ * Formula:
+ *   current = opening
+ *           + Σ Session.paymentBreakdown.cash       for stopped sessions since piggyStartedAt
+ *           + Σ CanteenSale.paymentBreakdown.cash   since piggyStartedAt
+ *           + Σ WalletTransaction.amount            for type='credit' AND paymentMode='cash' since piggyStartedAt
+ *           − Σ StockPurchase.cost                  where source='piggy' since piggyStartedAt
+ *
+ * Returns negative values as-is — the UI is responsible for clamping the
+ * displayed value to ≥ 0 and showing a warning (per Phase 5 spec).
+ */
+export async function getPiggyBalance(): Promise<{
+  opening: number
+  cashIn: number
+  restockOut: number
+  current: number
+}> {
+  const settings = await db.settings.get(1)
+  const opening = settings?.piggyOpeningBalance ?? 0
+  const since = settings?.piggyStartedAt ?? 0
+
+  const [sessions, sales, walletCredits, restocks] = await Promise.all([
+    db.sessions
+      .where('endedAt')
+      .aboveOrEqual(since)
+      .filter(
+        (s) => s.status === 'completed' && s.paymentBreakdown !== undefined,
+      )
+      .toArray(),
+    db.canteenSales.where('createdAt').aboveOrEqual(since).toArray(),
+    db.walletTransactions
+      .where('createdAt')
+      .aboveOrEqual(since)
+      .filter((t) => t.type === 'credit' && t.paymentMode === 'cash')
+      .toArray(),
+    db.stockPurchases
+      .where('createdAt')
+      .aboveOrEqual(since)
+      .filter((p) => p.source === 'piggy')
+      .toArray(),
+  ])
+
+  const cashFromSessions = sessions.reduce(
+    (sum, s) => sum + (s.paymentBreakdown?.cash ?? 0),
+    0,
+  )
+  const cashFromSales = sales.reduce(
+    (sum, c) => sum + (c.paymentBreakdown?.cash ?? 0),
+    0,
+  )
+  const cashFromTopups = walletCredits.reduce((sum, t) => sum + t.amount, 0)
+  const cashIn = cashFromSessions + cashFromSales + cashFromTopups
+  const restockOut = restocks.reduce((sum, p) => sum + p.cost, 0)
+
+  return {
+    opening,
+    cashIn,
+    restockOut,
+    current: opening + cashIn - restockOut,
+  }
+}
+
+/**
+ * Return all StockPurchase rows for a given canteen item, newest first.
+ * Used by /piggy detail page (Phase 5) and future inventory-cost reports.
+ */
+export async function listStockPurchasesForItem(
+  canteenItemId: number,
+): Promise<StockPurchase[]> {
+  const rows = await db.stockPurchases
+    .where('canteenItemId')
+    .equals(canteenItemId)
+    .toArray()
+  return rows.sort((a, b) => b.createdAt - a.createdAt)
+}
+
+/**
+ * List ALL stock purchases newest-first, optionally filtered by source.
+ * Used by /piggy detail page and Summary's STOCK BOUGHT TODAY tile drill-in.
+ */
+export async function listStockPurchases(opts?: {
+  source?: 'piggy' | 'other'
+  start?: number
+  end?: number
+}): Promise<StockPurchase[]> {
+  let coll = db.stockPurchases.orderBy('createdAt').reverse()
+  if (opts?.start !== undefined || opts?.end !== undefined) {
+    const s = opts.start ?? 0
+    const e = opts.end ?? Number.MAX_SAFE_INTEGER
+    coll = coll.filter((p) => p.createdAt >= s && p.createdAt <= e)
+  }
+  if (opts?.source) {
+    coll = coll.filter((p) => p.source === opts.source)
+  }
+  return coll.toArray()
+}
+
+/**
+ * Atomically record a canteen restock.
+ *
+ * In ONE flat Dexie transaction (Pattern D7):
+ *   1. Insert StockPurchase row.
+ *   2. If the CanteenItem has stockEnabled=true: increment currentStock by
+ *      quantityAdded. If stockEnabled=false: skip the stock change (still
+ *      log the purchase — useful for inventory cost reports later).
+ *
+ * Stock cannot go negative via restock — quantityAdded is required positive
+ * and additions can only grow currentStock.
+ *
+ * Piggy deduction is implicit (computed live by getPiggyBalance) — there's
+ * no separate piggy ledger row. The single source of truth is the
+ * StockPurchase row + its `source` field.
+ */
+export class StockPurchaseInvalidError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'StockPurchaseInvalidError'
+  }
+}
+
+export async function recordStockPurchase(input: {
+  canteenItemId: number
+  quantityAdded: number
+  cost: number
+  source: 'piggy' | 'other'
+  notes?: string
+}): Promise<string> {
+  if (!Number.isInteger(input.canteenItemId) || input.canteenItemId <= 0) {
+    throw new StockPurchaseInvalidError('Invalid canteen item.')
+  }
+  if (!Number.isInteger(input.quantityAdded) || input.quantityAdded <= 0) {
+    throw new StockPurchaseInvalidError('Quantity must be a positive integer.')
+  }
+  if (!Number.isInteger(input.cost) || input.cost < 0) {
+    throw new StockPurchaseInvalidError('Cost must be a non-negative integer.')
+  }
+  if (input.source !== 'piggy' && input.source !== 'other') {
+    throw new StockPurchaseInvalidError('Source must be "piggy" or "other".')
+  }
+
+  const id = crypto.randomUUID()
+  const now = Date.now()
+
+  await db.transaction('rw', db.stockPurchases, db.canteenItems, async () => {
+    const item = await db.canteenItems.get(input.canteenItemId)
+    if (!item) throw new StockPurchaseInvalidError('Canteen item not found.')
+
+    await db.stockPurchases.add({
+      id,
+      canteenItemId: input.canteenItemId,
+      quantityAdded: input.quantityAdded,
+      cost: input.cost,
+      source: input.source,
+      createdAt: now,
+      notes:
+        input.notes && input.notes.trim()
+          ? input.notes.trim().slice(0, 200)
+          : undefined,
+    })
+
+    // Stock tracking is optional per item — only mutate when enabled.
+    if (item.stockEnabled === true) {
+      const oldStock = item.currentStock ?? 0
+      await db.canteenItems.update(input.canteenItemId, {
+        currentStock: oldStock + input.quantityAdded,
+      })
+    }
+  })
+
+  return id
+}
+
+/**
+ * Update the owner-settable opening balance for the piggy. Writes the
+ * settings singleton in place — no migration / log row. Per Phase 5 spec
+ * v1: no edit audit log.
+ */
+export async function updatePiggyOpeningBalance(newBalance: number): Promise<void> {
+  if (!Number.isInteger(newBalance) || newBalance < 0) {
+    throw new Error('Opening balance must be a non-negative integer.')
+  }
+  await db.settings.update(1, { piggyOpeningBalance: newBalance })
 }
