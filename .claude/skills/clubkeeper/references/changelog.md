@@ -4,6 +4,53 @@ Chronological record of what shipped, when, and what manual setup was done. Read
 
 ---
 
+## 9 Jun 2026 — Back Entries Phase 2: Canteen items in back entry
+
+- Extended `createBackEntry` with `items?: BackEntryItemInput[]` (`{ name, price, quantity }`).
+- All writes — session row, sessionItems, and canteen stock decrements — happen inside ONE flat `db.transaction('rw', db.sessions, db.gameTables, db.settings, db.canteenItems, db.sessionItems, ...)` (Pattern D7). Zero calls to `addSessionItem`, `addOrIncrementSessionItem`, or `decrementCanteenItemStock` from inside the tx.
+- Stock aggregation: first pass builds `stockNeeded: Map<canteenItemId, totalQty>` across all draft items (prevents bypass via multiple small rows for the same item). Second pass checks sufficiency — throws `InsufficientStockError(available, itemName)` if any item would push stock negative (tx rolls back entirely). Third pass decrements and inserts sessionItems with `addedAt: input.endedAt - order * 1000` (anchors inside session window).
+- `BackEntryModal` extended: canteen chips with out-of-stock dimming, draft items list with +/− stepper and × remove, collapsible manual form (`+ Add other item`), price-mismatch inline warning (Pattern F7). `mergeDraftItem(name, price, quantity)` merges chip taps and manual adds by `(normalizeName, price)` locally — DB write only on save.
+- Preview block extended: Table Amt / Items row (only when items present) / Grand Total, separated by border.
+- `InsufficientStockError` caught inline in save handler — no toast (Pattern F7). `BackEntryOverlapError` also caught inline.
+- No new Dexie version bump — `sessionItems` and `canteenItems` already in v12 schema.
+
+**Files touched:** `src/db/queries.ts` (BackEntryItemInput, extended BackEntryInput, createBackEntry rewrite), `src/components/BackEntryModal.tsx` (full rewrite for Phase 2).
+
+---
+
+## 9 Jun 2026 — Back Entries Phase 1 (Log Past Session)
+
+- **Dexie v12:** Additive — adds optional `isBackEntry?: boolean` to `Session`. No new index. No `.upgrade()`. Legacy rows read `undefined` (falsy).
+- **`src/types/index.ts`:** `isBackEntry?: boolean` added to `Session` interface.
+- **`src/db/queries.ts`:** `BackEntryOverlapError` custom error class (has `conflictingSession: Session` payload). `BackEntryInput` interface. `createBackEntry()` — flat single tx. Overlap check covers both active (`running`/`paused`) and completed sessions for the same table in the same time window. Rate card snapshots captured from table if present (Pattern T7 — set all three together or not at all). `per_frame` not supported in v1 (skip tables without `ratePerHour`).
+- **`src/lib/validation.ts`:** `validateBackEntry()` — reuses `validatePlayerName` + `validateNote`, checks duration 1 min–24 hr, future-time guard.
+- **`src/components/BackEntryModal.tsx`:** New component. Date + start/end time native inputs (plain visible, matching History.tsx — no opacity-0 overlay). Player name + count + note. Preview block: Duration / Table Amt. `BackEntryOverlapError` caught inline with conflicting session detail. Footer via `<Modal footer={...}>` (Pattern M4).
+- **`src/pages/History.tsx`:** `"+ Log past session"` button in header. `<BackEntryModal>` mounted at page level. `onSaved(dateISO)` snaps both `fromStr` and `toStr` to saved date so new row immediately visible. `Logged` badge in `SessionRow` time row for `session.isBackEntry === true`.
+
+**Files touched:** `src/types/index.ts`, `src/db/database.ts`, `src/db/queries.ts`, `src/lib/validation.ts`, `src/components/BackEntryModal.tsx` (new), `src/pages/History.tsx`.
+
+---
+
+## 9 Jun 2026 — Rate card + tolerance + pro-rated billing (Customer #2 unblock)
+
+**Shipped same-day to close Customer #2 (Ball Bender):**
+
+- `RateTier { minutes, price }` type. `GameTable.rateCard?: RateTier[]`, `GameTable.toleranceMinutes?: number`, `GameTable.rateCardBilling?: 'minimum' | 'prorated'` (all optional). `Session` gains parallel snapshot fields: `rateCardSnapshot`, `toleranceMinutesSnapshot`, `rateCardBillingSnapshot` (captured at session start, immutable per Pattern T3).
+- `src/lib/money.ts`: legacy `priceForElapsed` renamed to `priceForElapsedMinimum`. New `priceForElapsedProrated` implements pre-tier-1 pro-rating, tier plateaus during tolerance window, linear climbs between tiers, and post-last-tier extrapolation at `last.price/last.minutes` per minute. `calculateAmount` dispatches by snapshot: per_frame → frame count; rate card present → mode-based dispatch; else → legacy linear. Rounding setting ignored for both rate card modes.
+- `TableFormModal`: collapsible Tiered Pricing section with labeled tier grid (Minutes / Price columns), `+ Add Tier`, Tolerance input, "standard preset (30 / 60 / 90 min)" button (3-tier default), and Pro-rated / Minimum charge segmented toggle with descriptive helper text.
+- `Modal` component restructured for mobile: outer `max-h-[92vh] flex flex-col`, scroll container `flex-1 overflow-y-auto overscroll-contain`, footer `shrink-0` with safe-area padding. Action buttons always visible.
+- Settings rounding: dim hint shown when any table has a rate card configured ("Rounding is ignored on tables with a rate card").
+- Pool 1 seed includes 6-tier Ball Bender values as demo data. All UI labels are generic — no club name leaks.
+- Dexie v10 (rate card fields) then v11 (billing mode field). Both additive, no `.upgrade()` blocks.
+
+**Tested all 14 acceptance values across both modes (0/1/5/15/29/30/35/40/41/50/59/60/65/70/71/80/100 min).** Pro-rated and Minimum charge each produce expected values within ±₹1. Live session display updates smoothly via existing `useTick()` + Pattern T4 dispatch.
+
+**Files touched:** `src/types/index.ts`, `src/lib/money.ts`, `src/lib/validation.ts`, `src/lib/summaryMath.ts`, `src/db/database.ts`, `src/db/queries.ts`, `src/db/seed.ts`, `src/components/TableFormModal.tsx`, `src/components/Modal.tsx`, `src/pages/Settings.tsx`, `src/pages/Home.tsx`, `src/pages/SessionDetail.tsx`, `src/pages/Summary.tsx`, `src/pages/History.tsx`.
+
+**Business:** Customer #2 (Ball Bender) closed same day. See `business_context.md`.
+
+---
+
 ## 8 Jun 2026 — Summary dashboard rebuild + calendar icon date picker fix
 
 **What shipped:**

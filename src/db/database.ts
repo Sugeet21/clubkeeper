@@ -170,6 +170,17 @@ export class ClubKeeperDB extends Dexie {
       walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
       canteenItems: '++id, name, isActive, sortOrder',
     })
+    // Version 12: additive — adds optional `isBackEntry?: boolean` on sessions.
+    // No new index. No .upgrade() callback. Legacy rows read undefined (falsy).
+    this.version(12).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+    })
   }
 }
 

@@ -57,6 +57,27 @@ const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.ite
 **Rule:** All alarm sound MUST go through `src/lib/alarm.ts`. Gain = 1.0. Tone duration ≥ 500ms with attack/decay envelope to avoid clicks. Loop every 3 sec via `setInterval` cleaned up in `useEffect` return. 60-sec auto-stop cap. iOS unlock via global `pointerdown` listener in `App.tsx` + on-tap unlock in Settings Test button. Never copy-paste alarm code — always import from the shared lib.
 **Files affected:** `src/lib/alarm.ts` (single source), `src/components/SessionAlarmModal.tsx`, `src/pages/Settings.tsx`, `src/App.tsx`.
 
+### Pattern T7 — Rate card snapshot is a triple — all three fields must be captured together at session start (9 Jun 2026)
+**Symptom signature:** Pro-rated billing shows wrong amount — either ignores tolerance or uses wrong billing mode — for sessions started before a table config was edited.
+**Root cause:** `rateCardSnapshot` captured without `toleranceMinutesSnapshot` or `rateCardBillingSnapshot` (or vice versa). At bill time, `calculateAmount` falls back to default tolerance (10 min) or default mode ('prorated'), which may differ from what was configured at session start.
+**Rule:** In `startSession()`, ALL THREE snapshot fields must be written together atomically:
+```ts
+rateCardSnapshot: table.rateCard ?? undefined,
+toleranceMinutesSnapshot: table.rateCard?.length ? (table.toleranceMinutes ?? 10) : undefined,
+rateCardBillingSnapshot: table.rateCard?.length ? (table.rateCardBilling ?? 'prorated') : undefined,
+```
+Never capture one without the others. If a new rate-card-related field is added to `GameTable`, add a corresponding snapshot field to `Session` and include it in this triple.
+**Files affected:** `src/db/queries.ts` (`startSession`), `src/types/index.ts` (`Session` interface).
+
+### Pattern T8 — Don't conflate `rounding` setting with rate card tolerance — they are independent systems (9 Jun 2026)
+**Symptom signature:** Rate card session gets unexpected time rounding (e.g. time jumps to nearest 15 min) even though the owner set up tier-based pricing.
+**Root cause:** `calculateAmount` falls through to the `rounding` branch after the rate card branch returns. Or: `stopSession()` applies `applyRounding()` before passing elapsed to `calculateAmount`, artificially rounding the elapsed time before the rate card algorithm sees it.
+**Rule:** `calculateAmount` checks `rateCardSnapshot` FIRST. If present and non-empty, BOTH `'minimum'` and `'prorated'` modes return immediately — the rounding param is NEVER read for rate-card sessions. The tier + tolerance window IS the rounding. Do NOT pass a pre-rounded elapsed to `calculateAmount` when `rateCardSnapshot` is set. The dispatch order in `calculateAmount` MUST remain:
+1. `per_frame` → frames × rate, return
+2. `rateCardSnapshot` present → mode-based dispatch (prorated or minimum), return
+3. legacy linear + optional rounding
+**Files affected:** `src/lib/money.ts` (`calculateAmount`), `src/db/queries.ts` (`stopSession` preview calc).
+
 ### Pattern T6 — Snooze must anchor to original fire time, not to user tap time
 **Symptom signature:** "I set snooze for 15 min but it took 16 min." Player gets called at wrong intervals. Drift accumulates over multiple snoozes.
 **Root cause:** `notifyAtMs = Date.now() + snoozeMs` adds the user's reaction time (seconds between alarm ringing and user tapping Snooze) onto every snooze cycle.
@@ -68,6 +89,12 @@ const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.ite
 ## Forms & Inputs (validation, adversarial input)
 
 Files most affected: `src/pages/StartSession.tsx`, `src/components/TableFormModal.tsx`, anywhere with `<input>`.
+
+### Pattern F9 — Customer names belong in data, not in UI labels or button text (9 Jun 2026)
+**Symptom signature:** A button reads "Start session for Rahul" or a label says "Ball Bender rate card". Staff are confused when a demo account has real names, or a seed-data name appears in a context that shouldn't show it.
+**Root cause:** Real customer or club names embedded in UI string templates (`"Use ${customerName}'s rate"`, `"${clubName} preset"`). Seed data with real names (e.g. actual player names) causes those names to surface in UI labels during demos.
+**Rule:** UI labels, button text, and preset names must be generic. Use `"Standard preset"`, `"Saved rate"`, `"Your rate card"` — never interpolate real names into action labels. Real names belong only in data display fields (profile headers, session detail, history rows). Seed data for rate cards and presets uses generic label strings (not customer-specific names) even if the seed is based on a real customer's config.
+**Files affected:** `src/components/TableFormModal.tsx` (preset button label), `src/db/seed.ts` (seed table names, comments).
 
 ### Pattern F8 — Display fallback labels MUST distinguish anonymous from unnamed-but-contactable (30 May 2026)
 **Symptom signature:** A customer with a saved phone number is shown as "Walk-in" in the UI. Staff are confused — the customer has contact info.
@@ -457,6 +484,36 @@ Files most affected: ALL UI components.
 ## Modals & Overlays (z-index, escape paths)
 
 Files most affected: `src/components/Modal.tsx`, `src/components/subscribe/PaymentBottomSheet.tsx`, any bottom sheet.
+
+### Pattern M4 — Bottom-sheet modals need 3-region flex layout for mobile scrollability (9 Jun 2026)
+**Symptom signature:** On Android Chrome (360–400px), a tall modal's content is cut off at the top — early fields like "Table Name" are unreachable even when scrolling. Scroll-lock applied by the body during modal open makes content above the fold inaccessible.
+**Root cause:** `<Modal>` applied `overflow:hidden` to `document.body` (scroll-lock). Without a scroll container inside the modal itself, content that overflows the viewport is permanently hidden — there is no scroll path to reach it.
+**Rule:** Bottom-sheet modals must use a 3-region flex layout:
+```tsx
+{/* Sheet wrapper */}
+<div className="fixed bottom-0 left-0 right-0 z-50 bg-bg-elevated rounded-t-3xl border-t border-border flex flex-col max-h-[92vh]">
+  {/* Region 1 — title, shrink-0 */}
+  <div className="shrink-0 px-5 pt-5 pb-3">
+    <div className="w-10 h-1 bg-border-bright rounded-full mx-auto mb-4" />
+    <h4 className="text-[18px] font-bold tracking-tight text-text">{title}</h4>
+  </div>
+  {/* Region 2 — scrollable body, flex-1 */}
+  <div className="flex-1 overflow-y-auto overscroll-contain px-5 pb-3"
+    style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
+    {children}
+  </div>
+  {/* Region 3 — pinned footer (optional) */}
+  {footer && (
+    <div className="shrink-0 px-5 pt-3 pb-5 border-t border-border"
+      style={{ paddingBottom: 'max(20px, env(safe-area-inset-bottom))' }}>
+      {footer}
+    </div>
+  )}
+  {!footer && <div className="shrink-0 h-6" />}
+</div>
+```
+The `footer?: ReactNode` prop allows consumers to pin action buttons outside the scroll container while leaving all other consumers unaffected. Consumers that don't pass `footer` get a `h-6` spacer.
+**Files affected:** `src/components/Modal.tsx` (fixed 9 Jun 2026), `src/components/TableFormModal.tsx` (passes `footer={footerContent}`).
 
 ### Pattern M1 — Scrim and sheet must be independent fixed layers (BUG-012)
 **Symptom signature:** Modal scrim "intercepts pointer events" — backdrop blocks clicks on the sheet.

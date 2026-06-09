@@ -4,6 +4,7 @@ import { useSessionsInRange, useTables, useSettings } from '../hooks/useLiveData
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatDuration } from '../lib/time'
 import { calculateAmount } from '../lib/money'
+import { BackEntryModal } from '../components/BackEntryModal'
 import type { GameType, GameTable, Session } from '../types'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -81,12 +82,19 @@ function SessionRow({
         <div className="flex items-center gap-1.5 mt-0.5">
           {session.status === 'running' && <span className="w-1.5 h-1.5 rounded-full bg-busy animate-pulse shrink-0" />}
           {session.status === 'paused' && <span className="w-1.5 h-1.5 rounded-full bg-paused shrink-0" />}
-          <p className="text-[11px] text-text-faint font-mono">
-            {startStr} — {endStr}
-            {(session.tableMoves?.length ?? 0) > 0 && (
-              <span className="ml-1.5">· ↻ {session.tableMoves!.length + 1} tables</span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <p className="text-[11px] text-text-faint font-mono">
+              {startStr} — {endStr}
+              {(session.tableMoves?.length ?? 0) > 0 && (
+                <span className="ml-1.5">· ↻ {session.tableMoves!.length + 1} tables</span>
+              )}
+            </p>
+            {session.isBackEntry && (
+              <span className="text-[10px] uppercase tracking-widest text-text-faint border border-border rounded-md px-1.5 py-0.5">
+                Logged
+              </span>
             )}
-          </p>
+          </div>
         </div>
       </div>
       <div className="text-right shrink-0">
@@ -108,6 +116,7 @@ export default function History() {
   const [fromStr, setFromStr] = useState(() => format(subDays(new Date(), 6), 'yyyy-MM-dd'))
   const [toStr, setToStr] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [filterTableId, setFilterTableId] = useState<number | 'all'>('all')
+  const [showBackEntry, setShowBackEntry] = useState(false)
 
   useTick()
 
@@ -207,19 +216,37 @@ export default function History() {
     <div className="pt-safe min-h-screen bg-bg pb-32">
 
       {/* Top bar */}
-      <div className="px-4 pt-4 pb-3 flex items-center justify-between">
-        <div>
+      <div className="px-4 pt-4 pb-3 flex items-center justify-between gap-2">
+        <div className="min-w-0">
           <h1 className="text-[22px] font-bold tracking-tight text-text">History</h1>
           <p className="text-[12px] text-text-dim font-mono mt-0.5">
             {format(parseLocalDate(fromStr), 'd MMM')} — {format(parseLocalDate(toStr), 'd MMM yyyy')}
           </p>
         </div>
-        {filteredRows.length > 0 && (
-          <button onClick={handleExport} className="text-[13px] text-accent font-semibold">
-            Export ↓
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowBackEntry(true)}
+            className="bg-bg-card border border-border text-accent font-semibold rounded-2xl px-4 py-2 text-sm min-h-[44px]"
+          >
+            + Log past session
           </button>
-        )}
+          {filteredRows.length > 0 && (
+            <button onClick={handleExport} className="text-[13px] text-accent font-semibold min-h-[44px]">
+              Export ↓
+            </button>
+          )}
+        </div>
       </div>
+
+      <BackEntryModal
+        open={showBackEntry}
+        onClose={() => setShowBackEntry(false)}
+        onSaved={(dateISO) => {
+          setFromStr(dateISO)
+          setToStr(dateISO)
+          setShowBackEntry(false)
+        }}
+      />
 
       {/* Date inputs */}
       <div className="px-4 mb-3 grid grid-cols-2 gap-2">

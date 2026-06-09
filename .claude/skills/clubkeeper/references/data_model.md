@@ -15,12 +15,16 @@ Database name is `ClubKeeperDB_<userId>` (Supabase UUID) for per-user isolation.
 | v5 | 30 May 2026 | Adds `customers` + `walletTransactions` tables |
 | v6 | 30 May 2026 | `.upgrade()` backfill of legacy `type:'adjustment'` wallet tx rows |
 | v7 | 31 May 2026 | Adds optional alarm fields on sessions: `notifyAtMs`, `notifyAcknowledgedAt`; adds `alarmSoundEnabled`/`alarmVibrationEnabled` to ClubSettings |
-| **v8** | **7 Jun 2026** | **Adds `canteenItems: '++id, name, isActive, sortOrder'`; adds `lowStockThreshold` to ClubSettings** |
+| v8 | 7 Jun 2026 | Adds `canteenItems: '++id, name, isActive, sortOrder'`; adds `lowStockThreshold` to ClubSettings |
+| v9 | 8 Jun 2026 | Adds optional `tableMoves?: TableMove[]` field to sessions (no index) |
+| v10 | 9 Jun 2026 | Adds optional `rateCard`/`toleranceMinutes` to `GameTable`; `rateCardSnapshot`/`toleranceMinutesSnapshot` to `Session` |
+| v11 | 9 Jun 2026 | Adds optional `rateCardBilling` to `GameTable`; `rateCardBillingSnapshot` to `Session` |
+| **v12** | **9 Jun 2026** | **Additive: adds optional `isBackEntry?: boolean` on sessions. No new index. No `.upgrade()`. Current version.** |
 
-### Schema Version 8 (current)
+### Schema Version 12 (current)
 
 ```ts
-this.version(8).stores({
+this.version(12).stores({
   gameTables: '++id, name, gameType, sortOrder, outOfService',
   sessions: '++id, tableId, status, startedAt, endedAt',
   settings: 'id',
@@ -29,11 +33,18 @@ this.version(8).stores({
   walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
   canteenItems: '++id, name, isActive, sortOrder',
 })
+// v10, v11, and v12 are field-only additions — no new indexes, no .upgrade() block needed.
+// Existing rows read undefined for new fields, which calculates correctly via ?? fallbacks.
 ```
 
 ### Tables Store
 
 ```ts
+interface RateTier {
+  minutes: number;   // session duration threshold (integer minutes, ascending)
+  price: number;     // charge in ₹ (integer) at or up to this duration
+}
+
 interface GameTable {
   id?: number;              // auto-incremented
   name: string;             // "Pool 1" — max 30 chars, alphanumeric+spaces+.-_
@@ -43,6 +54,10 @@ interface GameTable {
   outOfService: boolean;    // true = soft-deleted (hidden from Home)
   createdAt: number;        // Date.now() at creation
   sortOrder: number;        // for ordering in UI, increment by 1
+  // Rate card fields (v10/v11 — all optional, undefined = use ratePerHour)
+  rateCard?: RateTier[];              // tier-based pricing; if set, overrides ratePerHour for per_hour billing
+  toleranceMinutes?: number;          // grace window at each tier boundary (default 10 if rateCard present)
+  rateCardBilling?: 'minimum' | 'prorated'; // billing algorithm (default 'prorated')
 }
 ```
 
@@ -51,7 +66,7 @@ interface GameTable {
 ```ts
 interface Session {
   id?: number;
-  tableId: number;
+  tableId: number;          // ALWAYS current table (updated by moveSessionToTable)
   startedAt: number;        // Unix ms — NEVER mutated except via editStartTime
   endedAt: number | null;   // null while running/paused
   pausedTotalMs: number;    // accumulated paused time
@@ -64,9 +79,21 @@ interface Session {
   framesPlayed: number | null;  // only for per_frame
   status: 'running' | 'paused' | 'completed';
   amount: number;           // calculated when stopped (integer rupees)
-  roundedDurationMs?: number; // NEW in v2: stores rounded duration if rounding applied
-  notifyAtMs?: number | null;          // v7: absolute Unix ms when alarm should fire; undefined/null = no alarm
+  roundedDurationMs?: number;           // v2: stores rounded duration if rounding applied
+  notifyAtMs?: number | null;           // v7: absolute Unix ms when alarm should fire; undefined/null = no alarm
   notifyAcknowledgedAt?: number | null; // v7: Unix ms when owner tapped Stop or Snooze; null = pending
+  tableMoves?: TableMove[];             // v9: journey log; undefined = no moves (legacy safe)
+  // Rate card snapshot triple (v10/v11) — Pattern T7: must always be set together
+  rateCardSnapshot?: RateTier[];                        // captured from table.rateCard at session start
+  toleranceMinutesSnapshot?: number;                    // captured from table.toleranceMinutes at session start
+  rateCardBillingSnapshot?: 'minimum' | 'prorated';    // captured from table.rateCardBilling at session start
+  isBackEntry?: boolean;                               // v12: true when logged via Back Entry flow, not live timer
+}
+
+interface TableMove {
+  fromTableId: number;
+  toTableId: number;
+  movedAt: number;   // Unix ms
 }
 ```
 
@@ -203,27 +230,81 @@ function getElapsedMs(session: Session): number {
 
 ## Money Math
 
-In `src/lib/money.ts`:
+In `src/lib/money.ts`. Dispatch order is critical — see ripple_effects.md.
 
 ```ts
 function calculateAmount(session: Session, elapsedMs: number, rounding?: 'none'|'15min'|'30min'): number {
+  // 1. Per-frame billing
   if (session.billingMode === 'per_frame') {
     return (session.framesPlayed ?? 0) * session.rateSnapshot;
   }
-  
-  let effectiveMs = elapsedMs;
-  if (rounding === '15min') {
-    effectiveMs = Math.ceil(elapsedMs / 900000) * 900000; // round UP to nearest 15min
-  } else if (rounding === '30min') {
-    effectiveMs = Math.ceil(elapsedMs / 1800000) * 1800000;
+
+  // 2. Rate card billing (v10/v11) — rounding param IGNORED here (Pattern T8)
+  if (session.rateCardSnapshot && session.rateCardSnapshot.length > 0) {
+    const tol = session.toleranceMinutesSnapshot ?? 10;
+    const mode = session.rateCardBillingSnapshot ?? 'prorated';
+    return mode === 'minimum'
+      ? priceForElapsedMinimum(elapsedMs, session.rateCardSnapshot, tol)
+      : priceForElapsedProrated(elapsedMs, session.rateCardSnapshot, tol);
   }
-  
-  const hours = effectiveMs / 3600000;
-  return Math.round(hours * session.rateSnapshot);
+
+  // 3. Legacy linear with optional rounding
+  let effectiveMs = elapsedMs;
+  if (rounding === '15min') effectiveMs = Math.ceil(elapsedMs / 900000) * 900000;
+  else if (rounding === '30min') effectiveMs = Math.ceil(elapsedMs / 1800000) * 1800000;
+  return Math.round((effectiveMs / 3600000) * session.rateSnapshot);
 }
 ```
 
-**Rounding only applies in `stopSession()`** — not during display while running (would be confusing if amount jumps every 15min).
+**Rounding only applies in `stopSession()`** — not during display while running. Rate card sessions ignore the rounding param entirely (tier + tolerance IS the rounding).
+
+## Rate Card Billing Algorithms (v10/v11)
+
+Two algorithms in `src/lib/money.ts`. Both return integer ₹. Both return 0 for `elapsedMs ≤ 0`.
+
+### `priceForElapsedProrated(elapsedMs, tiers, toleranceMinutes)` — default
+
+| Elapsed | Behavior |
+|---|---|
+| 0 | ₹0 |
+| < tier1.minutes | Linear ramp: `round((em / tier1.minutes) × tier1.price)` |
+| ≤ tier[i].minutes + tolerance | Plateau: `tier[i].price` |
+| Between tiers (past plateau, before next tier start) | Linear interpolation between tier[i].price and tier[i+1].price |
+| > last.minutes + tolerance | Extrapolate: `last.price + overflow × (last.price / last.minutes)` per minute |
+
+**Key property:** Below tier 1, you pay proportionally — 15 min on a 30-min/₹100 card = ₹50. Fair for short plays.
+
+### `priceForElapsedMinimum(elapsedMs, tiers, toleranceMinutes)` — opt-in
+
+| Elapsed | Behavior |
+|---|---|
+| 0 | ₹0 |
+| ≤ tier[i].minutes + tolerance | Charge tier[i].price (minimum charge, even for 1 minute) |
+| > last.minutes + tolerance | `last.price + ceil(overflow) × perMinRate` |
+
+**Key property:** Even 1 second on a 30-min/₹70 card = ₹70. Classic "minimum charge" behavior.
+
+### Acceptance values (Ball Bender rate card: 30/70, 60/100, 90/170, 120/200, 150/270, 180/300, tolerance 10 min)
+
+| Elapsed | Prorated | Minimum |
+|---|---|---|
+| 0 min | ₹0 | ₹0 |
+| 1 min | ₹2 | ₹70 |
+| 15 min | ₹35 | ₹70 |
+| 30 min | ₹70 | ₹70 |
+| 40 min | ₹70 | ₹70 |
+| 41 min | ₹73 | ₹100 |
+| 60 min | ₹100 | ₹100 |
+| 70 min | ₹100 | ₹100 |
+| 71 min | ₹112 | ₹170 |
+| 90 min | ₹170 | ₹170 |
+| 100 min | ₹170 | ₹170 |
+| 101 min | ₹178 | ₹200 |
+| 120 min | ₹200 | ₹200 |
+| 130 min | ₹200 | ₹200 |
+| 131 min | ₹211 | ₹270 |
+| 150 min | ₹270 | ₹270 |
+| 180 min | ₹300 | ₹300 |
 
 ## Migration Strategy
 

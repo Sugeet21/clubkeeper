@@ -33,6 +33,25 @@ If a change isn't documented here yet, pause and trace dependencies first.
 - **Migration:** if removing a field, bump Dexie version, add upgrade function
 - **Export format:** `Export All Data` JSON includes tables — verify new shape
 
+### If you change `Session.isBackEntry` or `createBackEntry` (v12)
+
+**Affects:**
+- `src/types/index.ts` — field definition
+- `src/db/database.ts` — v12 version block (additive, no index)
+- `src/db/queries.ts` — `BackEntryOverlapError`, `BackEntryItemInput`, `BackEntryInput`, `createBackEntry`
+- `src/lib/validation.ts` — `validateBackEntry`
+- `src/components/BackEntryModal.tsx` — consumer (Phase 1 + Phase 2 rewrite)
+- `src/pages/History.tsx` — button + modal mount + `Logged` badge in `SessionRow`
+- **`InsufficientStockError` constructor:** `(available: number, itemName: string)` — NOT `(itemName, available)`. Match this exactly.
+- **`BackEntryOverlapError` constructor:** `(conflictingSession: Session)` — has `.conflictingSession` payload for inline error formatting.
+- **Pattern D7 invariant:** `createBackEntry` inlines ALL stock logic. Never call `decrementCanteenItemStock`, `addSessionItem`, or `addOrIncrementSessionItem` from inside the tx.
+- **`addedAt` rule:** sessionItems written as `addedAt: input.endedAt - order * 1000` to anchor inside session window — NOT `Date.now()`.
+- **Rate card snapshot:** if table has `rateCard`, capture all three snapshot fields together (Pattern T7). `per_frame` not supported — hide per-frame tables in the back entry table selector.
+
+**Discovered when:** Back Entries Phase 1 + Phase 2, 9 Jun 2026.
+
+---
+
 ### If you change the `Session` interface
 
 **Affects:**
@@ -167,14 +186,81 @@ If a change isn't documented here yet, pause and trace dependencies first.
 
 ### If you change `calculateAmount()` in money.ts
 
+**Current signature:** `calculateAmount(session: Session, elapsedMs: number, rounding?: 'none'|'15min'|'30min'): number`
+
+**CRITICAL — dispatch order must remain exactly:**
+1. `per_frame` → `(framesPlayed ?? 0) × rateSnapshot`, return immediately
+2. `rateCardSnapshot` present + non-empty → dispatch to `priceForElapsedProrated` or `priceForElapsedMinimum` based on `rateCardBillingSnapshot ?? 'prorated'`, return immediately — rounding param IGNORED
+3. Legacy linear: optional rounding applied to `elapsedMs`, then `Math.round(hours × rateSnapshot)`
+
+**Affects (13 callers — verify all after any signature change):**
+- `src/components/TableCard.tsx` — running session amount chip
+- `src/pages/SessionDetail.tsx` — big running total + stop-confirm preview + final amount capture
+- `src/pages/Home.tsx` — `runningAmount` in render body (Pattern T4 — must stay in render body, not inside `useLiveQuery`)
+- `src/pages/Summary.tsx` — revenue aggregation in render body (Pattern T4)
+- `src/pages/History.tsx` — per-session amount display + CSV export
+- `src/db/queries.ts` (`stopSession`) — final amount written to DB
+- `src/lib/summaryMath.ts` — pure aggregation, called from Summary render body
+- CSV export amount column (History + Summary)
+
+**Pattern T8 invariant:** if `rateCardSnapshot` is present, BOTH modes return before reaching the rounding branch. Never move the rounding logic above the rate card branch.
+
+### If you change `priceForElapsedProrated()` in money.ts (added 9 Jun 2026)
+
+**Signature:** `priceForElapsedProrated(elapsedMs: number, tiers: RateTier[], toleranceMinutes: number): number`
+
+**Algorithm summary:**
+- `em ≤ 0` or no tiers → return 0
+- `em < tier1.minutes` → linear ramp from ₹0 → tier1.price proportional to em/tier1.minutes
+- `em ≤ tiers[i].minutes + toleranceMinutes` → plateau, return tiers[i].price
+- between tiers (after plateau, before next tier) → linear interpolation
+- past last tier + tolerance → extrapolate at `last.price / last.minutes` per minute
+
+**Affects:** `calculateAmount()` (only entry point). Used when `rateCardBillingSnapshot === 'prorated'` or missing.
+
+### If you change `priceForElapsedMinimum()` in money.ts (renamed from `priceForElapsed`, 9 Jun 2026)
+
+**Signature:** `priceForElapsedMinimum(elapsedMs: number, tiers: RateTier[], toleranceMinutes: number): number`
+
+**Algorithm summary:**
+- `em ≤ 0` or no tiers → return 0 (guard added 9 Jun 2026 — previously would return tier1.price at 0ms)
+- `billable = ceil(elapsedMs / 60000)` minutes
+- Walk tiers ascending: first tier where `billable ≤ tier.minutes + toleranceMinutes` wins
+- Overflow past last tier: `last.price + Math.ceil((billable - last.minutes - toleranceMinutes)) × perMinRate`
+
+**Affects:** `calculateAmount()` (only entry point). Used when `rateCardBillingSnapshot === 'minimum'`.
+
+### If you change `GameTable.rateCard`, `toleranceMinutes`, or `rateCardBilling` fields (added v10/v11, 9 Jun 2026)
+
 **Affects:**
-- `<TableCard>` — running session amount
-- `<SessionDetail>` — running total
-- `stopSession()` in queries.ts — final amount calculation
-- Summary page — today's revenue
-- History page — per-session amount
-- CSV export amount column
-- `Home.tsx` `runningAmount` — computed in render body (post BUG-022 fix)
+- `src/types/index.ts` — `GameTable` interface
+- `src/db/queries.ts` — `startSession()` must snapshot all three together (Pattern T7): `rateCardSnapshot`, `toleranceMinutesSnapshot`, `rateCardBillingSnapshot`
+- `src/db/seed.ts` — seed tables that have `rateCard` must include `rateCardBilling: 'prorated'`
+- `src/components/TableFormModal.tsx` — Tiered Pricing collapsible: tier input rows, tolerance field, Billing Behavior toggle (Pro-rated / Minimum charge)
+- `src/lib/validation.ts` — `validateRateCard(tiers, toleranceMinutes, billingMode?)` — third param validates billing mode string
+- **Table Move compatibility check** in `moveSessionToTable()` — currently only checks `ratePerHour`/`ratePerFrame`. If rate card is added to the compatibility check in future, update `moveSessionToTable` too.
+
+### If you change `Session.rateCardSnapshot`, `toleranceMinutesSnapshot`, or `rateCardBillingSnapshot` (added v10/v11, 9 Jun 2026)
+
+**Affects:**
+- `src/types/index.ts` — `Session` interface
+- `src/db/queries.ts` — `startSession()` reads all three from table at session start (Pattern T7)
+- `src/lib/money.ts` — `calculateAmount()` reads all three from session; see dispatch order above
+- `src/pages/SessionDetail.tsx` — stop-confirm preview calls `calculateAmount` which reads these fields
+- **Dexie version:** v10 added `rateCardSnapshot`+`toleranceMinutesSnapshot`; v11 added `rateCardBillingSnapshot`. Both additive — existing sessions without these fields get `undefined`, which falls back to `'prorated'` mode via `?? 'prorated'` in `calculateAmount`.
+
+### If you change `<Modal>` layout (Pattern M4)
+
+**CRITICAL:** `<Modal>` now uses a 3-region flex layout (`max-h-[92vh] flex flex-col`). The optional `footer?: ReactNode` prop pins content outside the scroll container.
+
+**Consumers of `<Modal>` (all receive the scroll fix automatically; no code change needed unless they need a pinned footer):**
+- `src/components/TableFormModal.tsx` — passes `footer={footerContent}` (action buttons pinned)
+- `src/pages/SessionDetail.tsx` — stop confirm, edit start time, edit notify (no pinned footer needed)
+- `src/pages/Settings.tsx` — clear sessions, reset, cancel subscription, clean names (no pinned footer needed)
+- `src/pages/Home.tsx` — orphaned sessions modal (no pinned footer needed)
+- `src/pages/Canteen.tsx` — soft-delete confirm (no pinned footer needed)
+
+**If you add a new modal that needs pinned action buttons:** pass `footer={<YourButtons />}` to `<Modal>`. Do NOT move buttons back into `children` — they will scroll off-screen on small devices.
 
 ### If you change `applyRounding()` or rounding logic
 

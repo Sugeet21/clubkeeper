@@ -110,6 +110,36 @@ export function validateRateCard(
   return { valid: true, tierErrors }
 }
 
+export function validateBackEntry(input: {
+  tableId: number | null
+  startedAt: number | null
+  endedAt: number | null
+  playerName: string | null
+  playerCount: number
+  note: string | null
+}): { valid: boolean; error?: string } {
+  if (!input.tableId) return { valid: false, error: 'Select a table' }
+  if (!input.startedAt || !Number.isFinite(input.startedAt)) return { valid: false, error: 'Set a start time' }
+  if (!input.endedAt || !Number.isFinite(input.endedAt)) return { valid: false, error: 'Set an end time' }
+  if (input.endedAt <= input.startedAt) return { valid: false, error: 'End must be after start' }
+  const duration = input.endedAt - input.startedAt
+  if (duration < 60_000) return { valid: false, error: 'Session must be at least 1 minute' }
+  if (duration > 24 * 60 * 60_000) return { valid: false, error: 'Session must be under 24 hours' }
+  if (input.endedAt > Date.now()) return { valid: false, error: 'Date / time cannot be in the future' }
+  if (!Number.isInteger(input.playerCount) || input.playerCount < 1 || input.playerCount > 20) {
+    return { valid: false, error: 'Player count must be 1–20' }
+  }
+  if (input.playerName) {
+    const nameResult = validatePlayerName(input.playerName)
+    if (!nameResult.valid) return { valid: false, error: nameResult.error }
+  }
+  if (input.note) {
+    const noteResult = validateNote(input.note)
+    if (!noteResult.valid) return { valid: false, error: noteResult.error }
+  }
+  return { valid: true }
+}
+
 export function validateItemName(name: string): string | null {
   const trimmed = name.trim()
   if (!trimmed) return 'Item name is required'

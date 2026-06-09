@@ -3,7 +3,7 @@ import { db } from './database'
 import { calculateAmount, applyRounding } from '../lib/money'
 import { validatePlayerName, validateItemName, validateCanteenItemName } from '../lib/validation'
 import { seedIfEmpty } from './seed'
-import { normalizeName } from '../lib/canteenMatch'
+import { normalizeName, findMatchingCanteenItem } from '../lib/canteenMatch'
 import type { GameTable, Session, ClubSettings, SessionItem, CanteenItem } from '../types'
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
@@ -667,6 +667,142 @@ export class TableOccupiedError extends Error {
     super('That table just became occupied. Refreshing list...')
     this.name = 'TableOccupiedError'
   }
+}
+
+// ─── Back Entry ───────────────────────────────────────────────────────────────
+
+export class BackEntryOverlapError extends Error {
+  conflictingSession: Session;
+  constructor(conflicting: Session) {
+    super('Back entry overlaps with an existing session on this table')
+    this.name = 'BackEntryOverlapError'
+    this.conflictingSession = conflicting
+  }
+}
+
+export interface BackEntryItemInput {
+  name: string      // 1–50 chars, trimmed
+  price: number     // integer ₹, 1–9999
+  quantity: number  // integer, 1–99
+}
+
+export interface BackEntryInput {
+  tableId: number
+  startedAt: number       // Unix ms (past)
+  endedAt: number         // Unix ms (> startedAt and ≤ Date.now())
+  playerName: string | null
+  playerCount: number     // 1–20
+  note: string | null
+  items?: BackEntryItemInput[]  // optional; defaults to []
+}
+
+export async function createBackEntry(input: BackEntryInput): Promise<number> {
+  const items = input.items ?? []
+
+  // Pattern D7 — ONE flat transaction. All writes atomic — session + sessionItems + stock.
+  return db.transaction('rw', db.sessions, db.gameTables, db.settings, db.canteenItems, db.sessionItems, async () => {
+    // ---- 1. Validate table ----
+    const table = await db.gameTables.get(input.tableId)
+    if (!table) throw new Error('Table not found')
+    if (table.outOfService) throw new Error('Table is out of service')
+
+    // ---- 2. Overlap check (unchanged) ----
+    // Two intervals [a,b] and [c,d] overlap iff a < d AND c < b.
+    // For active rows (running/paused) treat the open end as Date.now().
+    const candidates = await db.sessions.where('tableId').equals(input.tableId).toArray()
+    const conflict = candidates.find((s) => {
+      const sEnd = s.status === 'completed' ? (s.endedAt ?? 0) : Date.now()
+      return s.startedAt < input.endedAt && input.startedAt < sEnd
+    })
+    if (conflict) throw new BackEntryOverlapError(conflict)
+
+    // ---- 3. Build & insert the session row ----
+    const settings = await db.settings.get(1)
+    const rounding = settings?.rounding ?? 'none'
+
+    // Pattern T7 — rate card snapshot triple set together when table has a rate card.
+    const proto: Session = {
+      tableId: input.tableId,
+      startedAt: input.startedAt,
+      endedAt: input.endedAt,
+      pausedTotalMs: 0,
+      pausedAt: null,
+      billingMode: 'per_hour',
+      rateSnapshot: table.ratePerHour,
+      playerName: input.playerName,
+      playerCount: input.playerCount,
+      note: input.note,
+      framesPlayed: null,
+      status: 'completed',
+      amount: 0,
+      isBackEntry: true,
+      rateCardSnapshot: table.rateCard?.length ? table.rateCard : undefined,
+      toleranceMinutesSnapshot: table.rateCard?.length ? (table.toleranceMinutes ?? 10) : undefined,
+      rateCardBillingSnapshot: table.rateCard?.length ? (table.rateCardBilling ?? 'prorated') : undefined,
+    }
+    const elapsedMs = input.endedAt - input.startedAt
+    proto.amount = calculateAmount(proto, elapsedMs, rounding)
+
+    const sessionId = (await db.sessions.add(proto)) as number
+
+    // ---- 4. Process items INLINE (Pattern D7 — no calls to addSessionItem /
+    //         addOrIncrementSessionItem / decrementCanteenItemStock from inside this tx) ----
+    if (items.length > 0) {
+      // Load all active canteen items once — use .filter not .where('isActive').equals(1) (Pattern D9)
+      const activeCanteen = (await db.canteenItems.toArray()).filter((c) => c.isActive === true)
+
+      // Aggregate stock needs by canteenItem.id so multiple rows for the same item
+      // do not each independently pass a single insufficient-stock check.
+      const stockNeeded = new Map<number, number>() // canteenItemId → totalQty needed
+
+      // First pass: match items and build the stock-needs map.
+      const resolved: Array<{ item: BackEntryItemInput; canteenId?: number }> = []
+      for (const it of items) {
+        const match = findMatchingCanteenItem(it.name, it.price, activeCanteen)
+        if (match && match.stockEnabled && match.id !== undefined) {
+          stockNeeded.set(match.id, (stockNeeded.get(match.id) ?? 0) + it.quantity)
+          resolved.push({ item: it, canteenId: match.id })
+        } else {
+          resolved.push({ item: it })
+        }
+      }
+
+      // Stock sufficiency check — single pass over aggregated map.
+      for (const [canteenId, totalQty] of stockNeeded) {
+        const live = await db.canteenItems.get(canteenId)
+        if (!live || !live.isActive || !live.stockEnabled) continue
+        const current = live.currentStock ?? 0
+        if (current - totalQty < 0) {
+          throw new InsufficientStockError(current, live.name)
+        }
+      }
+
+      // Apply stock decrements.
+      for (const [canteenId, totalQty] of stockNeeded) {
+        const live = await db.canteenItems.get(canteenId)
+        if (!live || !live.isActive || !live.stockEnabled) continue
+        await db.canteenItems.update(canteenId, {
+          currentStock: (live.currentStock ?? 0) - totalQty,
+        })
+      }
+
+      // Insert sessionItems rows. addedAt anchored to endedAt - order*1000 so items
+      // fall inside the session's time window (no "future" timestamps relative to session).
+      let order = 0
+      for (const r of resolved) {
+        await db.sessionItems.add({
+          sessionId,
+          name: r.item.name.trim(),
+          price: r.item.price,
+          quantity: r.item.quantity,
+          addedAt: input.endedAt - order * 1000,
+        })
+        order += 1
+      }
+    }
+
+    return sessionId
+  })
 }
 
 export async function moveSessionToTable(

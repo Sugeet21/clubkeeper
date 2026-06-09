@@ -112,6 +112,16 @@ Deferred. Surface when first customer asks for cloud sync or multi-device.
 
 ---
 
+### Back entry items must write inside `createBackEntry` tx — never via `AddItemBottomSheet` (9 Jun 2026)
+
+**Decision:** All writes for a back entry (session row + sessionItems + canteen stock decrements) happen inside the single `createBackEntry` transaction. `AddItemBottomSheet` must NEVER be used to add items to back entry sessions.
+
+**Why:** `AddItemBottomSheet` expects a live `sessionId` that already exists in IndexedDB. A back entry session has no `id` until after `db.sessions.add()` commits inside the tx. Splitting into two transactions (session first, then items) means an `InsufficientStockError` on items would NOT roll back the session row — leaving an orphaned session with no items. The single-tx approach ensures the entire operation is atomic.
+
+**How to apply:** Any future extension to back entries (e.g. editing items after the fact) must open a new transaction that includes both `db.sessions` and `db.sessionItems` — never reuse the live-session item add flow.
+
+---
+
 ### Canteen item matching — strict name+price (8 Jun 2026)
 
 **Decision:** All non-canteen-chip add paths in AddItemBottomSheet match against active canteen items by `(normalizedName, exactPrice)`. Matched → decrement stock via inline atomic tx (`runCanteenAddTransaction`). Unmatched → freeform sessionItem, no stock touch. NO "save to canteen?" prompt for freeform items.
@@ -157,3 +167,49 @@ Deferred. Surface when first customer asks for cloud sync or multi-device.
 **Why:** Closes the three-way stock leak — staff can no longer over-edit, delete-without-restore, or undo-without-redecrement items out of the canteen inventory.
 
 **Supersedes:** Previous behavior where these three operations silently bypassed stock.
+
+---
+
+### [2026-06-09] Rate card + pro-rated tolerance billing — shipped
+
+**Decision:** Replace simple `ratePerHour × hours` linear billing as the default for Indian indoor-game clubs with per-table rate cards (tier grid + tolerance), pro-rated billing model as the default mode, minimum-charge model retained as opt-in alternate.
+
+**Why:** Every Indian club we surveyed (M416, Ball Bender, others) prices in non-linear tiers — half-hour, hourly, beyond-hourly — with a 5–15 min grace period for "tolerance". Linear was the wrong model. Pro-rated default is trust-building: live display matches what player would pay if they stop now, no surprises. Minimum-charge alternate retained for traditional clubs that prefer flat-rate minimum tiers.
+
+**How:** `RateTier { minutes, price }` array on `GameTable`, snapshotted onto `Session` at start (Pattern T3). Two billing algorithms in `money.ts`: `priceForElapsedMinimum` (existing tier-floor model) and `priceForElapsedProrated` (new). Per-table toggle `rateCardBilling: 'minimum' | 'prorated'` defaults to `'prorated'` when undefined. `calculateAmount` dispatches based on session's snapshot.
+
+**Tested:** All 14 acceptance values verified (0/1/5/15/29/30/35/40/41/50/59/60/65/70/71/80/100 min × both modes) against the canonical Ball Bender card (tier1=30/₹70, tier2=60/₹150, tolerance=10). Pre-tier-1 pro-rate, tier plateau, between-tier climb, last-tier overflow at `last.price/last.minutes` per minute — all correct within ±₹1.
+
+**Revisit:** If 3+ owners report the post-last-tier rate feels wrong (current: `last.price/last.minutes` per min after plateau), make the extrapolation rate a per-table setting. Until then, this default is fine — Ball Bender accepted it during demo.
+
+### [2026-06-09] Default new tables to 'prorated' mode
+
+**Decision:** When an owner creates a new table or edits a table where `rateCardBilling` is undefined, the UI defaults the toggle to `'prorated'`. The 'minimum' option is visible but unselected by default.
+
+**Why:** Pro-rated is the better customer-trust UX (live total matches final bill, no awkward ₹70-at-1-minute), and Ball Bender's owner specifically called out the "trust" angle in his demo feedback. Most new owners won't know which to pick — give them the better default.
+
+**Revisit:** If founder feedback shows >50% of owners flip to 'minimum' after onboarding, reconsider the default.
+
+### [2026-06-09] Rate card seed example uses Ball Bender values, but label is generic
+
+**Decision:** `src/db/seed.ts` includes the 6-tier Ball Bender pool rates on the Pool 1 seed as a working demo. ALL user-facing labels are generic — the preset button says "standard preset (30 / 60 / 90 min) →", never "Ball Bender". The 3-tier preset is the UI default (90 / 60 / 30 min slots); seed has 6 tiers for richer demo data.
+
+**Why:** New users benefit from seeing a fully-populated rate card on first launch — they understand the feature instantly. But hardcoding a customer name into UI strings would (a) confuse new clubs and (b) leak our customer info. Seed values are example data, the system is fully dynamic. Sugeet's instinct flagged this correctly mid-build; fix landed in same session.
+
+### [2026-06-09] Multi-device sync — second ask, still deferred
+
+**Decision:** Ball Bender's 4-partner club is the second paying customer to ask for cross-device sync. Threshold for building cloud sync remains 3+ customers. Stay deferred.
+
+**Why:** Building Supabase sync is a multi-day architectural change. Two asks isn't enough signal to justify the work. Interim option for Ball Bender (not yet built): "Shift Handover" — partner ending shift exports a JSON blob, partner starting shift imports it. Solves the same problem with zero server cost. Build only when Ball Bender explicitly complains about the lack — they accepted the limitation during demo.
+
+**Also corrected mid-session:** Sugeet was under the impression that cloud sync would cost ~₹600/month for server. Supabase free tier provides 500MB database storage, easily handles 100+ clubs of session data. Cost is not the blocker; engineering time is.
+
+### [2026-06-09] Sales pitch order — Summary first, NOT Tables first
+
+**Decision:** When demoing ClubKeeper to a new club owner, lead with the Summary page (data-driven decisions on revenue, peak hours, table utilization). THEN show Canteen ("the real raw gold"). THEN show Tables (the timer mechanic). Never lead with Tables.
+
+**Why:** Founder discovered this empirically on 9 Jun 2026. First demo of the day (M416 club, 1 hour earlier): led with Tables → owner refused rudely, said "I'm already paying my employee to write in notebook, why would I pay for this?" Second demo (Ball Bender, same day): led with Summary → owner immediately loved it → progressed to Canteen → progressed to Tables → closed the sale. Same product, different pitch order, opposite outcome.
+
+**Mechanism:** Tables look like a digital notebook to skeptical owners — they see no value over paper. Summary shows them something paper CAN'T do — instant aggregation, peak-hour insight, leakage detection. Once they see "decisions on data", the tables become the obvious data source.
+
+**Revisit:** After 10+ sales calls, if Summary-first conversion < 30%, restructure the demo flow.

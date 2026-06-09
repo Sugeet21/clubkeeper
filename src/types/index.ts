@@ -78,6 +78,7 @@ export interface Session {
   rateCardSnapshot?: RateTier[]       // v10: captured at startSession; presence → tier billing
   toleranceMinutesSnapshot?: number   // v10: captured at startSession; default 10
   rateCardBillingSnapshot?: 'minimum' | 'prorated'  // v11: captured at startSession; default 'prorated'
+  isBackEntry?: boolean               // v12: true if logged via Back Entry flow, not live timer
 }
 
 export interface ClubSettings {

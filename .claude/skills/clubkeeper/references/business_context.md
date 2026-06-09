@@ -200,3 +200,36 @@ If ClubKeeper hits 500+ customers:
 - Eventually a **gaming venue OS** — bookings + sessions + bills + memberships
 
 But focus on the current niche first. Don't dilute.
+
+## Customer #2 — Ball Bender (acquired 9 Jun 2026)
+
+**Profile:** 4-partner indoor-games club. Pool tables. Located near M416 (which refused earlier the same day). Their existing rate card is non-linear tiered pricing — the source of the rate card feature spec.
+
+**Sales journey (one day):**
+1. Founder cold-walked into M416 first. Pitched Tables. Owner refused rudely: "I pay my employee to write in notebook, why pay for this?" Refused to even hear the Canteen pitch.
+2. ~1 hour later, Ball Bender owner called for a demo (presumably referral from M416 area).
+3. Founder pivoted strategy: led with **Summary page** instead of Tables.
+4. Owner loved Summary immediately — "we can take decisions on our data."
+5. Founder showed **Canteen** ("the real raw gold"). Owner loved.
+6. Owner asked for specific changes (rate card, tolerance, back entries, multi-device sync, QR-code wallet self-signup with ClubCoins).
+7. Founder agreed to build the customer-blocker pieces (rate card + tolerance) the same day. Closed the sale.
+
+**Key feature asks from this customer (in priority order):**
+1. **Rate card + tolerance billing** (P0 — shipped same day): non-linear tier pricing with 10-min grace. Their rate card: Pool 30/60/90/120/150/180 min → ₹70/100/170/200/270/300. Mini Snooker and Snooker have separate cards.
+2. **Back entries** (P1 — pending): one partner can't use phone/app, writes in notebook during his shift. Next shift partner needs to log past sessions into app. This is the second-highest priority.
+3. **Multi-device sync** (P2 — deferred): 4 partners, 4 phones, want shared data. Founder pushed back; interim plan = shift-handover JSON export when they complain.
+4. **QR-code wallet self-signup + ClubCoins** (P3 — next week): player scans QR at table, enters Name + Mobile + Amount, pays UPI, bonus credited as "ClubCoins" not rupees (coins → minutes conversion at consumption).
+
+**Cited reason for buying:** "Customers can easily trust" — Ball Bender's owner explicitly mentioned the tolerance / fair-pricing angle as a selling point with HIS customers. The pro-rated billing model directly serves this.
+
+**Founder lessons recorded:**
+- Lead with Summary, never Tables (see decisions_active.md entry above).
+- The "raw gold" framing for Canteen works.
+- One-day turnaround on a P0 feature ask is a closer. Don't promise weeks if it's actually a day's work.
+- A rude refusal an hour earlier doesn't mean the market is wrong — it means the pitch was wrong.
+
+**Sales day stats (9 Jun 2026):**
+- 5 cold visits / demos
+- 1 close (Ball Bender)
+- Conversion rate this day: 20%
+- Founder note: "best day"
