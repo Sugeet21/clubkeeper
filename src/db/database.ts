@@ -244,6 +244,64 @@ export class ClubKeeperDB extends Dexie {
           }
         }
       })
+    // Version 14: additive — adds optional `slug?: string` and `slugLocked?: boolean`
+    // to ClubSettings for Player Hub. No new index. No .upgrade() callback.
+    // Legacy rows read undefined for both fields (falsy = hub not set up yet).
+    this.version(14).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+    })
+    // Version 15: ClubCoins — additive only, no .upgrade() block.
+    // Adds optional fields:
+    //   Customer.coinBalance?: number            (undefined treated as 0)
+    //   WalletTransaction.balanceType?: 'wallet'|'coins' (undefined treated as 'wallet')
+    //   WalletTransaction.coinDelta?: number     (only set when balanceType='coins')
+    //   WalletTransaction.rupeeEquivalent?: number (only set on redemption rows)
+    //   ClubSettings coin config fields: coinsEnabled, coinTiers, minutesPerCoin,
+    //     rupeesPerCoin, coinExpiryDays, coinMinRedemption
+    // No new Dexie indexes — balanceType and coinDelta are NOT indexed
+    // (post-fetch .filter() used for coin history, as documented in build prompt).
+    // Schema string identical to v14 — no index changes needed.
+    this.version(15).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+    })
+    // Version 16: Engagement features (Phase 3) — additive only, no .upgrade() block.
+    // Adds optional fields to Customer:
+    //   firstTopupAt?: number    — epoch ms; set on first confirmed topup; welcome bonus one-shot guard
+    //   lastStreakBonusAt?: number — epoch ms; streak cooldown guard
+    //   expiryAppliedAt?: number  — epoch ms; per-customer expiry debounce
+    // Adds optional fields to ClubSettings:
+    //   welcomeBonusEnabled, welcomeBonusCoins, streakEnabled, streakRequiredDays,
+    //   streakWindowDays, streakBonusCoins, dormancyEnabled, dormantThresholdDays, nudgeTemplate
+    // WalletReferenceType extended with: coin_expiry, welcome_bonus, streak_bonus, engagement_log
+    // No new Dexie indexes — all new fields read via .filter() or direct .get().
+    // Schema string identical to v15 — no index changes needed.
+    this.version(16).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+    })
   }
 }
 

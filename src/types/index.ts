@@ -129,6 +129,11 @@ export interface StockPurchase {
   notes?: string              // max 200 chars
 }
 
+export interface CoinTier {
+  minAmount: number  // ₹ — topup must be ≥ this to earn this tier's coins
+  coins: number      // ClubCoins credited when this tier is the highest qualifying tier
+}
+
 export interface ClubSettings {
   id: number
   clubName: string
@@ -142,6 +147,27 @@ export interface ClubSettings {
   lowStockThreshold?: number     // default 5; treat missing as 5
   piggyOpeningBalance?: number   // v13: owner-settable opening cash float; treat missing as 0
   piggyStartedAt?: number        // v13: Unix ms; piggy aggregation window start. Set at v13 upgrade if absent.
+  slug?: string                  // v14: Player Hub slug; mirrors Supabase clubs.slug
+  slugLocked?: boolean           // v14: true after first successful slug save; UI blocks further edits
+  acceptsTopups?: boolean        // v15+: mirrors Supabase clubs.accepts_topups; default true
+  coinRedemptionModes?: 'time' | 'canteen' | 'both'  // where coins can be redeemed; default 'time' for new clubs
+  // v15: ClubCoins config — all optional; undefined = use DEFAULT_COIN_CONFIG values
+  coinsEnabled?: boolean         // master switch; undefined/false = off. Owner must explicitly enable.
+  coinTiers?: CoinTier[]         // ordered ascending by minAmount
+  minutesPerCoin?: number        // for time-based redemption; default 2
+  rupeesPerCoin?: number         // for ₹-discount redemption; default 0.5
+  coinExpiryDays?: number        // referenced by Phase 3 expiry job; defined now, not enforced
+  coinMinRedemption?: number     // floor below which redemption pill is hidden; default 10
+  // v16: engagement features — all optional, undefined = feature off
+  welcomeBonusEnabled?: boolean
+  welcomeBonusCoins?: number     // default 50
+  streakEnabled?: boolean
+  streakRequiredDays?: number    // default 3
+  streakWindowDays?: number      // default 7
+  streakBonusCoins?: number      // default 50
+  dormancyEnabled?: boolean
+  dormantThresholdDays?: number  // default 14
+  nudgeTemplate?: string
 }
 
 export interface CanteenItem {

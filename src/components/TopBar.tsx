@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
+import { usePendingTopupCount } from '../store/topupInbox'
 
 interface Props {
   onWalletPress?: () => void
@@ -11,6 +12,7 @@ export default function TopBar({ onWalletPress, onQuickSalePress }: Props) {
   const navigate = useNavigate()
   const subtitle = format(new Date(), "EEE · d MMM · h:mm a")
   const [online, setOnline] = useState(navigator.onLine)
+  const pendingTopups = usePendingTopupCount()
 
   useEffect(() => {
     const on = () => setOnline(true)
@@ -53,7 +55,7 @@ export default function TopBar({ onWalletPress, onQuickSalePress }: Props) {
         {/* Wallet button — between canteen and gear */}
         <button
           onClick={onWalletPress ?? (() => navigate('/wallet'))}
-          className="w-9 h-9 flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors"
+          className="w-9 h-9 relative flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors"
           aria-label="Wallet"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
@@ -61,6 +63,12 @@ export default function TopBar({ onWalletPress, onQuickSalePress }: Props) {
             <path d="M1 10h22" />
             <circle cx="17" cy="15" r="1.5" fill="currentColor" stroke="none" />
           </svg>
+          {pendingTopups > 0 && (
+            <span
+              className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-400"
+              aria-hidden="true"
+            />
+          )}
         </button>
         <button
           onClick={() => navigate('/settings')}

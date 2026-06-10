@@ -608,3 +608,39 @@ Secondary bug: when the catch block set `error`, the sheet rendered BOTH the gre
 **Files touched:**
 - src/components/TopBar.tsx (two-row restructure + onQuickSalePress prop)
 - src/pages/Home.tsx (removed standalone row, passes prop)
+
+---
+
+## Player Hub Bug Sprint — 11 Jun 2026
+
+### B1 — Confirm duplicates wallet credit (P0) — RESOLVED
+Root cause: (1) `/api/confirm-topup` Vercel function doesn't exist on localhost with `npm run dev`; (2) No idempotency check — Dexie credit ran before cloud call, and retry would credit again.
+Fix: Replace fetch to Vercel function with direct `supabase.from('topup_intents').update(...)` (owner is authed, RLS permits). Added idempotency guard in `handleConfirm` — checks for existing WalletTransaction with `referenceType='topup' AND referenceId=intentId` before calling `recordTopupWithCoins`. Retry queue (localStorage) on cloud failure unchanged, but now uses Supabase client on retry (Wallet.tsx mount effect).
+
+### B2 — Reject button fails (P0) — RESOLVED
+Root cause: Same as B1 — reject also called `/api/confirm-topup` which doesn't work on localhost.
+Fix: Replace with direct `supabase.from('topup_intents').update({ status: 'rejected', reject_reason })`. Handled in same PendingTopupsModal fix as B1.
+
+### B3 — Accept Top-ups toggle broken (P0) — RESOLVED
+Root cause: Toggle wrote to Supabase only; mount `useEffect` re-fetched from Supabase on every remount (navigation back to Settings) and overwrote the user's last toggle. `topupsLoaded` flag missing.
+Fix: (1) Added `topupsLoaded` guard — mount effect runs once, not on every remount. (2) `handleToggleTopups` now writes to Dexie first (`acceptsTopups` added to `ClubSettings` type), then Supabase. (3) Initial state initialized from `settings?.acceptsTopups` instead of hardcoded `true`.
+
+### B4 — Pending count mismatch (P1) — RESOLVED
+Root cause: Modal header used `pendingCount` from Zustand store; visible row list came from `intents` prop after filtering. After a local credit the store count and the prop list could diverge.
+Fix: Modal title now uses `intents.length` (source of truth = the prop array visible in the list). Added `usePendingTopupCount()` selector in topupInbox store for shared access.
+
+### B5 — No badge on Wallet icon (P1) — RESOLVED
+Root cause: TopBar wallet button had no indicator for pending topups.
+Fix: Added `usePendingTopupCount()` to TopBar; renders an 8px amber dot (`w-2 h-2 bg-amber-400 rounded-full`) in `absolute top-1 right-1` on the wallet button when `pendingTopups > 0`.
+
+### B6 — Player scan page shows QR (useless on mobile) (P1) — RESOLVED
+Root cause: `awaiting_payment` state rendered `<UpiQrCard>` as the primary UI — the player can't scan their own screen.
+Fix: Built UPI deep-link (`upi://pay?pa=...`) and rendered it as a large green `<a href>` button as the primary CTA. `<UpiQrCard>` moved inside a `<details>` element ("Or scan from another device") that is collapsed by default. No User-Agent detection.
+
+### B7 — Redemption Rate inputs can't be cleared (P2) — RESOLVED
+Root cause: `<input type="number">` bound to numeric state — when user backspaces to empty, React re-renders with the old value from state.
+Fix: Introduced `RateInput` component (inline in PlayerHubSettings.tsx) with `draft` string state + `onBlur` validator. Empty draft saves as 0. Invalid draft shows inline error and doesn't save. Applied to all three rate inputs (rupeesPerCoin, minutesPerCoin, coinExpiryDays).
+
+### B8 — Double ₹ symbol in nudge template (P2) — RESOLVED
+Root cause: `DEFAULT_ENGAGEMENT_CONFIG.nudgeTemplate` had literal `₹` before `{rupeeValue}`; but `renderNudgeTemplate` renders `{rupeeValue}` as `₹${value}`, producing `₹₹40`.
+Fix: Removed literal `₹` from the default template string in `streak.ts`. Added migration chip in `NudgeTemplateEditor` — detects `₹{rupeeValue}` in saved template, shows "Reset to new default" button. Does not auto-migrate.

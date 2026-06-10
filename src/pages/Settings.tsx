@@ -13,6 +13,7 @@ import { validatePlayerName, validateUpiId } from '../lib/validation'
 import { db } from '../db/database'
 import { supabase } from '../lib/supabase'
 import { playBeepOnce, triggerVibration, unlockAudio } from '../lib/alarm'
+import { PlayerHubSettings } from './PlayerHubSettings'
 import type { GameTable } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -764,6 +765,22 @@ export default function Settings() {
               </span>
             </button>
           </div>
+        </SettingsSection>
+
+        {/* ── 4.6: Player Hub ────────────────────────────────────────────── */}
+        <SettingsSection
+          id="player-hub"
+          title="Player Hub"
+          icon={
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
+              <path d="M9 12l2 2 4-4" />
+            </svg>
+          }
+          isOpen={openSection === 'player-hub'}
+          onToggle={() => toggleSection('player-hub')}
+        >
+          <PlayerHubSettings settings={settings} />
         </SettingsSection>
 
         {/* ── 5: Data & Backup ───────────────────────────────────────────── */}

@@ -7,12 +7,13 @@ interface PaymentQRProps {
   amount: number          // integer rupees
   transactionNote: string // e.g. "Pool 1 - 8m"
   size?: number           // internal render resolution only — NOT the displayed CSS size
+  urlOverride?: string    // if set, encode this URL directly instead of UPI deep-link (used by Poster)
 }
 
 // Render at 2× for retina sharpness. Displayed size is controlled by the parent container.
 const RENDER_SIZE = 560
 
-export function PaymentQR({ upiId, payeeName, amount, transactionNote }: PaymentQRProps) {
+export function PaymentQR({ upiId, payeeName, amount, transactionNote, urlOverride }: PaymentQRProps) {
   const [dataUrl, setDataUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -20,15 +21,20 @@ export function PaymentQR({ upiId, payeeName, amount, transactionNote }: Payment
     setDataUrl(null)
     setError(null)
 
-    // UPI URI spec: upi://pay?pa=<vpa>&pn=<name>&am=<amount>&tn=<note>&cu=INR
-    const params = new URLSearchParams({
-      pa: upiId,
-      pn: payeeName,
-      am: String(amount),
-      tn: transactionNote,
-      cu: 'INR',
-    })
-    const uri = `upi://pay?${params.toString()}`
+    let uri: string
+    if (urlOverride) {
+      uri = urlOverride
+    } else {
+      // UPI URI spec: upi://pay?pa=<vpa>&pn=<name>&am=<amount>&tn=<note>&cu=INR
+      const params = new URLSearchParams({
+        pa: upiId,
+        pn: payeeName,
+        am: String(amount),
+        tn: transactionNote,
+        cu: 'INR',
+      })
+      uri = `upi://pay?${params.toString()}`
+    }
 
     QRCode.toDataURL(uri, {
       width: RENDER_SIZE,
@@ -41,7 +47,7 @@ export function PaymentQR({ upiId, payeeName, amount, transactionNote }: Payment
     })
       .then((url) => setDataUrl(url))
       .catch((e: Error) => setError(e.message))
-  }, [upiId, payeeName, amount, transactionNote])
+  }, [upiId, payeeName, amount, transactionNote, urlOverride])
 
   if (error) {
     return <div className="text-busy text-sm">QR generation failed: {error}</div>

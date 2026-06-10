@@ -1,13 +1,17 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/database'
 import { useSettings } from '../hooks/useLiveData'
-import { useCustomerStore } from '../store/customerStore'
 import { useToastStore } from '../store/toastStore'
+import { recordTopupWithCoins, getCoinConfig } from '../db/queries'
+import { coinsEarnedForTopup, resolveCoinConfig } from '../lib/coins'
+import { getEngagementConfig } from '../lib/streak'
+import type { EngagementConfig } from '../lib/streak'
 import { buildWhatsAppReceiptUrl } from '../lib/whatsapp'
 import { UpiQrCard } from '../components/UpiQrCard'
 import type { Customer } from '../types/customer'
+import type { CoinConfig } from '../lib/coins'
 import { customerDisplayName } from '../lib/customerDisplay'
 
 type PaymentMode = 'cash' | 'upi' | 'card'
@@ -18,7 +22,6 @@ const BONUS_CHIPS = [0, 25, 50, 100]
 export default function WalletTopup() {
   const { customerId } = useParams<{ customerId: string }>()
   const navigate = useNavigate()
-  const { topUp } = useCustomerStore()
   const { show: showToast } = useToastStore()
   const settings = useSettings()
 
@@ -31,17 +34,39 @@ export default function WalletTopup() {
   const [bonusStr, setBonusStr] = useState('0')
   const [paymentMode, setPaymentMode] = useState<PaymentMode | null>(null)
   const [saving, setSaving] = useState(false)
+  const [coinConfig, setCoinConfig] = useState<CoinConfig>(resolveCoinConfig({}))
+  const [engagementConfig, setEngagementConfig] = useState<EngagementConfig | null>(null)
 
   // Success state
   const [success, setSuccess] = useState<{
     totalCredited: number
     newBalance: number
+    coinsEarned: number
+    welcomeCoinsEarned: number
     customer: Customer
   } | null>(null)
+
+  useEffect(() => {
+    getCoinConfig().then(setCoinConfig).catch(() => {/* use defaults */})
+    getEngagementConfig().then(setEngagementConfig).catch(() => {/* use defaults */})
+  }, [])
 
   const amount = parseInt(amountStr, 10) || 0
   const bonus = parseInt(bonusStr, 10) || 0
   const totalCredited = amount + bonus
+
+  const previewTierCoins =
+    coinConfig.coinsEnabled && amount > 0
+      ? coinsEarnedForTopup(amount, coinConfig.coinTiers)
+      : 0
+  const isFirstTopup = !customer?.firstTopupAt
+  const previewWelcomeCoins =
+    coinConfig.coinsEnabled &&
+    engagementConfig?.welcomeBonusEnabled &&
+    isFirstTopup
+      ? (engagementConfig.welcomeBonusCoins ?? 0)
+      : 0
+  const previewCoins = previewTierCoins + previewWelcomeCoins
 
   const canConfirm = !saving && amount > 0 && paymentMode !== null
 
@@ -49,18 +74,22 @@ export default function WalletTopup() {
     if (!canConfirm || !customerId || !customer) return
     setSaving(true)
     try {
-      const { customer: updated } = await topUp({
+      const result = await recordTopupWithCoins({
         customerId,
-        amountPaid: amount,
-        bonus,
+        rupees: totalCredited,
         paymentMode: paymentMode!,
+        refId: null,
       })
+      const updated = await db.customers.get(customerId)
+      if (!updated) throw new Error('Customer not found after topup')
       setSuccess({
         totalCredited,
         newBalance: updated.walletBalance,
+        coinsEarned: result.coinsEarned,
+        welcomeCoinsEarned: result.welcomeCoinsEarned,
         customer: updated,
       })
-    } catch (err) {
+    } catch {
       showToast({ message: 'Top-up failed. Try again.', type: 'error' })
     } finally {
       setSaving(false)
@@ -98,7 +127,7 @@ export default function WalletTopup() {
 
   // ── Success screen ─────────────────────────────────────────────────────────
   if (success) {
-    const { totalCredited: credited, newBalance, customer: updatedCustomer } = success
+    const { totalCredited: credited, newBalance, coinsEarned, welcomeCoinsEarned, customer: updatedCustomer } = success
     const whatsappUrl =
       updatedCustomer.phone
         ? buildWhatsAppReceiptUrl({
@@ -143,6 +172,13 @@ export default function WalletTopup() {
                 ₹{newBalance.toLocaleString('en-IN')}
               </span>
             </p>
+            {(coinsEarned > 0 || welcomeCoinsEarned > 0) && (
+              <p className="text-amber-400 text-[13px] font-semibold mt-2">
+                {welcomeCoinsEarned > 0
+                  ? `🪙 +${coinsEarned} + ${welcomeCoinsEarned} welcome = ${coinsEarned + welcomeCoinsEarned} ClubCoins!`
+                  : `🪙 +${coinsEarned.toLocaleString('en-IN')} ClubCoins earned!`}
+              </p>
+            )}
           </div>
 
           {/* Actions */}
@@ -335,6 +371,18 @@ export default function WalletTopup() {
                   ₹{(customer.walletBalance + totalCredited).toLocaleString('en-IN')}
                 </span>
               </div>
+              {previewTierCoins > 0 && (
+                <div className="flex justify-between text-[14px] pt-1 border-t border-border mt-1">
+                  <span className="text-amber-400">ClubCoins earned</span>
+                  <span className="text-amber-400 font-semibold">+{previewTierCoins.toLocaleString('en-IN')} 🪙</span>
+                </div>
+              )}
+              {previewWelcomeCoins > 0 && (
+                <div className="flex justify-between text-[14px]">
+                  <span className="text-amber-400">Welcome bonus</span>
+                  <span className="text-amber-400 font-semibold">+{previewWelcomeCoins.toLocaleString('en-IN')} 🪙</span>
+                </div>
+              )}
             </div>
           )}
 

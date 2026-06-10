@@ -232,3 +232,25 @@ Deferred. Surface when first customer asks for cloud sync or multi-device.
 **Mechanism:** Tables look like a digital notebook to skeptical owners — they see no value over paper. Summary shows them something paper CAN'T do — instant aggregation, peak-hour insight, leakage detection. Once they see "decisions on data", the tables become the obvious data source.
 
 **Revisit:** After 10+ sales calls, if Summary-first conversion < 30%, restructure the demo flow.
+
+---
+
+### [2026-06-11] Owner-side intent updates go through Supabase client, not Vercel function
+
+**Decision:** Confirm and reject actions on topup_intents use `supabase.from('topup_intents').update(...)` directly from the client (owner is authenticated; RLS `topup_intents_owner_update` policy permits). The Vercel serverless functions `api/confirm-topup.ts` and `api/pending-topups.ts` have been deleted.
+
+**Why:** The Vercel functions don't exist on `npm run dev` (only `vercel dev`). This caused every confirm/reject on localhost to fail. Since the owner is always authenticated and RLS covers the authorization, a serverless function adds zero security value here. Simplest correct solution = go through the client.
+
+**How to apply:** Any future owner-side mutation on Supabase tables can use the Supabase JS client directly if the owner has a valid session and the RLS policy covers it. Only use serverless functions when server-side secrets (Razorpay key, service role key) are required.
+
+---
+
+### [2026-06-11] Coin redemption modes default 'both' for existing clubs, 'time' default for UI dropdown
+
+**Decision:** `ClubSettings.coinRedemptionModes?: 'time' | 'canteen' | 'both'`. New field added to types (no Dexie schema bump needed — additive field read with `?? 'both'` default in `resolveCoinConfig`). For Sugeet's existing club (My Club), `settings.coinRedemptionModes` is `undefined` → resolves to `'both'` — no regression. Default for the UI dropdown in PlayerHubSettings is 'both' (preserves current behavior). New clubs can choose; the UI guides toward enabling the appropriate mode.
+
+**CoinRedemptionPill visibility rules:**
+- Session-end screen: pill hidden when `coinRedemptionModes === 'canteen'`
+- Canteen checkout (QuickSale): not yet implemented — reserve for when canteen coin redemption is built
+
+**How to apply:** Always read `coinConfig.coinRedemptionModes` before showing any redemption UI. The `resolveCoinConfig` function returns the merged value; never inline `settings.coinRedemptionModes` checks in UI code.

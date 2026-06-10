@@ -4,6 +4,8 @@ import { calculateAmount, applyRounding } from '../lib/money'
 import { validatePlayerName, validateItemName, validateCanteenItemName } from '../lib/validation'
 import { seedIfEmpty } from './seed'
 import { normalizeName, findMatchingCanteenItem } from '../lib/canteenMatch'
+import { coinsEarnedForTopup, resolveCoinConfig } from '../lib/coins'
+import { getEngagementConfig } from '../lib/streak'
 import type {
   GameTable,
   Session,
@@ -1381,4 +1383,184 @@ export async function updatePiggyOpeningBalance(newBalance: number): Promise<voi
     throw new Error('Opening balance must be a non-negative integer.')
   }
   await db.settings.update(1, { piggyOpeningBalance: newBalance })
+}
+
+// ─── ClubCoins — v15 ─────────────────────────────────────────────────────────
+
+/**
+ * Return the fully-resolved coin configuration merged with defaults.
+ * Every field guaranteed to be defined — callers never need to null-check.
+ */
+export async function getCoinConfig() {
+  const settings = await db.settings.get(1)
+  return resolveCoinConfig(settings ?? {})
+}
+
+export class InsufficientCoinsError extends Error {
+  available: number
+  requested: number
+  constructor(available: number, requested: number) {
+    super(`Insufficient ClubCoins. Available: ${available}, requested: ${requested}.`)
+    this.name = 'InsufficientCoinsError'
+    this.available = available
+    this.requested = requested
+  }
+}
+
+/**
+ * Record a topup: credits the wallet AND, if coinsEnabled, credits coins.
+ * Writes 1 or 2 WalletTransaction rows and updates customer in ONE flat tx.
+ *
+ * Pattern D7: never call this from inside another db.transaction().
+ */
+export async function recordTopupWithCoins(params: {
+  customerId: string
+  rupees: number
+  paymentMode: 'cash' | 'upi' | 'card'
+  refId: string | null
+}): Promise<{ coinsEarned: number; welcomeCoinsEarned: number }> {
+  const { customerId, rupees, paymentMode, refId } = params
+  const config = await getCoinConfig()
+  const engagement = await getEngagementConfig()
+
+  const tierCoins = config.coinsEnabled
+    ? coinsEarnedForTopup(rupees, config.coinTiers)
+    : 0
+
+  // Welcome bonus determined before entering tx (read-only check is safe here;
+  // the idempotency guard is re-checked inside the tx on the fresh row).
+  const customerPre = await db.customers.get(customerId)
+  const isFirstTopup = !customerPre?.firstTopupAt
+  const welcomeCoins =
+    isFirstTopup && engagement.welcomeBonusEnabled && config.coinsEnabled
+      ? (engagement.welcomeBonusCoins ?? 0)
+      : 0
+
+  await db.transaction('rw', db.customers, db.walletTransactions, async () => {
+    const customer = await db.customers.get(customerId)
+    if (!customer) throw new Error('customer_not_found')
+
+    // Re-check idempotency guard inside tx in case of concurrent calls
+    const alreadyHadFirstTopup = !!customer.firstTopupAt
+    const effectiveWelcomeCoins = alreadyHadFirstTopup ? 0 : welcomeCoins
+
+    const totalCoins = tierCoins + effectiveWelcomeCoins
+    const newWalletBalance = customer.walletBalance + rupees
+    const now = Date.now()
+
+    // Running coin balance tally (each row records balance AFTER that row)
+    let runningCoinBalance = customer.coinBalance ?? 0
+
+    // 1. Wallet credit row
+    await db.walletTransactions.add({
+      id: crypto.randomUUID(),
+      customerId,
+      type: 'credit',
+      balanceType: 'wallet',
+      amount: rupees,
+      balanceAfter: newWalletBalance,
+      paymentMode,
+      referenceType: 'topup',
+      referenceId: refId,
+      notes: null,
+      createdAt: now,
+    })
+
+    // 2. Tier coin credit row
+    if (tierCoins > 0) {
+      runningCoinBalance += tierCoins
+      await db.walletTransactions.add({
+        id: crypto.randomUUID(),
+        customerId,
+        type: 'credit',
+        balanceType: 'coins',
+        amount: 0,
+        coinDelta: tierCoins,
+        balanceAfter: runningCoinBalance,
+        paymentMode: null,
+        referenceType: 'topup',
+        referenceId: refId,
+        notes: `Earned via ₹${rupees.toLocaleString('en-IN')} topup`,
+        createdAt: now,
+      })
+    }
+
+    // 3. Welcome bonus row (first-topup, one-shot)
+    if (effectiveWelcomeCoins > 0) {
+      runningCoinBalance += effectiveWelcomeCoins
+      await db.walletTransactions.add({
+        id: crypto.randomUUID(),
+        customerId,
+        type: 'credit',
+        balanceType: 'coins',
+        amount: 0,
+        coinDelta: effectiveWelcomeCoins,
+        balanceAfter: runningCoinBalance,
+        paymentMode: null,
+        referenceType: 'welcome_bonus',
+        referenceId: null,
+        notes: 'Welcome bonus — first topup',
+        createdAt: now,
+      })
+    }
+
+    await db.customers.update(customerId, {
+      walletBalance: newWalletBalance,
+      coinBalance: runningCoinBalance,
+      lastVisitAt: now,
+      // Stamp firstTopupAt on first topup only — never overwrite
+      ...(alreadyHadFirstTopup ? {} : { firstTopupAt: now }),
+    })
+  })
+
+  return { coinsEarned: tierCoins, welcomeCoinsEarned: welcomeCoins }
+}
+
+/**
+ * Redeem coins from a customer — writes a WalletTransaction(coins, debit)
+ * row and decrements coinBalance. The ₹ discount is NOT applied here;
+ * the caller (post-stop or canteen checkout) applies it to the bill.
+ *
+ * Pattern D7: never call from inside another db.transaction().
+ */
+export async function redeemCoins(params: {
+  customerId: string
+  coins: number
+  rupeeEquivalent: number
+  referenceType: 'coin_redemption'
+  referenceId: string
+}): Promise<void> {
+  const { customerId, coins, rupeeEquivalent, referenceType, referenceId } = params
+  if (!Number.isInteger(coins) || coins <= 0) throw new Error('Coins must be a positive integer.')
+
+  await db.transaction('rw', db.customers, db.walletTransactions, async () => {
+    const customer = await db.customers.get(customerId)
+    if (!customer) throw new Error('customer_not_found')
+
+    const currentCoins = customer.coinBalance ?? 0
+    if (currentCoins < coins) throw new InsufficientCoinsError(currentCoins, coins)
+
+    const newCoinBalance = currentCoins - coins
+
+    await db.walletTransactions.add({
+      id: crypto.randomUUID(),
+      customerId,
+      type: 'debit',
+      balanceType: 'coins',
+      amount: 0,
+      coinDelta: -coins,
+      rupeeEquivalent,
+      balanceAfter: newCoinBalance,
+      paymentMode: null,
+      referenceType,
+      referenceId,
+      notes: `Redeemed for ₹${rupeeEquivalent.toLocaleString('en-IN')} discount`,
+      createdAt: Date.now(),
+    })
+
+    await db.customers.update(customerId, {
+      coinBalance: newCoinBalance,
+      lastVisitAt: Date.now(),
+    })
+  })
 }

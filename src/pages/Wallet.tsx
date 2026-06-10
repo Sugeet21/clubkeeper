@@ -1,16 +1,37 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { formatDistanceToNow } from 'date-fns'
 import { db } from '../db/database'
+import { supabase } from '../lib/supabase'
 import type { Customer } from '../types/customer'
 import { useCustomerStore } from '../store/customerStore'
 import CustomerListRow from '../components/wallet/CustomerListRow'
+import PendingTopupsModal from '../components/PendingTopupsModal'
+import { BringBackList } from '../components/BringBackList'
+import { useTopupInbox } from '../store/topupInbox'
+import { useAuthStore } from '../store/authStore'
+import { subscribeToTopupIntents, unsubscribeTopupIntents } from '../lib/realtimeTopups'
+import { getPendingTopups, getOwnerClub } from '../lib/playerHubApi'
+import type { PendingTopupRow } from '../lib/playerHubApi'
+import { useSettings } from '../hooks/useLiveData'
+import { resolveCoinConfig } from '../lib/coins'
+import { getEngagementConfig } from '../lib/streak'
+import type { EngagementConfig } from '../lib/streak'
 
 export default function Wallet() {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const { searchCustomers } = useCustomerStore()
+  const { pendingCount, openModal } = useTopupInbox()
+  const { dbReady, session } = useAuthStore()
+  const settings = useSettings()
+  const coinConfig = resolveCoinConfig(settings ?? {})
+  const [engagementConfig, setEngagementConfig] = useState<EngagementConfig | null>(null)
+
+  // Pending topups state for modal
+  const [pendingIntents, setPendingIntents] = useState<PendingTopupRow[]>([])
+  const [clubId, setClubId] = useState<string | null>(null)
 
   const recentCustomers = useLiveQuery(
     () => db.customers.orderBy('lastVisitAt').reverse().limit(10).toArray(),
@@ -20,6 +41,74 @@ export default function Wallet() {
 
   const [searchResults, setSearchResults] = useState<Customer[] | null>(null)
   const [searching, setSearching] = useState(false)
+
+  useEffect(() => {
+    getEngagementConfig().then(setEngagementConfig).catch(() => {})
+  }, [])
+
+  // Set up realtime subscription + load club + pending intents when ready
+  useEffect(() => {
+    if (!dbReady || !session) return
+
+    let cancelled = false
+    let currentClubId: string | null = null
+
+    async function init() {
+      try {
+        const club = await getOwnerClub()
+        if (cancelled || !club) return
+        currentClubId = club.id
+        setClubId(club.id)
+
+        const intents = await getPendingTopups(club.id)
+        if (!cancelled) setPendingIntents(intents)
+
+        await subscribeToTopupIntents(club.id)
+      } catch { /* ignore — club may not exist yet */ }
+    }
+
+    void init()
+
+    return () => {
+      cancelled = true
+      unsubscribeTopupIntents()
+    }
+  }, [dbReady, session])
+
+  // Reload pending intents whenever pending count changes
+  useEffect(() => {
+    if (!clubId) return
+    getPendingTopups(clubId)
+      .then((intents) => setPendingIntents(intents))
+      .catch(() => {})
+  }, [pendingCount, clubId])
+
+  // Retry failed confirm-topup cloud syncs via Supabase client directly
+  useEffect(() => {
+    if (!dbReady) return
+    const failed: string[] = JSON.parse(localStorage.getItem('ck_failedConfirmTopups') ?? '[]') as string[]
+    if (failed.length === 0) return
+
+    Promise.all(
+      failed.map(async (intentId) => {
+        const { error } = await supabase
+          .from('topup_intents')
+          .update({
+            status: 'confirmed',
+            confirmed_at: new Date().toISOString(),
+          })
+          .eq('id', intentId)
+        return error ? null : intentId
+      }),
+    ).then((results) => {
+      const stillFailed = failed.filter((id) => !results.includes(id))
+      localStorage.setItem('ck_failedConfirmTopups', JSON.stringify(stillFailed))
+    }).catch(() => {})
+  }, [dbReady])
+
+  function handleIntentHandled(intentId: string) {
+    setPendingIntents((prev) => prev.filter((i) => i.id !== intentId))
+  }
 
   async function handleSearch(q: string) {
     setQuery(q)
@@ -65,6 +154,41 @@ export default function Wallet() {
             New
           </button>
         </div>
+
+        {/* Bring-Back dormant nudges */}
+        {engagementConfig?.dormancyEnabled && (
+          <BringBackList
+            thresholdDays={engagementConfig.dormantThresholdDays ?? 14}
+            nudgeTemplate={engagementConfig.nudgeTemplate ?? ''}
+            clubName={settings?.clubName ?? ''}
+            rupeesPerCoin={coinConfig.rupeesPerCoin}
+            minutesPerCoin={coinConfig.minutesPerCoin}
+            coinExpiryDays={coinConfig.coinExpiryDays ?? 0}
+          />
+        )}
+
+        {/* Pending top-ups strip */}
+        {pendingCount > 0 ? (
+          <button
+            onClick={openModal}
+            className="w-full mb-3 min-h-[48px] flex items-center gap-3 px-4 bg-paused/8 border border-paused/30 rounded-2xl"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-paused shrink-0">
+              <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 01-3.46 0" />
+            </svg>
+            <p className="flex-1 text-left text-[14px] font-semibold text-paused">
+              {pendingCount} pending top-up{pendingCount !== 1 ? 's' : ''} · Tap to review
+            </p>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-paused shrink-0">
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </button>
+        ) : (
+          <div className="mb-3 px-1">
+            <p className="text-text-faint text-[12px]">Player Hub: 0 pending</p>
+          </div>
+        )}
 
         {/* Search input */}
         <div className="relative mb-4">
@@ -150,6 +274,15 @@ export default function Wallet() {
           ))}
         </div>
       </div>
+
+      {/* Pending topups modal */}
+      {clubId && (
+        <PendingTopupsModal
+          intents={pendingIntents}
+          clubId={clubId}
+          onIntentHandled={handleIntentHandled}
+        />
+      )}
     </div>
   )
 }

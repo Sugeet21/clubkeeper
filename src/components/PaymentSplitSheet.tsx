@@ -13,6 +13,8 @@ interface PaymentSplitSheetProps {
   initialCustomer?: Customer | null
   // Allow inline linking from inside the sheet. Defaults to true.
   allowCustomerLink?: boolean
+  // Called whenever the linked customer changes (linked or unlinked).
+  onCustomerLinked?: (customer: Customer | null) => void
   onCancel: () => void
   onConfirm: (
     breakdown: { cash: number; upi: number; wallet: number },
@@ -40,6 +42,7 @@ export function PaymentSplitSheet({
   headline,
   initialCustomer,
   allowCustomerLink = true,
+  onCustomerLinked,
   onCancel,
   onConfirm,
 }: PaymentSplitSheetProps) {
@@ -214,7 +217,7 @@ export function PaymentSplitSheet({
                     </p>
                   </div>
                   <button
-                    onClick={() => { setLinkedCustomer(null); setWallet(0) }}
+                    onClick={() => { setLinkedCustomer(null); setWallet(0); onCustomerLinked?.(null) }}
                     className="text-text-faint text-xs min-h-[36px] px-2"
                   >
                     Unlink
@@ -317,6 +320,7 @@ export function PaymentSplitSheet({
           onPick={(c) => {
             setLinkedCustomer(c)
             setPickerOpen(false)
+            onCustomerLinked?.(c)
           }}
         />
       )}

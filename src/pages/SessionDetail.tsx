@@ -24,6 +24,13 @@ import { Modal } from '../components/Modal'
 import { AddItemBottomSheet } from '../components/AddItemBottomSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
+import { CoinRedemptionPill } from '../components/CoinRedemptionPill'
+import { redeemCoins, getCoinConfig } from '../db/queries'
+import { resolveCoinConfig } from '../lib/coins'
+import { checkAndAwardStreak } from '../lib/streak'
+import { useToastStore } from '../store/toastStore'
+import type { CoinConfig } from '../lib/coins'
+import type { Customer } from '../types/customer'
 import type { Session, GameTable } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -352,6 +359,7 @@ export default function SessionDetail() {
   const allTables = useTables()
   const items = useSessionItems(session != null ? session.id : undefined)
   const settings = useSettings()
+  const { show: showToast } = useToastStore()
 
   // Tick every second so the timer re-renders
   useTick()
@@ -377,11 +385,21 @@ export default function SessionDetail() {
   // v13: split-payment capture sheet (sits above the QR screen)
   const [splitSheetOpen, setSplitSheetOpen] = useState(false)
   const [breakdownRecorded, setBreakdownRecorded] = useState(false)
+  // v15: coin redemption on payment screen
+  const [coinConfig, setCoinConfig] = useState<CoinConfig>(resolveCoinConfig({}))
+  const [linkedCustomer, setLinkedCustomer] = useState<Customer | null>(null)
+  const [coinsApplied, setCoinsApplied] = useState(0)
+  const [coinDiscount, setCoinDiscount] = useState(0)
   // ADDENDUM-4: if we land on a session that's already stopped but has no
   // paymentBreakdown (the user closed the tab during Phase 2 capture), we
   // re-enter the payment flow on mount. Tracked here so the auto-open effect
   // fires exactly once per mount.
   const [autoOpenHandled, setAutoOpenHandled] = useState(false)
+
+  // Load coin config once on mount
+  useEffect(() => {
+    getCoinConfig().then(setCoinConfig).catch(() => {/* use defaults */})
+  }, [])
 
   // Populate edit-start fields whenever the modal is opened
   useEffect(() => {
@@ -537,7 +555,15 @@ export default function SessionDetail() {
 
       await stopSession(session.id!)
       setConfirmStop(false)
+      // Reset coin redemption state for this fresh payment screen
+      setCoinsApplied(0)
+      setCoinDiscount(0)
+      setLinkedCustomer(null)
       setPaymentScreenOpen(true)
+
+      // Streak check — fire-and-forget after stop; skip walk-ins (no linkedCustomer yet,
+      // but check against the payment-screen customer once they link in the sheet).
+      // The main streak trigger is in the onConfirm of PaymentSplitSheet below.
     } finally {
       setPending(false)
     }
@@ -665,12 +691,36 @@ export default function SessionDetail() {
           )}
         </main>
 
+        {/* Coin redemption pill — only shown when coins enabled + customer linked + time redemption allowed */}
+        {coinConfig.coinsEnabled && linkedCustomer && !breakdownRecorded && coinConfig.coinRedemptionModes !== 'canteen' && (
+          <div className="shrink-0 px-0 pb-1">
+            <CoinRedemptionPill
+              customer={linkedCustomer}
+              config={coinConfig}
+              maxApplicable={finalGrandTotal}
+              applied={coinsApplied}
+              onChange={(coins, rupees) => {
+                setCoinsApplied(coins)
+                setCoinDiscount(rupees)
+              }}
+            />
+          </div>
+        )}
+
         {/* Footer — pinned at bottom, z-50 overlay guarantees it's above BottomNav */}
         <footer className="shrink-0 flex flex-col gap-3 pt-2">
           {upiId && (
             <p className="text-xs text-text-faint text-center max-w-xs mx-auto">
               Works with GPay, PhonePe, Paytm, BHIM
             </p>
+          )}
+          {coinDiscount > 0 && !breakdownRecorded && (
+            <div className="flex justify-between text-[13px] px-1">
+              <span className="text-text-dim">After coin discount</span>
+              <span className="text-text font-bold font-mono">
+                ₹{(finalGrandTotal - coinDiscount).toLocaleString('en-IN')}
+              </span>
+            </div>
           )}
           {breakdownRecorded ? (
             <button
@@ -680,45 +730,85 @@ export default function SessionDetail() {
               Done — back to tables
             </button>
           ) : (
-            // ADDENDUM-4: no "Skip for now" — payment capture is mandatory.
-            // Cancel inside the sheet still closes it; the user can re-tap
-            // Record payment. Closing the tab is the only escape; reopening
-            // the session auto-re-prompts via the mount effect above.
             <button
               onClick={async () => {
-                // ADDENDUM-5: zero-amount sessions skip the sheet entirely.
-                if (finalGrandTotal === 0) {
+                const effectiveTotal = finalGrandTotal - coinDiscount
+                if (effectiveTotal === 0) {
                   const sid = Number(session.id)
-                  await recordSessionPaymentBreakdown(sid, { cash: 0, upi: 0, wallet: 0 })
+                  if (coinsApplied > 0 && linkedCustomer) {
+                    await redeemCoins({
+                      customerId: linkedCustomer.id,
+                      coins: coinsApplied,
+                      rupeeEquivalent: coinDiscount,
+                      referenceType: 'coin_redemption',
+                      referenceId: sid.toString(),
+                    })
+                  }
+                  await recordSessionPaymentBreakdown(sid, { cash: 0, upi: 0, wallet: 0 }, linkedCustomer?.id)
                   setBreakdownRecorded(true)
+                  if (linkedCustomer) {
+                    checkAndAwardStreak(linkedCustomer.id)
+                      .then(({ awarded, coins, customerName }) => {
+                        if (awarded) {
+                          showToast({
+                            message: `🪙 Streak bonus! ${customerName ?? 'Customer'} earned ${coins} ClubCoins for visiting multiple days this week.`,
+                            duration: 4000,
+                          })
+                        }
+                      })
+                      .catch(() => {/* non-critical */})
+                  }
                   return
                 }
                 setSplitSheetOpen(true)
               }}
               className="w-full min-h-[48px] rounded-xl bg-accent text-bg font-semibold text-base active:scale-[0.98] transition-transform"
             >
-              {finalGrandTotal === 0 ? 'Mark as paid' : 'Record payment'}
+              {(finalGrandTotal - coinDiscount) === 0 ? 'Mark as paid' : 'Record payment'}
             </button>
           )}
         </footer>
 
         <PaymentSplitSheet
           open={splitSheetOpen}
-          total={finalGrandTotal}
+          total={finalGrandTotal - coinDiscount}
           headline={summaryLine}
+          initialCustomer={linkedCustomer}
+          onCustomerLinked={(c) => setLinkedCustomer(c)}
           onCancel={() => setSplitSheetOpen(false)}
           onConfirm={async (breakdown, customerId) => {
-            // Defense: coerce session.id to a number before crossing the
-            // queries.ts boundary. Dexie autoincrement keys are numbers,
-            // but explicit Number() guards against any string leakage.
             const numericSessionId = Number(session.id)
+            const effectiveCustomerId = customerId ?? linkedCustomer?.id ?? null
+            // Write coin redemption row before payment breakdown
+            if (coinsApplied > 0 && linkedCustomer) {
+              await redeemCoins({
+                customerId: linkedCustomer.id,
+                coins: coinsApplied,
+                rupeeEquivalent: coinDiscount,
+                referenceType: 'coin_redemption',
+                referenceId: numericSessionId.toString(),
+              })
+            }
             await recordSessionPaymentBreakdown(
               numericSessionId,
               breakdown,
-              customerId ?? undefined,
+              effectiveCustomerId ?? undefined,
             )
             setSplitSheetOpen(false)
             setBreakdownRecorded(true)
+            // Streak check — runs after payment confirmed; has the linked customer
+            if (effectiveCustomerId) {
+              checkAndAwardStreak(effectiveCustomerId)
+                .then(({ awarded, coins, customerName }) => {
+                  if (awarded) {
+                    showToast({
+                      message: `🪙 Streak bonus! ${customerName ?? 'Customer'} earned ${coins} ClubCoins for visiting multiple days this week.`,
+                      durationMs: 4000,
+                    })
+                  }
+                })
+                .catch(() => {/* streak failure is non-critical */})
+            }
           }}
         />
       </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { formatDistanceToNow } from 'date-fns'
@@ -9,13 +9,20 @@ import { customerDisplayName, formattedPhone } from '../lib/customerDisplay'
 import ManualAdjustmentModal from '../components/wallet/ManualAdjustmentModal'
 import EditCustomerModal from '../components/wallet/EditCustomerModal'
 import TransactionRow from '../components/wallet/TransactionRow'
+import { useSettings } from '../hooks/useLiveData'
+import { resolveCoinConfig, formatCoins } from '../lib/coins'
+import { applyExpiryForCustomer, daysUntilExpiry } from '../lib/coinExpiry'
+
+type HistoryTab = 'wallet' | 'coins'
 
 export default function CustomerProfile() {
   const { customerId } = useParams<{ customerId: string }>()
   const navigate = useNavigate()
+  const settings = useSettings()
 
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [historyTab, setHistoryTab] = useState<HistoryTab>('wallet')
 
   const customer = useLiveQuery(
     () => (customerId ? db.customers.get(customerId) : undefined),
@@ -34,6 +41,20 @@ export default function CustomerProfile() {
     [customerId],
     [] as WalletTransaction[],
   )
+
+  const coinConfig = resolveCoinConfig(settings ?? {})
+
+  // Run per-customer expiry on mount (debounced inside applyExpiryForCustomer — at most once/hr)
+  useEffect(() => {
+    if (!customer) return
+    applyExpiryForCustomer(customer.id).catch(() => {/* non-critical */})
+  }, [customer?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Compute days until next expiry for the coin balance badge
+  const coinTxs = (transactions ?? []).filter(
+    (t) => (t.balanceType ?? 'wallet') === 'coins',
+  )
+  const expiryDays = daysUntilExpiry(coinTxs, coinConfig.coinExpiryDays, Date.now())
 
   if (customer === undefined) {
     return (
@@ -95,14 +116,43 @@ export default function CustomerProfile() {
 
         {/* Balance card */}
         <div className="bg-bg-card border border-border rounded-2xl p-5 mb-4">
-          <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint mb-1">
-            Wallet Balance
-          </p>
-          <p className="text-[36px] font-bold text-accent font-mono leading-tight">
-            ₹{customer.walletBalance.toLocaleString('en-IN')}
-          </p>
+          {coinConfig.coinsEnabled ? (
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint mb-1">
+                  Wallet
+                </p>
+                <p className="text-[28px] font-bold text-accent font-mono leading-tight">
+                  ₹{customer.walletBalance.toLocaleString('en-IN')}
+                </p>
+              </div>
+              <div className="w-px bg-border" />
+              <div className="flex-1">
+                <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint mb-1">
+                  ClubCoins
+                </p>
+                <p className="text-[28px] font-bold text-amber-400 font-mono leading-tight">
+                  {formatCoins(customer.coinBalance ?? 0)}
+                </p>
+                {expiryDays !== null && coinConfig.coinExpiryDays && (
+                  <p className={`text-[11px] mt-0.5 font-semibold ${expiryDays <= 7 ? 'text-amber-400' : 'text-text-faint'}`}>
+                    Expires in {expiryDays}d
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint mb-1">
+                Wallet Balance
+              </p>
+              <p className="text-[36px] font-bold text-accent font-mono leading-tight">
+                ₹{customer.walletBalance.toLocaleString('en-IN')}
+              </p>
+            </>
+          )}
           {transactions && transactions.length > 0 && (
-            <p className="text-[12px] text-text-faint mt-1">
+            <p className="text-[12px] text-text-faint mt-2">
               Last activity {formatDistanceToNow(customer.lastVisitAt, { addSuffix: true })}
             </p>
           )}
@@ -132,26 +182,57 @@ export default function CustomerProfile() {
         </div>
 
         {/* Transaction history */}
-        <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint mb-3">
-          Transaction History
-        </p>
-
-        {(!transactions || transactions.length === 0) ? (
-          <div className="flex flex-col items-center justify-center py-12 gap-2">
-            <p className="text-text-dim text-sm">No transactions yet</p>
+        {coinConfig.coinsEnabled ? (
+          <div className="flex gap-1 mb-4 bg-bg-card border border-border rounded-xl p-1">
+            <button
+              onClick={() => setHistoryTab('wallet')}
+              className={`flex-1 min-h-[36px] rounded-lg text-[13px] font-semibold transition-colors ${
+                historyTab === 'wallet' ? 'bg-accent text-bg' : 'text-text-dim'
+              }`}
+            >
+              Wallet History
+            </button>
+            <button
+              onClick={() => setHistoryTab('coins')}
+              className={`flex-1 min-h-[36px] rounded-lg text-[13px] font-semibold transition-colors ${
+                historyTab === 'coins' ? 'bg-amber-500 text-bg' : 'text-text-dim'
+              }`}
+            >
+              🪙 Coin History
+            </button>
           </div>
         ) : (
-          <div className="space-y-2">
-            {transactions.map((tx) => (
-              <TransactionRow
-                key={tx.id}
-                transaction={tx}
-                customerPhone={customer.phone}
-                customerName={customer.name}
-              />
-            ))}
-          </div>
+          <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint mb-3">
+            Transaction History
+          </p>
         )}
+
+        {(() => {
+          const filtered = historyTab === 'coins'
+            ? (transactions ?? []).filter((t) => (t.balanceType ?? 'wallet') === 'coins')
+            : (transactions ?? []).filter((t) => (t.balanceType ?? 'wallet') === 'wallet')
+          const list = coinConfig.coinsEnabled ? filtered : (transactions ?? [])
+
+          if (list.length === 0) return (
+            <div className="flex flex-col items-center justify-center py-12 gap-2">
+              <p className="text-text-dim text-sm">
+                {historyTab === 'coins' ? 'No coin transactions yet' : 'No transactions yet'}
+              </p>
+            </div>
+          )
+          return (
+            <div className="space-y-2">
+              {list.map((tx) => (
+                <TransactionRow
+                  key={tx.id}
+                  transaction={tx}
+                  customerPhone={customer.phone}
+                  customerName={customer.name}
+                />
+              ))}
+            </div>
+          )
+        })()}
       </div>
 
       {adjustOpen && (

@@ -6,6 +6,7 @@ import { ToastContainer } from './components/ToastContainer'
 import { RequireAccess } from './components/RequireAccess'
 import { useAuthStore } from './store/authStore'
 import { unlockAudio } from './lib/alarm'
+import { applyExpirySweep } from './lib/coinExpiry'
 import Home from './pages/Home'
 import Summary from './pages/Summary'
 import History from './pages/History'
@@ -23,8 +24,11 @@ import CustomerProfile from './pages/CustomerProfile'
 import Canteen from './pages/Canteen'
 import QuickSale from './pages/QuickSale'
 import Piggy from './pages/Piggy'
+import PlayerScan from './pages/player/PlayerScan'
+import Poster from './pages/Poster'
 
 const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback']
+// /c/ and /poster/ are public but use path prefixes — checked via startsWith in AppLayout
 // Wallet routes are private but not in BottomNav — they are deep-linked pages.
 // They must NOT be in PUBLIC_PATHS (would hide BottomNav on /tables if added).
 // The BottomNav hides on any path in PUBLIC_PATHS — wallet paths are not in it.
@@ -57,10 +61,38 @@ function AudioUnlocker() {
   return null
 }
 
+// Runs the coin expiry sweep once per 4 hours per browser session.
+// Gated strictly on dbReady + session + subscriptionLoaded (Pattern D6 / A6).
+function ExpirySweepRunner() {
+  const { dbReady, session, subscriptionLoaded } = useAuthStore()
+
+  useEffect(() => {
+    if (!dbReady || !session || !subscriptionLoaded) return
+
+    const FOUR_HOURS = 4 * 60 * 60 * 1000
+    const lastSweep = Number(sessionStorage.getItem('lastExpirySweep') ?? 0)
+    if (Date.now() - lastSweep < FOUR_HOURS) return
+
+    applyExpirySweep()
+      .then(({ totalExpired }) => {
+        sessionStorage.setItem('lastExpirySweep', String(Date.now()))
+        if (totalExpired > 0) {
+          console.log(`[expiry] expired ${totalExpired} coins across customers`)
+        }
+      })
+      .catch((err: unknown) => console.error('[expiry] sweep failed', err))
+  }, [dbReady, session, subscriptionLoaded])
+
+  return null
+}
+
 // Inner layout — needs to be inside BrowserRouter to use useLocation
 function AppLayout() {
   const location = useLocation()
-  const isPublicRoute = PUBLIC_PATHS.includes(location.pathname)
+  const isPublicRoute =
+    PUBLIC_PATHS.includes(location.pathname) ||
+    location.pathname.startsWith('/c/') ||
+    location.pathname.startsWith('/poster/')
 
   return (
     <>
@@ -72,6 +104,8 @@ function AppLayout() {
           <Route path="/signup" element={<Signup />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/subscribe" element={<Subscribe />} />
+          <Route path="/c/:clubSlug" element={<PlayerScan />} />
+          <Route path="/poster/:slug" element={<Poster />} />
 
           {/* ── Private routes (auth + active subscription required) ──── */}
           <Route element={<RequireAccess />}>
@@ -103,6 +137,7 @@ export default function App() {
       <BrowserRouter>
         <AuthInitializer />
         <AudioUnlocker />
+        <ExpirySweepRunner />
         <AppLayout />
       </BrowserRouter>
     </ErrorBoundary>

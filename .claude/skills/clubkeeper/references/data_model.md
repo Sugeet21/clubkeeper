@@ -21,6 +21,7 @@ Database name is `ClubKeeperDB_<userId>` (Supabase UUID) for per-user isolation.
 | v11 | 9 Jun 2026 | Adds optional `rateCardBilling` to `GameTable`; `rateCardBillingSnapshot` to `Session` |
 | v12 | 9 Jun 2026 | Additive: adds optional `isBackEntry?: boolean` on sessions. No new index. No `.upgrade()`. |
 | **v13** | **10 Jun 2026** | **Split payments + walk-in canteen sale + piggy. New tables `canteenSales` and `stockPurchases`. Adds optional `Session.paymentBreakdown`, `ClubSettings.piggyOpeningBalance` + `piggyStartedAt`. `.upgrade()` backfills completed sessions with `{cash: amount, upi: 0, wallet: 0}` and initialises piggy settings. Current version.** |
+| v14 (logical) | 11 Jun 2026 | No schema bump. Additive optional fields only: `ClubSettings.acceptsTopups?: boolean` + `ClubSettings.coinRedemptionModes?: 'time'\|'canteen'\|'both'`. Both default via `?? true` / `?? 'both'` at read time. No Dexie version change needed. |
 
 ### Schema Version 13 (current)
 
@@ -239,6 +240,8 @@ interface ClubSettings {
   lowStockThreshold?: number;     // v8: default 5 if missing; triggers low-stock pill/toast
   piggyOpeningBalance?: number;   // v13: owner-settable opening cash float; treat missing as 0
   piggyStartedAt?: number;        // v13: Unix ms; aggregation window start. Set at v13 upgrade if absent.
+  acceptsTopups?: boolean;        // v14 (logical): mirrors Supabase clubs.accepts_topups; treat missing as true
+  coinRedemptionModes?: 'time' | 'canteen' | 'both'; // v14 (logical): where coins can be redeemed; treat missing as 'both'
 }
 ```
 
