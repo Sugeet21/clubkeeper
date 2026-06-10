@@ -2,7 +2,7 @@ import { useState, useEffect, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useTables, useSettings } from '../hooks/useLiveData'
+import { useTables, useSettings, useSyncClubFromSupabase } from '../hooks/useLiveData'
 import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport, getPiggyBalance } from '../db/queries'
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
@@ -176,6 +176,7 @@ type RoundingMode = 'none' | '15min' | '30min'
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Settings() {
+  useSyncClubFromSupabase()
   const navigate = useNavigate()
   const tables = useTables()
   const settings = useSettings()

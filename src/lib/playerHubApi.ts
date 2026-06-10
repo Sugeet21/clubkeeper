@@ -63,12 +63,14 @@ export interface ClubRow {
   clubName: string
   upiId: string | null
   acceptsTopups: boolean
+  coinsEnabled: boolean
+  coinTiers: CoinTier[]
 }
 
 export async function getOwnerClub(): Promise<ClubRow | null> {
   const { data, error } = await supabase
     .from('clubs')
-    .select('id, slug, club_name, upi_id, accepts_topups')
+    .select('id, slug, club_name, upi_id, accepts_topups, coins_enabled, coin_tiers_json')
     .maybeSingle()
   if (error) throw error
   if (!data) return null
@@ -78,6 +80,8 @@ export async function getOwnerClub(): Promise<ClubRow | null> {
     clubName: data.club_name as string,
     upiId: (data.upi_id as string | null) ?? null,
     acceptsTopups: data.accepts_topups as boolean,
+    coinsEnabled: (data.coins_enabled as boolean | null) ?? false,
+    coinTiers: (data.coin_tiers_json as CoinTier[] | null) ?? [],
   }
 }
 

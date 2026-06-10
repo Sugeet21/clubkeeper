@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { startOfDay, endOfDay } from 'date-fns'
-import { useTables, useActiveSessions, useSettings } from '../hooks/useLiveData'
+import { useTables, useActiveSessions, useSettings, useSyncClubFromSupabase } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { useInstallPrompt } from '../hooks/useInstallPrompt'
 import { useSessionAlarm } from '../hooks/useSessionAlarm'
@@ -25,6 +25,7 @@ type FilterValue = 'all' | GameType
 const ORPHAN_THRESHOLD_MS = 24 * 60 * 60 * 1000
 
 export default function Home() {
+  useSyncClubFromSupabase()
   const tables = useTables()
   const activeSessions = useActiveSessions()
   const settings = useSettings()

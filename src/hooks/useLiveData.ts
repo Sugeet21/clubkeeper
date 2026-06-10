@@ -1,8 +1,50 @@
+import { useEffect } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { startOfDay, endOfDay } from 'date-fns'
 import { db } from '../db/database'
 import { getRecentItems, type RecentItem } from '../db/queries'
+import { useAuthStore } from '../store/authStore'
+import { getOwnerClub } from '../lib/playerHubApi'
 import type { GameTable, Session, ClubSettings, SessionItem } from '../types'
+
+// ─── Club sync: Supabase → Dexie ─────────────────────────────────────────────
+// Runs once per browser session. Ensures slug and cloud-mirrored fields in
+// Dexie match Supabase, fixing the cross-device desync bug where a fresh
+// device has no local settings yet.
+
+let _clubSyncDone = false
+
+export function useSyncClubFromSupabase() {
+  const { dbReady, session } = useAuthStore()
+
+  useEffect(() => {
+    if (!dbReady || !session || _clubSyncDone) return
+    _clubSyncDone = true
+
+    getOwnerClub()
+      .then(async (club) => {
+        if (!club) return
+        const local = await db.settings.get(1)
+        // slug + slugLocked: always mirror from Supabase (source of truth).
+        // acceptsTopups / coinsEnabled / coinTiers: only fill in when Dexie
+        // has no value yet (undefined). If the owner toggled these on THIS
+        // device, Dexie already has a value — don't race-overwrite it.
+        await db.settings.update(1, {
+          slug: club.slug,
+          slugLocked: true,
+          ...(local?.acceptsTopups === undefined ? { acceptsTopups: club.acceptsTopups } : {}),
+          ...(local?.coinsEnabled === undefined ? { coinsEnabled: club.coinsEnabled } : {}),
+          ...(club.coinTiers.length > 0 && !local?.coinTiers?.length
+            ? { coinTiers: club.coinTiers }
+            : {}),
+        })
+      })
+      .catch(() => {
+        // Network failure — leave Dexie as-is; will retry on next mount.
+        _clubSyncDone = false
+      })
+  }, [dbReady, session])
+}
 
 export type SessionWithItems = { session: Session; items: SessionItem[] }
 

@@ -14,12 +14,13 @@ import { useAuthStore } from '../store/authStore'
 import { subscribeToTopupIntents, unsubscribeTopupIntents } from '../lib/realtimeTopups'
 import { getPendingTopups, getOwnerClub } from '../lib/playerHubApi'
 import type { PendingTopupRow } from '../lib/playerHubApi'
-import { useSettings } from '../hooks/useLiveData'
+import { useSettings, useSyncClubFromSupabase } from '../hooks/useLiveData'
 import { resolveCoinConfig } from '../lib/coins'
 import { getEngagementConfig } from '../lib/streak'
 import type { EngagementConfig } from '../lib/streak'
 
 export default function Wallet() {
+  useSyncClubFromSupabase()
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const { searchCustomers } = useCustomerStore()
