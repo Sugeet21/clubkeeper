@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { useToastStore } from '../store/toastStore'
 
 export function AuthCallback() {
   const navigate = useNavigate()
@@ -13,6 +14,17 @@ export function AuthCallback() {
     subscription: subscription?.status,
     hash: location.hash.slice(0, 40) || '(none)',
   })
+
+  // Safety net: if Supabase hangs and loading never clears, bail after 20s.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (useAuthStore.getState().loading) {
+        useToastStore.getState().show('Sign-in is taking too long. Please try again.', 'error')
+        navigate('/', { replace: true })
+      }
+    }, 20_000)
+    return () => clearTimeout(t)
+  }, [navigate])
 
   useEffect(() => {
     console.log('[AuthCallback effect] entered', {

@@ -169,6 +169,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // but calling it here first is safe (idempotent) and ensures the DB is
     // closed before any redirect clears component state.
     await closeDb()
-    set({ session: null, user: null, profile: null, subscription: null, dbReady: false })
+    set({ session: null, user: null, profile: null, subscription: null, loading: false, dbReady: false, subscriptionLoaded: false })
+    // Hard navigation clears all React + Zustand + Dexie state in one shot.
+    // navigate() is intentionally avoided here — stale store state can survive
+    // a soft nav and cause the user to remain visually "logged in".
+    window.location.href = '/'
   },
 }))

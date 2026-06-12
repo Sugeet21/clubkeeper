@@ -14,6 +14,7 @@ import { db } from '../db/database'
 import { supabase } from '../lib/supabase'
 import { playBeepOnce, triggerVibration, unlockAudio } from '../lib/alarm'
 import { PlayerHubSettings } from './PlayerHubSettings'
+import { updateClubNameRemote } from '../lib/playerHubApi'
 import type { GameTable } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -254,6 +255,11 @@ export default function Settings() {
     const trimmed = clubName.trim()
     if (!trimmed || trimmed === settings?.clubName) return
     await updateSettings({ clubName: trimmed })
+    // Fire-and-forget sync to Supabase. If the club row doesn't exist yet
+    // (owner hasn't set up Player Hub), this is a no-op — RLS returns 0 rows.
+    updateClubNameRemote(trimmed).catch(() => {
+      useToastStore.getState().show('Saved locally. Will sync when online.', 'error')
+    })
   }
 
   function handleUpiBlur() {
@@ -868,7 +874,7 @@ export default function Settings() {
               </div>
             )}
             <button
-              onClick={() => void useAuthStore.getState().signOut()}
+              onClick={() => { void useAuthStore.getState().signOut() }}
               className="w-full min-h-[44px] py-3.5 bg-busy/8 text-busy border border-busy/20 rounded-xl text-[14px] font-semibold active:bg-busy/15 transition-colors"
             >
               Sign out

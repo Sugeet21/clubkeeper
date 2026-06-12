@@ -240,10 +240,11 @@ export function PlayerHubSettings({ settings }: Props) {
     setToggling(true)
     setAcceptsTopups(val)
     try {
-      // Write to Dexie first so remount reads the same value
-      await updateSettings({ acceptsTopups: val })
+      // Supabase first — if it fails, Dexie is never written, so no desync.
       await updateAcceptsTopups(val)
+      await updateSettings({ acceptsTopups: val })
     } catch {
+      // Revert optimistic UI update
       setAcceptsTopups(!val)
       showToast('Failed to update. Try again.')
     } finally {

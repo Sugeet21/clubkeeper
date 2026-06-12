@@ -122,6 +122,14 @@ export async function upsertClub(payload: {
   }
 }
 
+export async function updateClubNameRemote(clubName: string): Promise<void> {
+  const { error } = await supabase
+    .from('clubs')
+    .update({ club_name: clubName, updated_at: new Date().toISOString() })
+    .not('id', 'is', null)
+  if (error) throw error
+}
+
 export async function updateAcceptsTopups(accepts: boolean): Promise<void> {
   const { error } = await supabase
     .from('clubs')
