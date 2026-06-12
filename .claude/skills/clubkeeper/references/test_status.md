@@ -252,3 +252,17 @@ npx playwright test canteen-calculations.spec.ts --project=mobile-360-auth --pro
 4. Run A12, B9, B10 manually on device (Prompt 8 fixes)
 5. Continue with section E (Daily Summary)
 6. Section H (Offline/PWA) before showing to first customer
+
+---
+
+## Features shipped 10–13 Jun 2026 — Test Status
+
+- **Player Hub (owner setup + slug + accept-topups toggle):** ⚠ UNTESTED in Playwright
+- **PlayerScan page (`/c/:clubSlug` — public QR topup form):** ⚠ UNTESTED in Playwright
+- **PendingTopupsModal (confirm/reject flow):** ⚠ UNTESTED in Playwright
+- **Poster page (`/poster/:slug`):** ⚠ UNTESTED in Playwright
+- **ClubCoins (earn at topup, CoinTiersEditor, CoinRedemptionPill):** ⚠ UNTESTED in Playwright
+- **Engagement — streak bonus (`checkAndAwardStreak`):** ⚠ UNTESTED in Playwright
+- **Engagement — coin expiry (FIFO, `applyExpirySweep`):** ⚠ UNTESTED in Playwright
+- **Engagement — dormancy nudge (BringBackList + WhatsApp link):** ⚠ UNTESTED in Playwright
+- **Auth fixes (13 Jun e7b0522):** ⚠ UNTESTED — hard nav sign-out, club name sync, toggle atomicity, AuthCallback timeout

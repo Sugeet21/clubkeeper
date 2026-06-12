@@ -636,3 +636,20 @@ Files most affected: `src/db/queries.ts` (recordSessionPaymentBreakdown, createC
 **Rule:** `getPiggyBalance()` derives the balance live from the four underlying tables + the two `piggyOpeningBalance` / `piggyStartedAt` settings. Single source of truth = those tables. Do NOT add a stored piggy balance without an explicit decision and a migration plan for every write site.
 **Aggregation window invariant:** every "cash collected" sum MUST intersect with `piggyStartedAt`. Same for cash-by-week sums in `Piggy.tsx` — `winStart = Math.max(weekStart, piggyStartedAt)`. NEVER aggregate cash-in from before piggy was started — that's how historic data leaks in and breaks the owner's mental model.
 **Files affected:** `src/db/queries.ts` (`getPiggyBalance`), `src/pages/Piggy.tsx` (cash-by-week computation), `src/pages/Summary.tsx` (`cashInOnDate` computation).
+
+---
+
+## Player Hub / Realtime patterns (stubs — fill when real bugs hit)
+
+### R1 — Realtime channel lifecycle
+**Symptom signature:** TBD — not yet seen in production.
+**Stub note:** Channel is opened in TopBar on mount, closed on unmount. If TopBar remounts (e.g. route change), channel is re-opened. Fallback polling timer may accumulate if realtime never connects. Watch for double-counting of pending intents.
+
+### R2 — Cross-store sync (Supabase ↔ Dexie)
+**Symptom signature:** TBD — S4 bug (toggle desync) is the prototype. Supabase write succeeds, Dexie fails (or vice versa) → permanent mismatch.
+**Rule (from S4 fix):** For fields that must be consistent across both stores, always write Supabase FIRST. Only write Dexie if Supabase succeeds. Never fire-and-forget a Supabase write when the local Dexie write already happened.
+
+### R3 — Module-level flag not reset on sign-out (_clubSyncDone)
+**Symptom signature:** Second user to sign in on the same tab (without full page reload) sees stale club data — wrong slug, wrong acceptsTopups, wrong coin config.
+**Root cause:** `_clubSyncDone` in `src/hooks/useLiveData.ts` is module-level. Sign-out + sign-in as a different user does NOT reset it because the module is never re-evaluated.
+**Fix (pending):** Reset `_clubSyncDone = false` in the `authStore.signOut()` flow, or move the flag into the effect cleanup properly. See Pending list item 10.

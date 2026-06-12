@@ -144,3 +144,58 @@ Do NOT implement this until Sugeet has paying customers asking for multi-device 
 - Deploy: Push to `main` branch on GitHub → Vercel auto-deploys
 - Hosting: Vercel free tier
 - Domain: `app.handbookhq.in` (primary, custom domain via Cloudflare → Vercel, live 1 Jun 2026). `clubkeeper.vercel.app` remains active as backup.
+
+## Player Hub Flow
+
+**Owner side:**
+1. PlayerHubSettings → slug save → `upsertClub()` writes Supabase `clubs` row → slug + slugLocked written to Dexie (v14).
+2. `useSyncClubFromSupabase()` (exported from `src/hooks/useLiveData.ts`) runs once per browser session: pulls slug/acceptsTopups/coinsEnabled/coinTiers from Supabase → merges into Dexie (only fills `undefined` fields — never overwrites existing local values). Module-level `_clubSyncDone` flag gates it.
+3. TopBar: when `settings?.slug` exists → `subscribeToTopupIntents(clubId)` opens Supabase realtime channel `topup_intents_{clubId}`. If not `SUBSCRIBED` in 5s → falls back to 30s `setInterval` polling. `src/store/topupInbox.ts` holds `pendingCount`. Cleanup via `unsubscribeTopupIntents()`.
+4. `PendingTopupsModal` confirm: `confirmTopupIntent(intentId)` (Supabase → `confirmed`) → `recordTopupWithCoins(...)` (single flat Dexie tx: wallet credit + coinBalance + firstTopupAt welcome-bonus guard).
+
+**Player side:**
+1. `/c/:clubSlug` → `getClubPublicInfo(slug)` via `get_club_public_info` RPC (security definer, anon-accessible). If `acceptsTopups=false` → shows "disabled" screen.
+2. Form submit → `submitTopupIntent()` RPC → returns `intentId`.
+3. UPI deep-link button (opens GPay/PhonePe/Paytm) + collapsible QR for second device. 8s delay before "I've paid" button enables (allows payment to process).
+4. Player taps "I've paid" → polls `getTopupIntentStatus(intentId)` every 3s, up to 10-min expire timeout.
+5. Staff confirms in modal → intent `confirmed` → player poll returns `confirmed` → success screen.
+
+## ClubCoins Flow
+
+- **Earn:** coins earned at topup confirm only. `coinsEarnedForTopup(amount, tiers)` in `src/lib/coins.ts` — picks highest qualifying tier. Written as `WalletTransaction` with `balanceType:'coins'`, `coinDelta:+N`, `referenceType:'topup'` in the same flat tx as wallet credit.
+- **Welcome bonus:** one-shot on first topup. `firstTopupAt === undefined` guard checked inside the Dexie tx (re-checked after lock, not just before).
+- **Streak bonus:** `checkAndAwardStreak(customerId)` in `src/lib/streak.ts` — called from `SessionDetail.tsx` at session payment confirm. Counts distinct calendar days with `type:'debit' + referenceType:'session'` txs in `streakWindowDays`; awards if ≥ `streakRequiredDays`; per-user cooldown via `lastStreakBonusAt`.
+- **Expiry:** FIFO lot accounting in `src/lib/coinExpiry.ts`. `applyExpirySweep()` called every 4h from `ExpirySweepRunner` in `App.tsx` (gated on `dbReady + session + subscriptionLoaded`; outer debounce via `sessionStorage.lastExpirySweep`). Per-customer 1h debounce via `expiryAppliedAt`.
+- **Redemption:** `CoinRedemptionPill` component (`src/components/CoinRedemptionPill.tsx`) wired into `SessionDetail.tsx:697` — amber pill + slider shown in post-stop payment flow when customer has coins.
+- **Sync to Supabase:** `syncCoinConfig()` in `playerHubApi.ts` — fire-and-forget on coin config save, updates `clubs.coins_enabled + coin_tiers_json`.
+
+## Realtime Pattern (topup_intents)
+
+```
+src/lib/realtimeTopups.ts
+  subscribeToTopupIntents(clubId: string)
+    → supabase.channel('topup_intents_{clubId}')
+       .on('postgres_changes', INSERT on topup_intents) → increment pendingCount
+       .on('postgres_changes', UPDATE on topup_intents, filter: status != pending) → decrement pendingCount
+    → if not SUBSCRIBED within 5000ms → setInterval(getPendingTopups, 30_000) fallback
+  unsubscribeTopupIntents()
+    → supabase.removeChannel() + clearInterval(fallbackTimer)
+```
+
+Called from TopBar on mount when `settings?.slug` exists. Cleaned up on unmount and sign-out.
+
+⚠ Known bug: fallback polling timer is NOT cancelled when realtime eventually connects after the 5s window. Both run simultaneously until unmount.
+
+## useLiveData.ts — useSyncClubFromSupabase()
+
+```
+Module-level: let _clubSyncDone = false
+Effect deps: [dbReady, session]
+Guard: if (!dbReady || !session || _clubSyncDone) return
+Sets _clubSyncDone = true immediately (prevents double-run)
+getOwnerClub() → for each field (slug, slugLocked, acceptsTopups, coinsEnabled, coinTiers):
+  only writes Dexie if local value === undefined (never overwrites)
+Cleanup: _clubSyncDone = false (reset on effect cleanup)
+```
+
+⚠ Known bug: `_clubSyncDone` is module-level. If two different users sign in sequentially in the same browser tab without a full page reload, the second user's club sync is skipped because the flag was set by the first user. Fix pending (see Pending list item 10).

@@ -20,13 +20,16 @@ Database name is `ClubKeeperDB_<userId>` (Supabase UUID) for per-user isolation.
 | v10 | 9 Jun 2026 | Adds optional `rateCard`/`toleranceMinutes` to `GameTable`; `rateCardSnapshot`/`toleranceMinutesSnapshot` to `Session` |
 | v11 | 9 Jun 2026 | Adds optional `rateCardBilling` to `GameTable`; `rateCardBillingSnapshot` to `Session` |
 | v12 | 9 Jun 2026 | Additive: adds optional `isBackEntry?: boolean` on sessions. No new index. No `.upgrade()`. |
-| **v13** | **10 Jun 2026** | **Split payments + walk-in canteen sale + piggy. New tables `canteenSales` and `stockPurchases`. Adds optional `Session.paymentBreakdown`, `ClubSettings.piggyOpeningBalance` + `piggyStartedAt`. `.upgrade()` backfills completed sessions with `{cash: amount, upi: 0, wallet: 0}` and initialises piggy settings. Current version.** |
-| v14 (logical) | 11 Jun 2026 | No schema bump. Additive optional fields only: `ClubSettings.acceptsTopups?: boolean` + `ClubSettings.coinRedemptionModes?: 'time'\|'canteen'\|'both'`. Both default via `?? true` / `?? 'both'` at read time. No Dexie version change needed. |
+| v13 | 10 Jun 2026 | Split payments + walk-in canteen sale + piggy. New tables `canteenSales` and `stockPurchases`. Adds optional `Session.paymentBreakdown`, `ClubSettings.piggyOpeningBalance` + `piggyStartedAt`. `.upgrade()` backfills completed sessions with `{cash: amount, upi: 0, wallet: 0}` and initialises piggy settings. ⚠ Items-revenue gap in backfill. |
+| v14 | 10–11 Jun 2026 | `ClubSettings.slug?` + `slugLocked?` for Player Hub. Additive, no `.upgrade()`. |
+| v15 | 10–11 Jun 2026 | `Customer.coinBalance?`. `WalletTransaction.balanceType?/coinDelta?/rupeeEquivalent?`. `ClubSettings` coin config fields + `acceptsTopups?` + `coinRedemptionModes?`. Same store strings as v14. No `.upgrade()`. |
+| **v16** | **10–11 Jun 2026** | **`Customer.firstTopupAt?/lastStreakBonusAt?/expiryAppliedAt?`. `ClubSettings` engagement fields. `WalletReferenceType` extended. Same store strings. No `.upgrade()`. Current version.** |
 
-### Schema Version 13 (current)
+### Schema Version 16 (current)
 
 ```ts
-this.version(13).stores({
+// v13 through v16 all share the same store strings
+this.version(16).stores({
   gameTables: '++id, name, gameType, sortOrder, outOfService',
   sessions: '++id, tableId, status, startedAt, endedAt',
   settings: 'id',
@@ -114,18 +117,23 @@ interface TableMove {
 }
 ```
 
-### Customers Store (v5+)
+### Customers Store (v5+, last updated v16)
 
 ```ts
 // src/types/customer.ts
 interface Customer {
-  id: string               // UUID v4, primary key (string, not auto-increment)
-  phone: string | null     // "+91XXXXXXXXXX" (12 chars), null for walk-ins
-  name: string | null      // optional
-  walkInCode: string | null // "WALK-001" etc., only when phone === null
-  walletBalance: number    // integer rupees (matches existing money convention)
-  createdAt: number        // Date.now()
-  lastVisitAt: number      // updated on any topup or adjustment
+  id: string                  // UUID v4, primary key (string, not auto-increment)
+  phone: string | null        // "+91XXXXXXXXXX" (12 chars), null for walk-ins
+  name: string | null         // optional display name
+  walkInCode: string | null   // "WALK-001" etc., only when phone === null
+  walletBalance: number       // integer rupees
+  coinBalance?: number        // v15: ClubCoins; integer; undefined treated as 0 in all read paths
+  createdAt: number           // Date.now()
+  lastVisitAt: number         // updated on any topup or adjustment
+  // v16: engagement timestamps — all optional, undefined = feature not yet triggered
+  firstTopupAt?: number       // epoch ms; set on first confirmed topup; welcome bonus one-shot guard
+  lastStreakBonusAt?: number   // epoch ms; last streak bonus award; streak cooldown guard
+  expiryAppliedAt?: number    // epoch ms; last expiry sweep for this customer; 1h debounce guard
 }
 ```
 
@@ -133,21 +141,36 @@ interface Customer {
 
 **Walk-in counter:** stored as `ClubSettings.walkInCounter?: number`. Treat missing as `0`. Counter increment + customer insert happen in one `db.transaction('rw', settings, customers)` — crash-safe.
 
-### WalletTransactions Store (v5+)
+### WalletTransactions Store (v5+, last updated v16)
 
 ```ts
 // src/types/walletTransaction.ts
+type WalletTransactionType = 'credit' | 'debit' | 'adjustment'
+type WalletPaymentMode = 'cash' | 'upi' | 'card'
+type WalletReferenceType =
+  | 'topup' | 'session' | 'item' | 'manual' | 'refund'
+  | 'canteen_sale'     // v13: walk-in canteen sale
+  | 'coin_redemption'  // v15: coins redeemed at session/canteen payment
+  | 'coin_expiry'      // v16: coins auto-expired after coinExpiryDays (FIFO)
+  | 'welcome_bonus'    // v16: first-topup one-shot bonus
+  | 'streak_bonus'     // v16: N distinct visit-days in window bonus
+  | 'engagement_log'   // v16: zero-balance audit row when WhatsApp nudge sent
+
 interface WalletTransaction {
   id: string                            // UUID v4
   customerId: string
-  type: 'credit' | 'debit' | 'adjustment'
-  amount: number                        // always positive; type indicates direction
-  balanceAfter: number                  // balance snapshot after this tx (audit trail)
-  paymentMode: 'cash' | 'upi' | 'card' | null  // null for debit/adjustment
-  referenceType: 'topup' | 'session' | 'item' | 'manual' | 'refund' | null
-  referenceId: string | null            // sessionId.toString() / itemId / null
+  type: WalletTransactionType
+  amount: number                        // always positive; 0 for coin-only rows
+  balanceAfter: number                  // wallet OR coin balance after tx
+  paymentMode: WalletPaymentMode | null // null for debit/adjustment/coin rows
+  referenceType: WalletReferenceType | null
+  referenceId: string | null            // sessionId / itemId / null
   notes: string | null                  // mandatory for 'adjustment' and 'refund'
   createdAt: number
+  // v15: ClubCoins fields — undefined on all pre-v15 rows (backward compatible)
+  balanceType?: 'wallet' | 'coins'      // undefined treated as 'wallet'
+  coinDelta?: number                    // signed; positive = earned, negative = redeemed/expired. Only when balanceType='coins'
+  rupeeEquivalent?: number              // ₹ value at coin consumption time (audit; rate may change later)
 }
 ```
 
@@ -232,16 +255,36 @@ interface ClubSettings {
   clubName: string;
   currency: '₹';            // locked for v1
   rounding: 'none' | '15min' | '30min';
-  upiId?: string;           // optional UPI ID for payment QR
+  upiId?: string;
   walkInCounter?: number;   // treat missing as 0
   legacyAdjustmentsBackfilled?: boolean; // v6 migration audit flag
   alarmSoundEnabled?: boolean;    // v7: default true; stored in Dexie, NOT localStorage
   alarmVibrationEnabled?: boolean; // v7: default true; stored in Dexie, NOT localStorage
-  lowStockThreshold?: number;     // v8: default 5 if missing; triggers low-stock pill/toast
-  piggyOpeningBalance?: number;   // v13: owner-settable opening cash float; treat missing as 0
-  piggyStartedAt?: number;        // v13: Unix ms; aggregation window start. Set at v13 upgrade if absent.
-  acceptsTopups?: boolean;        // v14 (logical): mirrors Supabase clubs.accepts_topups; treat missing as true
-  coinRedemptionModes?: 'time' | 'canteen' | 'both'; // v14 (logical): where coins can be redeemed; treat missing as 'both'
+  lowStockThreshold?: number;     // v8: default 5
+  piggyOpeningBalance?: number;   // v13: treat missing as 0
+  piggyStartedAt?: number;        // v13: Unix ms; aggregation window start
+  // v14: Player Hub
+  slug?: string;                  // mirrors Supabase clubs.slug; undefined = hub not set up
+  slugLocked?: boolean;           // true after first successful slug save; UI blocks edits
+  // v15: ClubCoins
+  acceptsTopups?: boolean;        // mirrors Supabase clubs.accepts_topups; treat missing as true
+  coinRedemptionModes?: 'time' | 'canteen' | 'both'; // treat missing as 'both'
+  coinsEnabled?: boolean;         // master switch; undefined/false = off
+  coinTiers?: CoinTier[];         // { minAmount: number, coins: number }[]
+  minutesPerCoin?: number;        // default 2
+  rupeesPerCoin?: number;         // default 0.5
+  coinExpiryDays?: number;        // default 60
+  coinMinRedemption?: number;     // default 10 coins
+  // v16: Engagement features — all off by default (undefined = off)
+  welcomeBonusEnabled?: boolean;
+  welcomeBonusCoins?: number;     // default 50
+  streakEnabled?: boolean;
+  streakRequiredDays?: number;    // default 3
+  streakWindowDays?: number;      // default 7
+  streakBonusCoins?: number;      // default 50
+  dormancyEnabled?: boolean;
+  dormantThresholdDays?: number;  // default 14
+  nudgeTemplate?: string;         // WhatsApp message template with {name}/{coins}/{clubName} vars
 }
 ```
 

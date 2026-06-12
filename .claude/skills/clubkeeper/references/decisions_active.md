@@ -254,3 +254,41 @@ Deferred. Surface when first customer asks for cloud sync or multi-device.
 - Canteen checkout (QuickSale): not yet implemented — reserve for when canteen coin redemption is built
 
 **How to apply:** Always read `coinConfig.coinRedemptionModes` before showing any redemption UI. The `resolveCoinConfig` function returns the merged value; never inline `settings.coinRedemptionModes` checks in UI code.
+
+---
+
+## D-PlayerHub-1 — Player Hub ships as Supabase-first (no local-first)
+
+**Context:** Player Hub (clubs + topup_intents) is Supabase-only — no Dexie tables mirror it. Only `ClubSettings.slug/acceptsTopups/coinsEnabled/coinTiers` are mirrored to Dexie for offline reads.
+**Decision:** Club setup and topup intent confirm/reject are Supabase-only writes. `useSyncClubFromSupabase()` does a one-way Supabase→Dexie sync for the fields staff need offline.
+**Rationale:** Player Hub is an online feature (players scan a QR, owners confirm via realtime push). Offline support adds complexity for zero offline-use-case benefit.
+
+## D-PlayerHub-2 — Realtime with polling fallback, not polling-only
+
+**Context:** Supabase realtime may not connect on spotty networks.
+**Decision:** Open realtime channel first; if not `SUBSCRIBED` in 5s, fall back to 30s polling. Both can run simultaneously (known bug — not harmful, just wastes bandwidth).
+**Rationale:** Realtime gives instant badge updates; polling is the reliability net. Owner clubs in India often have variable connectivity.
+
+## D-ClubCoins-1 — Coins earned only at topup, not at session end
+
+**Context:** Choosing when to award coins: topup time vs. session payment time.
+**Decision:** Coins earned only when a player's topup is confirmed by owner (not when they pay at session end).
+**Rationale:** Ties coins to wallet top-ups (encourages pre-loading). Simpler tx model — one confirm event, one coin credit. Session payments may be cash/UPI with no customer identity.
+
+## D-ClubCoins-2 — Coin expiry uses FIFO lot accounting
+
+**Context:** How to track which coins expire when (oldest first).
+**Decision:** Each earn event is a "lot" with remaining coins. Expiry debits oldest lots first. Implemented in `src/lib/coinExpiry.ts`.
+**Rationale:** Customers don't lose recently-earned coins when older coins expire. Standard loyalty programme expectation.
+
+## D-Engagement-1 — All engagement features off by default
+
+**Context:** Streak bonus, welcome bonus, dormancy nudges are new and unproven.
+**Decision:** `welcomeBonusEnabled`, `streakEnabled`, `dormancyEnabled` all default to `false`/`undefined` in ClubSettings. Owner must explicitly enable each in PlayerHubSettings.
+**Rationale:** Prevents surprise coin grants before owner has configured tiers and coin values. Avoids support calls for "where did these coins come from."
+
+## D-Engagement-2 — ExpirySweepRunner runs every 4h, not on every launch
+
+**Context:** Coin expiry sweep is a read-heavy operation (scans all customer walletTransactions for FIFO lots).
+**Decision:** `sessionStorage.lastExpirySweep` debounces to max once per 4h per browser session. Per-customer inner debounce via `expiryAppliedAt` (1h).
+**Rationale:** A club with 500 customers would scan 500 × N transaction rows on every page load. 4h cadence is imperceptible to players but avoids IndexedDB thrash.

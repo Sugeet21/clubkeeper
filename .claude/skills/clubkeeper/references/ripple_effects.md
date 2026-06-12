@@ -1069,3 +1069,114 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 **Pattern T4 invariant:** Running sessions are EXCLUDED from this tile (no `paymentBreakdown` yet). They are still added to the HEADLINE `totalRevenue` via the render-body `runningRevenueToday` reducer. Do NOT move the PAYMENT MODE math into `useLiveQuery` — it would drift behind ticks; the source data IS db-static (`paymentBreakdown` only changes on confirm), so it's correct in the render body either way, but keep the `useMemo` to avoid the per-tick reducer cost.
 
 **Largest-remainder percent rounding:** `PaymentModeStrip.computePercents` ensures tiles sum to exactly 100. If you change the rounding strategy, the bar widths and tile percents must stay consistent (both read from the same return value).
+
+---
+
+## Player Hub + ClubCoins + Engagement ripples (10–11 Jun 2026)
+
+### src/lib/playerHubApi.ts
+- **Imports:** `src/lib/supabase.ts`
+- **Imported by:** `src/pages/PlayerHubSettings.tsx`, `src/pages/Settings.tsx` (updateClubNameRemote), `src/pages/Wallet.tsx` (getOwnerClub), `src/hooks/useLiveData.ts` (getOwnerClub)
+- **Ripple:** If you change the Supabase `clubs` table columns → update all `select()`/`update()` calls in this file. If you change `upsertClub()` signature → update `PlayerHubSettings.tsx` caller. If you add a new function → also export from this file's index.
+
+### src/lib/realtimeTopups.ts
+- **Imports:** `src/lib/supabase.ts`, `src/store/topupInbox.ts`, `src/lib/playerHubApi.ts`
+- **Imported by:** TopBar (mount/unmount), sign-out flow
+- **Ripple:** If you change `clubs.id` lookup → update `subscribeToTopupIntents` channel name. If you change `topup_intents` table name/columns → update INSERT/UPDATE listeners here AND in `playerHubApi.ts`. Fallback polling calls `getPendingTopups` — any change to that function signature ripples here.
+
+### src/store/topupInbox.ts
+- **Imports:** `zustand`
+- **Imported by:** `src/lib/realtimeTopups.ts` (setPendingCount, increment, decrement), TopBar (usePendingTopupCount), `src/components/PendingTopupsModal.tsx` (closeModal)
+- **Ripple:** If you rename `pendingCount` → update TopBar badge and realtimeTopups. This is a side-effect store — no DB reads, just in-memory state.
+
+### src/lib/slug.ts
+- **Imports:** `src/lib/supabase.ts`
+- **Imported by:** `src/pages/PlayerHubSettings.tsx`
+- **Ripple:** If `clubs.slug` column is renamed → update `isSlugAvailable` query here.
+
+### src/pages/player/PlayerScan.tsx
+- **Imports:** `src/lib/playerHubApi.ts`, `src/components/UpiQrCard.tsx`, `src/lib/coins.ts`, `src/pages/player/PlayerScanLayout.tsx`, `src/types/playerHub.ts`
+- **Imported by:** `src/App.tsx` (route `/c/:clubSlug`)
+- **Ripple:** If you change `getClubPublicInfo` return shape → update all field accesses in this file. If `ClubPublicInfo.coinsEnabled` is removed → remove coin preview block. This is a PUBLIC page — no auth, no Dexie. Keep it that way.
+
+### src/pages/player/PlayerScanLayout.tsx
+- **Imports:** React only
+- **Imported by:** `src/pages/player/PlayerScan.tsx`
+- **Ripple:** Layout-only. Safe to style without logic ripples.
+
+### src/pages/Poster.tsx
+- **Imports:** `src/lib/playerHubApi.ts`, `src/components/UpiQrCard.tsx`, `src/pages/player/PlayerScanLayout.tsx`
+- **Imported by:** `src/App.tsx` (route `/poster/:slug`)
+- **Ripple:** Calls `getClubPublicInfo(slug)` — same as PlayerScan. If slug lookup changes → update both.
+
+### src/components/PendingTopupsModal.tsx
+- **Imports:** `src/db/queries.ts` (recordTopupWithCoins, getCoinConfig), `src/lib/playerHubApi.ts` (confirmTopupIntent, rejectTopupIntent), `src/store/topupInbox.ts`, `src/store/toastStore.ts`
+- **Imported by:** TopBar
+- **Ripple:** If `recordTopupWithCoins` signature changes → update call here. If `confirmTopupIntent` or `rejectTopupIntent` error types change → update error handling. Confirm path writes to Dexie AND Supabase in sequence — not atomic across both. Supabase fires first, then Dexie.
+
+### src/lib/coins.ts
+- **Imports:** `src/types/index.ts` (CoinTier, ClubSettings)
+- **Imported by:** `src/db/queries.ts` (coinsEarnedForTopup, resolveCoinConfig), `src/pages/player/PlayerScan.tsx` (coinsEarnedForTopup), `src/components/CoinRedemptionPill.tsx` (maxRedeemableCoins, coinsToMinutes, coinsToRupees), `src/lib/coinExpiry.ts`, `src/lib/playerHubApi.ts` (syncCoinConfig reads config)
+- **Ripple:** `DEFAULT_COIN_CONFIG` is the fallback for all unconfigured clubs — change it carefully. If `CoinTier` type changes → update `PlayerHubSettings.tsx` CoinTiersEditor + `PlayerScan.tsx` preview.
+
+### src/lib/coinExpiry.ts
+- **Imports:** `src/db/database.ts`, `src/lib/coins.ts`, `src/db/queries.ts` (getCoinConfig)
+- **Imported by:** `src/App.tsx` (applyExpirySweep via ExpirySweepRunner)
+- **Ripple:** Reads `WalletTransaction` rows for FIFO lot logic — if `balanceType`/`coinDelta`/`referenceType` fields change → update lot reconstruction logic. Writes new `coin_expiry` rows — if `WalletReferenceType` changes → update here.
+
+### src/lib/streak.ts
+- **Imports:** `src/db/database.ts`, `src/types/index.ts`
+- **Imported by:** `src/pages/SessionDetail.tsx` (checkAndAwardStreak called at session payment confirm, lines 750 + 801)
+- **Ripple:** Called in SessionDetail's payment confirm path — if session stop flow changes → verify call site is still reached. Reads `walletTransactions` for distinct session days — if session debit referenceType changes → update filter.
+
+### src/lib/dormancy.ts
+- **Imports:** `src/db/database.ts`
+- **Imported by:** `src/components/BringBackList.tsx`
+- **Ripple:** Filters `customers` by `lastVisitAt` — if Customer schema changes → update filter logic here.
+
+### src/lib/nudge.ts
+- **Imports:** `src/db/database.ts`
+- **Imported by:** `src/components/BringBackList.tsx`, `src/components/NudgeTemplateEditor.tsx`
+- **Ripple:** `logNudgeSent` writes a `WalletTransaction` with `referenceType:'engagement_log'` — if that type is removed from the union → TS error here.
+
+### src/components/CoinTiersEditor.tsx
+- **Imports:** `src/types/index.ts` (CoinTier)
+- **Imported by:** `src/pages/PlayerHubSettings.tsx`
+- **Ripple:** Props are `tiers/onChange` — safe to style. If `CoinTier` type changes → update here.
+
+### src/components/CoinRedemptionPill.tsx
+- **Imports:** `src/lib/coins.ts`, `src/types/customer.ts`
+- **Imported by:** `src/pages/SessionDetail.tsx:697` (post-stop payment flow)
+- **Ripple:** If `Customer.coinBalance` is removed → update props. If coin math functions change → update displayed values.
+
+### src/components/BringBackList.tsx
+- **Imports:** `src/lib/dormancy.ts`, `src/lib/nudge.ts`, `src/lib/customerDisplay.ts`
+- **Imported by:** `src/pages/PlayerHubSettings.tsx`
+- **Ripple:** Pure UI + API calls. If WhatsApp link format changes → update `buildWhatsAppLink` in nudge.ts (not here).
+
+### src/components/EngagementConfigCard.tsx
+- **Imports:** `src/db/queries.ts` (updateSettings), `src/types/index.ts`
+- **Imported by:** `src/pages/PlayerHubSettings.tsx`
+- **Ripple:** Writes to ClubSettings engagement fields — if field names change → update here + `streak.ts` + `coinExpiry.ts` readers.
+
+### src/components/NudgeTemplateEditor.tsx
+- **Imports:** `src/lib/nudge.ts`
+- **Imported by:** `src/pages/PlayerHubSettings.tsx`
+- **Ripple:** Template variables (`{name}`, `{coins}`, `{clubName}`, etc.) must stay in sync with `renderNudgeTemplate` in `nudge.ts`.
+
+### Modified shared modules
+
+**src/hooks/useLiveData.ts** — added `useSyncClubFromSupabase()`
+- Now imports `src/lib/playerHubApi.ts` (getOwnerClub). Any change to getOwnerClub return shape ripples here.
+- `_clubSyncDone` module-level flag: do NOT add other one-time-run logic using the same pattern without resetting it properly on sign-out.
+
+**src/App.tsx** — added `ExpirySweepRunner` + 2 new routes
+- `ExpirySweepRunner` calls `applyExpirySweep` from `coinExpiry.ts`. Gate is `dbReady + session + subscriptionLoaded` — must remain consistent with other gated operations.
+- If you add a new public route → add its prefix to the `isPublicRoute` check in `AppLayout`.
+
+**src/db/queries.ts** — added `recordTopupWithCoins`, `getCoinConfig`, and streak/expiry helpers
+- `recordTopupWithCoins` is the ONLY correct path for crediting wallet + coins atomically. Never split this into two separate DB calls.
+- If `Customer.firstTopupAt` is renamed → update the welcome-bonus guard inside this tx.
+
+**src/pages/PlayerHubSettings.tsx** — now imports: slug.ts, playerHubApi.ts, coins.ts, realtimeTopups.ts, CoinTiersEditor, EngagementConfigCard, BringBackList, NudgeTemplateEditor
+- Heaviest import graph in the app. If any of these move → update imports here first.

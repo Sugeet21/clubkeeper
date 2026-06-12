@@ -2,6 +2,54 @@
 
 ---
 
+## 13 Jun 2026 — Auth fixes (commit e7b0522)
+
+- `authStore.signOut()`: `window.location.href = '/'` hard nav after clearing state. Also resets `loading` + `subscriptionLoaded` flags.
+- `supabase.ts`: `storage` option added then removed by linter — session persistence relies on Supabase default.
+- `Settings.tsx handleSaveClubName`: fires `updateClubNameRemote()` (new fn, `playerHubApi.ts`) after Dexie write — fire-and-forget Supabase sync with error toast (S1 fix).
+- `PlayerHubSettings.tsx handleToggleTopups`: Supabase-first write, Dexie only on success — eliminates permanent desync (S4 fix).
+- `AuthCallback.tsx`: 20s safety timeout — toast + navigate to `/` if Supabase hangs.
+
+---
+
+## 10–11 Jun 2026 — Player Hub + ClubCoins + Engagement (commit 969076a)
+
+### Player Hub (Dexie v14)
+- Supabase migrations: `20260610_player_hub.sql` (clubs + topup_intents + RPCs) + `20260610_clubcoins.sql` (coins_enabled + coin_tiers_json columns).
+- `src/lib/playerHubApi.ts`: full API layer — `getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`, `getOwnerClub`, `upsertClub`, `updateAcceptsTopups`, `getPendingTopups`, `confirmTopupIntent`, `rejectTopupIntent`, `syncCoinConfig`.
+- `src/lib/realtimeTopups.ts` (NEW): Supabase realtime channel `topup_intents_{clubId}` + 5s/30s polling fallback.
+- `src/store/topupInbox.ts` (NEW): Zustand store — `pendingCount, modalOpen, usePendingTopupCount`.
+- `src/lib/slug.ts` (NEW): `generateSlug`, `validateSlug`, `isSlugAvailable`.
+- `src/pages/player/PlayerScan.tsx` (NEW): public `/c/:clubSlug` — form → UPI QR → poll → confirm/reject/expired states.
+- `src/pages/player/PlayerScanLayout.tsx` (NEW): minimal public layout.
+- `src/pages/Poster.tsx` (NEW): `/poster/:slug` — A4 QR poster, auto-triggers `window.print()`.
+- `src/components/PendingTopupsModal.tsx` (NEW): per-row confirm/reject state machine.
+- `src/pages/PlayerHubSettings.tsx`: slug setup modal, accept-topups toggle (Supabase-first), coin config editor, engagement config.
+- `src/hooks/useLiveData.ts`: `useSyncClubFromSupabase()` added — one-way Supabase→Dexie sync on mount.
+- `src/App.tsx`: routes `/c/:clubSlug` + `/poster/:slug` added; `ExpirySweepRunner` added.
+
+### ClubCoins (Dexie v15)
+- `src/lib/coins.ts` (NEW): `DEFAULT_COIN_CONFIG`, `coinsEarnedForTopup`, `resolveCoinConfig`, `coinsToRupees`, `coinsToMinutes`, `maxRedeemableCoins`, `formatCoins`.
+- `src/components/CoinTiersEditor.tsx` (NEW).
+- `src/components/CoinRedemptionPill.tsx` (NEW) — wired into `SessionDetail.tsx:697`.
+- `Customer.coinBalance?` · `WalletTransaction.balanceType?/coinDelta?/rupeeEquivalent?`.
+- `WalletReferenceType` extended with `coin_redemption`.
+- `recordTopupWithCoins` added to `queries.ts` — atomic wallet + coin credit + welcome bonus one-shot.
+
+### Engagement (Dexie v16)
+- `src/lib/streak.ts` (NEW): `checkAndAwardStreak` — called from `SessionDetail.tsx:750,801`.
+- `src/lib/coinExpiry.ts` (NEW): FIFO lot accounting, `applyExpirySweep` — called every 4h from `ExpirySweepRunner`.
+- `src/lib/nudge.ts` (NEW): `renderNudgeTemplate`, `buildWhatsAppLink`, `logNudgeSent`.
+- `src/lib/dormancy.ts` (NEW): `getDormantCustomers`.
+- `src/components/BringBackList.tsx` (NEW).
+- `src/components/NudgeTemplateEditor.tsx` (NEW).
+- `src/components/EngagementConfigCard.tsx` (NEW).
+- `Customer.firstTopupAt?/lastStreakBonusAt?/expiryAppliedAt?` · `ClubSettings` engagement fields.
+- `WalletReferenceType` extended with `coin_expiry, welcome_bonus, streak_bonus, engagement_log`.
+- All features **off by default** — master boolean switches.
+
+---
+
 ## 12 Jun 2026 — Deploy fix: SPA rewrite + favicon/PWA icons
 
 **Root cause found:** `vercel.json` was missing entirely. Vercel was treating every deep route as a file lookup and returning HTTP 404. The Workbox `navigateFallback: 'index.html'` only works once the service worker is active — useless on first load in incognito or fresh device.

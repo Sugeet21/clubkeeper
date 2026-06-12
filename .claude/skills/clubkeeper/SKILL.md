@@ -76,10 +76,12 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 13 Jun 2026 (Auth fixes: sign-out hard nav, session persistence, club name sync, toggle atomicity)*
+*Last updated: 13 Jun 2026 (Skill reconciled — PlayerHub + ClubCoins + Engagement documented; auth fixes shipped)*
 
 **Built and live on app.handbookhq.in (primary) / clubkeeper.vercel.app (backup):**
-- 13 screens: Tables (`/tables`), StartSession, SessionDetail, Settings, History, Summary + **Wallet (`/wallet`), WalletNewCustomer (`/wallet/new`), WalletTopup (`/wallet/topup/:id`), CustomerProfile (`/customer/:id`)** + **Canteen (`/canteen`)** + **QuickSale (`/quick-sale`)** + **Piggy (`/piggy`)**
+- **13 private screens** (behind RequireAccess): Tables (`/tables`), StartSession (`/start/:tableId`), SessionDetail (`/session/:sessionId`), Settings (`/settings`), History (`/history`), Summary (`/summary`), Wallet (`/wallet`), WalletNewCustomer (`/wallet/new`), WalletTopup (`/wallet/topup/:customerId`), CustomerProfile (`/customer/:customerId`), Canteen (`/canteen`), QuickSale (`/quick-sale`), Piggy (`/piggy`)
+- **2 public Player Hub screens**: PlayerScan (`/c/:clubSlug`) — player QR topup form; Poster (`/poster/:slug`) — printable A4 QR poster (auto-triggers `window.print()` on load)
+- **4 auth/landing public routes**: Landing (`/`), Signup (`/signup`), AuthCallback (`/auth/callback`), Subscribe (`/subscribe`)
 - Landing → Signup → **directly to /tables (cardless trial)** flow, all wired with route guards
 - Auth: Supabase + Google OAuth (`prompt: 'select_account'` enforced)
 - Payment: REAL Razorpay (TEST mode). Serverless `/api/*`: create-subscription, razorpay-webhook, cancel-subscription
@@ -130,7 +132,10 @@ Read MULTIPLE files when the question spans domains.
 - Playwright suite: 8 spec files × 3 viewports
 - **`vercel.json` SPA rewrite (12 Jun 2026):** `vercel.json` added at project root with catch-all rewrite `/((?!api/).*)` → `/index.html`. Without this, Vercel 404'd every deep route on first load. Player QR URL (`/c/<slug>`), OAuth callback, all deep links now work. `/api/*` routes excluded so serverless functions are unaffected.
 - **PWA icons (12 Jun 2026):** `pwa-192x192.png`, `pwa-512x512.png`, `favicon.ico`, `favicon-16x16.png`, `favicon-32x32.png`, `apple-touch-icon.png` added to `public/`. `<link>` tags added to `index.html <head>`. Icons were referenced in `vite.config.ts` manifest but files didn't exist — caused 404 on every PWA install attempt.
-- **Auth fixes (13 Jun 2026):** Four bugs fixed in one commit. (1) Sign-out: `authStore.signOut()` now does `window.location.href = '/'` hard nav after clearing state — ensures no stale React/Zustand/Dexie state survives. Also resets `loading` + `subscriptionLoaded` flags. (2) Session persistence: `supabase.ts` `createClient` now explicitly passes `storage: typeof window !== 'undefined' ? window.localStorage : undefined`. (3) S1 club name sync: `handleSaveClubName` in Settings fires `updateClubNameRemote()` (new fn in `playerHubApi.ts`) after Dexie write — updates `clubs.club_name` in Supabase via owner RLS. Fire-and-forget with error toast. (4) S4 toggle atomicity: `handleToggleTopups` in PlayerHubSettings now calls Supabase first, Dexie only on success — eliminates permanent desync on Supabase failure.
+- **Player Hub (10–11 Jun 2026, Dexie v14):** Supabase `clubs` + `topup_intents` tables (migrations `20260610_player_hub.sql` + `20260610_clubcoins.sql` — ⚠ confirm run). Owner: slug setup in `PlayerHubSettings`, "Accept topups" toggle (Supabase-first for atomicity after 13 Jun fix). Player side: `/c/:clubSlug` (`src/pages/player/PlayerScan.tsx`) — name/mobile/amount form → UPI deep-link + QR → 8s delay → "I've paid" → polls `getTopupIntentStatus` every 3s (10-min expire). Owner side: `src/components/PendingTopupsModal.tsx` — per-row confirm/reject state machine. Realtime: `src/lib/realtimeTopups.ts` — Supabase channel `topup_intents_{clubId}` + 5s/30s polling fallback. Pending badge count in `src/store/topupInbox.ts` (Zustand). `/poster/:slug` (`src/pages/Poster.tsx`) auto-prints A4 QR. `src/lib/slug.ts`: `generateSlug`, `validateSlug`, `isSlugAvailable`. `src/lib/playerHubApi.ts`: full API layer. `useSyncClubFromSupabase()` in `src/hooks/useLiveData.ts` syncs Supabase → Dexie once per browser session.
+- **ClubCoins (10–11 Jun 2026, Dexie v15):** `src/lib/coins.ts` — `coinsEarnedForTopup`, `resolveCoinConfig`, `coinsToRupees`, `coinsToMinutes`, `maxRedeemableCoins`, `formatCoins`, `DEFAULT_COIN_CONFIG` (4 tiers, minutesPerCoin=2, rupeesPerCoin=0.5, expiryDays=60, minRedemption=10). `src/components/CoinTiersEditor.tsx` in PlayerHubSettings. `src/components/CoinRedemptionPill.tsx` (amber pill + slider) — **wired in `SessionDetail.tsx:697`**. `Customer.coinBalance?`. `WalletTransaction.balanceType?/coinDelta?/rupeeEquivalent?`. `recordTopupWithCoins` in `queries.ts` credits coins + handles welcome-bonus one-shot (`firstTopupAt` guard). Config synced to Supabase via `syncCoinConfig()` (fire-and-forget). PlayerScan shows "Earn N coins" preview.
+- **Engagement system (10–11 Jun 2026, Dexie v16):** All features **off by default** (master switches in ClubSettings). `src/lib/streak.ts` — `checkAndAwardStreak()` **called in `SessionDetail.tsx:750,801`**. `src/lib/coinExpiry.ts` — FIFO lot accounting, `applyExpirySweep()` — runs every 4h via `ExpirySweepRunner` in `App.tsx` (gated on `dbReady + session + subscriptionLoaded`). `src/lib/nudge.ts` — `renderNudgeTemplate`, `buildWhatsAppLink`, `logNudgeSent`. `src/lib/dormancy.ts` — `getDormantCustomers(thresholdDays, limit)`. UI: `src/components/BringBackList.tsx`, `src/components/NudgeTemplateEditor.tsx`, `src/components/EngagementConfigCard.tsx` in PlayerHubSettings. Welcome bonus (one-shot, `firstTopupAt` guard), streak bonus, coin expiry all wired.
+- **Auth fixes (13 Jun 2026, commit e7b0522):** (1) Sign-out: `authStore.signOut()` does `window.location.href = '/'` hard nav + resets `loading` + `subscriptionLoaded`. (2) S1 club name sync: `handleSaveClubName` fires `updateClubNameRemote()` (new fn, `playerHubApi.ts`) fire-and-forget after Dexie write. (3) S4 toggle atomicity: `handleToggleTopups` Supabase-first, Dexie only on success. Note: `storage` option added to `createClient` was subsequently removed by linter — session persistence relies on Supabase default.
 - GitHub: `github.com/Sugeet21/clubkeeper`
 - Supabase project: `vkczmgzujpidbwtzulel.supabase.co`
 - Razorpay plan IDs: single source of truth in `src/lib/razorpayPlans.ts`
@@ -138,32 +143,38 @@ Read MULTIPLE files when the question spans domains.
 - Per-user IndexedDB: DB name is `ClubKeeperDB_<userId>`. Two Gmail accounts on same browser see isolated data. `db` export is a Proxy; `authStore` manages `initDbForUser` / `closeDb` lifecycle. `dbReady` flag gates all private routes via `useAccessGuard`.
 
 **Dexie version history:**
-- v1/v2: gameTables + sessions + settings
-- v3: added sessionItems table (`++id, sessionId, addedAt`)
+- v1/v2: `gameTables` + `sessions` + `settings`
+- v3: adds `sessionItems: '++id, sessionId, addedAt'`
 - v4: documents `upiId` field on settings (no index)
-- v5: adds `customers` + `walletTransactions` tables; `ClubSettings.walkInCounter?` field
-- v6: one-time `.upgrade()` backfill of legacy `type:'adjustment'` wallet transaction rows
-- v7: adds optional `notifyAtMs` + `notifyAcknowledgedAt` fields on sessions (alarm feature, no new index)
-- v8: adds `canteenItems` table (`++id, name, isActive, sortOrder`). New `CanteenItem` type and `lowStockThreshold` on `ClubSettings`.
-- v9: adds optional `tableMoves` field to sessions (`TableMove[]`). No index. No `.upgrade()` — undefined = zero moves on legacy rows.
-- v10 (9 Jun 2026): adds optional `rateCard` + `toleranceMinutes` on GameTable, optional `rateCardSnapshot` + `toleranceMinutesSnapshot` on Session. Additive, no `.upgrade()` block.
-- v11 (9 Jun 2026): adds optional `rateCardBilling` on GameTable, optional `rateCardBillingSnapshot` on Session. Additive.
-- v12 (9 Jun 2026): adds optional `isBackEntry?: boolean` on sessions. No new index. No `.upgrade()`. Legacy rows read `undefined` (falsy).
-- **v13 (current, 10 Jun 2026): adds optional `Session.paymentBreakdown?: { cash, upi, wallet }`; new tables `canteenSales` (`id, createdAt, customerId`) and `stockPurchases` (`id, createdAt, canteenItemId, source`); `ClubSettings.piggyOpeningBalance?` + `piggyStartedAt?`. `.upgrade()` backfills `paymentBreakdown = { cash: amount, upi: 0, wallet: 0 }` for completed sessions and initialises piggy settings (`Date.now()` start, 0 opening) only if absent. Items-revenue gap in backfill is documented but not fixed — historic PAYMENT MODE understated by items value of pre-v13 sessions.**
+- v5: adds `customers: 'id, phone, walkInCode, lastVisitAt'` + `walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]'`; `ClubSettings.walkInCounter?`
+- v6: `.upgrade()` backfill of legacy `type:'adjustment'` wallet transaction rows → infers credit/debit from balanceAfter delta
+- v7: adds optional `notifyAtMs?` + `notifyAcknowledgedAt?` on sessions (alarm); `alarmSoundEnabled/alarmVibrationEnabled` on ClubSettings. No index. No `.upgrade()`.
+- v8: adds `canteenItems: '++id, name, isActive, sortOrder'`; `ClubSettings.lowStockThreshold?` (default 5)
+- v9: adds optional `tableMoves?: TableMove[]` on sessions. No index. No `.upgrade()`.
+- v10 (9 Jun 2026): adds optional `rateCard?` + `toleranceMinutes?` on `GameTable`; `rateCardSnapshot?` + `toleranceMinutesSnapshot?` on `Session`. Additive, no `.upgrade()`.
+- v11 (9 Jun 2026): adds optional `rateCardBilling?` on `GameTable`; `rateCardBillingSnapshot?` on `Session`. Additive.
+- v12 (9 Jun 2026): adds optional `isBackEntry?: boolean` on sessions. No index. No `.upgrade()`.
+- v13 (10 Jun 2026): new tables `canteenSales: 'id, createdAt, customerId'` + `stockPurchases: 'id, createdAt, canteenItemId, source'`. `Session.paymentBreakdown?`. `ClubSettings.piggyOpeningBalance?/piggyStartedAt?`. `.upgrade()` backfills sessions + initialises piggy. ⚠ Items-revenue gap: backfill used `session.amount` (time only), not grand total.
+- v14 (10–11 Jun 2026): adds `ClubSettings.slug?` + `slugLocked?` for Player Hub. Additive, no `.upgrade()`.
+- v15 (10–11 Jun 2026): adds `Customer.coinBalance?`; `WalletTransaction.balanceType?/coinDelta?/rupeeEquivalent?`; `ClubSettings` coin config fields (`coinsEnabled, coinTiers, minutesPerCoin, rupeesPerCoin, coinExpiryDays, coinMinRedemption`) + `acceptsTopups?` + `coinRedemptionModes?`. Same store strings as v14. No `.upgrade()`.
+- **v16 (current, 10–11 Jun 2026): adds `Customer.firstTopupAt?/lastStreakBonusAt?/expiryAppliedAt?`; `ClubSettings` engagement fields (`welcomeBonusEnabled, welcomeBonusCoins, streakEnabled, streakRequiredDays, streakWindowDays, streakBonusCoins, dormancyEnabled, dormantThresholdDays, nudgeTemplate`). `WalletReferenceType` extended with `coin_expiry, welcome_bonus, streak_bonus, engagement_log`. Same store strings as v15. No `.upgrade()`.**
 
 **⚠️ Razorpay key rotation warning:** If `VITE_RAZORPAY_KEY_ID` or `RAZORPAY_KEY_SECRET` is ever rotated, or LIVE mode is enabled, the 6 plan IDs in `razorpayPlans.ts` MUST be re-verified against the new account. Run: `curl -u KEY_ID:KEY_SECRET https://api.razorpay.com/v1/plans/PLAN_ID` — expect 200. See Pattern S5.
 
 **⚠️ Supabase migration pending manual run:** `supabase/migrations/20260602_cardless_trial.sql` must be pasted into the Supabase SQL editor and executed. Until this runs, new signups still get `status='none'` (old trigger behavior) and land on `/subscribe` instead of `/tables`. Existing `status='none'` users also not backfilled yet.
 
 **Pending:**
-1. **Run `supabase/migrations/20260602_cardless_trial.sql` in Supabase SQL editor** — cardless trial doesn't work until this is done
-2. Vercel webhook config: Razorpay Dashboard → add `/api/razorpay-webhook` URL + `RAZORPAY_WEBHOOK_SECRET` env var → redeploy
-3. Razorpay LIVE mode switch (needs KYC first)
-4. GST invoicing + email notifications (next sprint)
-5. PWA stale service worker — needs "Update Available" banner so users get new deploys without hard-refresh (S6)
-6. **Wallet Phase 3:** Refund UI. New debit row with `referenceType: 'refund'` + mandatory notes.
-7. **PAYMENT MODE backfill (v13 follow-up):** historic items revenue missing from `paymentBreakdown.cash` — v13 upgrade used `session.amount` (time only). Understates cash for pre-v13 dates. Defer until Ball Bender notices.
-8. **QR code wallet self-signup + ClubCoins (Ball Bender week-2 ask):** Player scans QR → enters Name + Mobile + Amount → pays UPI → bonus credited as ClubCoins.
+1. **Run `supabase/migrations/20260602_cardless_trial.sql`** — cardless trial broken until done (new signups land on `/subscribe`, not `/tables`)
+2. **Run `supabase/migrations/20260610_player_hub.sql`** — creates `clubs` + `topup_intents` tables + `get_club_public_info` RPC. ⚠ Confirm if already run in production.
+3. **Run `supabase/migrations/20260610_clubcoins.sql`** — adds `coins_enabled` + `coin_tiers_json` to clubs + updates RPC. ⚠ Confirm if already run.
+4. Vercel webhook config: Razorpay Dashboard → add `/api/razorpay-webhook` URL + `RAZORPAY_WEBHOOK_SECRET` → redeploy
+5. Razorpay LIVE mode switch (needs KYC first)
+6. GST invoicing + email notifications (next sprint)
+7. **PWA update banner (S6):** Users on old service worker don't get new deploys without hard refresh. Needs `useRegisterSW` + banner UI.
+8. **Wallet Phase 3:** Refund UI. `referenceType: 'refund'` + mandatory notes.
+9. **PAYMENT MODE backfill (v13 follow-up):** `paymentBreakdown.cash` understates pre-v13 sessions by items value. Defer until Ball Bender notices.
+10. **`_clubSyncDone` bug (useLiveData):** Module-level flag never resets on sign-out — second user to sign in on same tab skips club sync. Fix: reset flag in auth sign-out path.
+11. **Session persistence:** `storage` option removed from `createClient` by linter — monitor if session drops recur in production.
 
 **Known limitations:**
 - **LIMIT-001 (partially fixed):** IndexedDB is now per-user per-browser (`ClubKeeperDB_<userId>`). Two Gmail accounts on the same browser see separate data. Cross-device sync is still not implemented — same account on Chrome vs Edge sees different data. Full fix requires cloud sync (Supabase). Warn Sugeet if he asks for multi-device access.
