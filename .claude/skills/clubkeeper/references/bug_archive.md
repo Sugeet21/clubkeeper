@@ -20,6 +20,16 @@ Format for entries:
 
 ---
 
+### 12 Jun 2026 — All deep routes returning HTTP 404 on production [B-deploy-1]
+
+**Symptom:** Opening `app.handbookhq.in/c/<slug>` (player QR URL) in incognito returned Vercel's "404: NOT_FOUND" page. Same for `/tables`, `/auth/callback`, any route other than `/`. Google OAuth login was broken because the callback URL 404'd. PWA icons (pwa-192x192.png, pwa-512x512.png) also 404'd.
+**Root cause:** `vercel.json` was missing. Vercel's CDN treats each path as a file lookup — no file at `/c/star-club` → 404. The Workbox `navigateFallback: 'index.html'` in `vite.config.ts` only activates after the service worker installs; on first incognito load there is no SW, so the fallback never fires. PWA icon files were referenced in the Vite manifest config but the actual PNG files were never committed to `public/`.
+**Fix:** Added `vercel.json` with a catch-all SPA rewrite `"source": "/((?!api/).*)"` → `"/index.html"`. Committed all missing PWA/favicon files to `public/`. Added `<link>` tags to `index.html <head>`.
+**Files:** `vercel.json` (new), `index.html`, `public/favicon.ico`, `public/favicon-16x16.png`, `public/favicon-32x32.png`, `public/apple-touch-icon.png`, `public/pwa-192x192.png`, `public/pwa-512x512.png`, `public/logo_master.svg`
+**Lesson:** Every Vite SPA deployed to Vercel needs `vercel.json` with a rewrite rule. Vercel does NOT auto-detect SPA routing — it only does so for frameworks it knows natively (Next.js, Nuxt, SvelteKit). Vite is treated as a static site. Add `vercel.json` at project creation, not after the first 404 report.
+
+---
+
 ### 07 Jun 2026 — Canteen page stuck on "Loading…" forever [B-canteen-1]
 
 **Symptom:** `/canteen` route showed only "Loading…" text. No header, no back button, no FAB. Entire page was gated on the `useLiveQuery` undefined initial state.

@@ -87,7 +87,17 @@ Harmless on Windows. Git is normalizing line endings. Ignore.
 
 ## Vercel Configuration
 
-Auto-detected for Vite projects. No `vercel.json` needed unless customizing.
+**`vercel.json` exists at project root** (added 12 Jun 2026). Contains a catch-all SPA rewrite:
+
+```json
+{
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}
+```
+
+Without this, Vercel returns HTTP 404 for any deep route (`/c/<slug>`, `/tables`, `/auth/callback`, etc.) because it treats each path as a file lookup. The negative lookahead `(?!api/)` preserves routing for `/api/*` serverless functions.
 
 Build settings (auto-detected):
 - Framework: Vite

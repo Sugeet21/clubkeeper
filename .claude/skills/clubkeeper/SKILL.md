@@ -76,7 +76,7 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 10 Jun 2026 (Split payments + Walk-in Quick Sale + Summary PAYMENT MODE + Piggy bank)*
+*Last updated: 13 Jun 2026 (Auth fixes: sign-out hard nav, session persistence, club name sync, toggle atomicity)*
 
 **Built and live on app.handbookhq.in (primary) / clubkeeper.vercel.app (backup):**
 - 13 screens: Tables (`/tables`), StartSession, SessionDetail, Settings, History, Summary + **Wallet (`/wallet`), WalletNewCustomer (`/wallet/new`), WalletTopup (`/wallet/topup/:id`), CustomerProfile (`/customer/:id`)** + **Canteen (`/canteen`)** + **QuickSale (`/quick-sale`)** + **Piggy (`/piggy`)**
@@ -128,6 +128,9 @@ Read MULTIPLE files when the question spans domains.
 - **Cardless 7-day trial (Phase 1 + 1.5 + duplication fix + banner two-state split):** New signups land directly on `/tables` — no card required. Postgres trigger `handle_new_user()` creates `status='trialing'` + `trial_ends_at = now()+7d` on every new signup. `useAccessGuard` reason values: `trial_expired` (trialing + past date), `no_subscription` (none/cancelled/expired). `RequireAccess` passes `state: { reason: 'trial_expired' }` on redirect. `AuthCallback` routes by status: active/past_due/trialing-active → `/tables`; trialing-expired → `/subscribe` with state. **`SubscriptionStatusBanner` trialing branch is split in two:** (a) `!razorpaySubscriptionId` → "Free trial: N days left · Manage →" to `/subscribe` with `state: { reason: 'subscribe_early' }`; (b) `razorpaySubscriptionId` present → "Subscribed ✓ — ₹599 will be charged on {d MMM} · View →" sets `sessionStorage('ck_settings_section', 'subscription')` then navigates to `/settings`. **Subscribe page three-branch headline (all in Subscribe.tsx):** `expired` ("Your free trial has ended"), `early` ("Subscribe early to lock in ₹599/month" + days left + trial-end date `d MMM`), `welcome` ("Welcome, {Name} 👋 / Start your 7-day free trial"). `HeadlineState` discriminated union computed via `useMemo` — `location.state.reason` takes priority, falls back to live subscription state on refresh. All three branches live in `Subscribe.tsx`; `PlanSelection` always receives `hideWelcome={true}` and never renders its own welcome header. Migration file: `supabase/migrations/20260602_cardless_trial.sql` (run manually in SQL editor).
 - PWA install support
 - Playwright suite: 8 spec files × 3 viewports
+- **`vercel.json` SPA rewrite (12 Jun 2026):** `vercel.json` added at project root with catch-all rewrite `/((?!api/).*)` → `/index.html`. Without this, Vercel 404'd every deep route on first load. Player QR URL (`/c/<slug>`), OAuth callback, all deep links now work. `/api/*` routes excluded so serverless functions are unaffected.
+- **PWA icons (12 Jun 2026):** `pwa-192x192.png`, `pwa-512x512.png`, `favicon.ico`, `favicon-16x16.png`, `favicon-32x32.png`, `apple-touch-icon.png` added to `public/`. `<link>` tags added to `index.html <head>`. Icons were referenced in `vite.config.ts` manifest but files didn't exist — caused 404 on every PWA install attempt.
+- **Auth fixes (13 Jun 2026):** Four bugs fixed in one commit. (1) Sign-out: `authStore.signOut()` now does `window.location.href = '/'` hard nav after clearing state — ensures no stale React/Zustand/Dexie state survives. Also resets `loading` + `subscriptionLoaded` flags. (2) Session persistence: `supabase.ts` `createClient` now explicitly passes `storage: typeof window !== 'undefined' ? window.localStorage : undefined`. (3) S1 club name sync: `handleSaveClubName` in Settings fires `updateClubNameRemote()` (new fn in `playerHubApi.ts`) after Dexie write — updates `clubs.club_name` in Supabase via owner RLS. Fire-and-forget with error toast. (4) S4 toggle atomicity: `handleToggleTopups` in PlayerHubSettings now calls Supabase first, Dexie only on success — eliminates permanent desync on Supabase failure.
 - GitHub: `github.com/Sugeet21/clubkeeper`
 - Supabase project: `vkczmgzujpidbwtzulel.supabase.co`
 - Razorpay plan IDs: single source of truth in `src/lib/razorpayPlans.ts`
@@ -152,22 +155,15 @@ Read MULTIPLE files when the question spans domains.
 
 **⚠️ Supabase migration pending manual run:** `supabase/migrations/20260602_cardless_trial.sql` must be pasted into the Supabase SQL editor and executed. Until this runs, new signups still get `status='none'` (old trigger behavior) and land on `/subscribe` instead of `/tables`. Existing `status='none'` users also not backfilled yet.
 
-**Pending (not blockers):**
+**Pending:**
 1. **Run `supabase/migrations/20260602_cardless_trial.sql` in Supabase SQL editor** — cardless trial doesn't work until this is done
 2. Vercel webhook config: Razorpay Dashboard → add `/api/razorpay-webhook` URL + `RAZORPAY_WEBHOOK_SECRET` env var → redeploy
-3. ~~**Phase 3: Razorpay `start_at` honoring remaining trial**~~ — **DONE (Phase 3 Commit 2, 4 Jun 2026).** `create-subscription.ts` reads `trial_ends_at` from Supabase and uses 3-scenario logic. `mid_trial` path sets `start_at = existing trial_ends_at`. See Pattern S8.
-4. Razorpay LIVE mode switch (needs KYC first)
-5. BUG-013 visual verification of `status='none'` card
-6. GST invoicing + email notifications (next sprint)
-7. PWA stale service worker on regular Chrome — needs "Update Available" banner so users get new deploys without hard-refresh
-8. Manual test of Build Prompt 3 validation checklist (Settings collapsibles, payment QR fits viewport, all actions still work)
-9. One-time migration from old `ClubKeeperDB` → `ClubKeeperDB_<userId>` for any existing user who had data before this change (write migration script when first customer reports missing data)
-10. Playwright specs may need updating — selectors looking for old Settings labels (e.g. "CLUB INFO" allcaps) need to target "Club Info" and the new collapsible structure
-11. ~~**Wallet Phase 2:** Session-end "Pay from Wallet" deduction UI.~~ — **DONE (10 Jun 2026)** via the split-payment flow. PaymentSplitSheet's wallet row writes a `WalletTransaction(type:'debit', referenceType:'session', referenceId:<sessionId>)` + decrements `customer.walletBalance` atomically with the session breakdown write. Customer is linked inline via picker (no Session schema change).
-12. **Wallet Phase 3:** Refund UI. New debit row with `referenceType: 'refund'` + mandatory notes.
-15. **PAYMENT MODE backfill (v13 follow-up):** historic items revenue is missing from `paymentBreakdown.cash` because the v13 `.upgrade()` used `session.amount` (time portion only). Tile understates cash for pre-v13 dates by the items value of those sessions. Defer until Ball Bender notices.
-13. ~~**Back Entries**~~ — **DONE (Phase 1 + Phase 2, 9 Jun 2026).** See snapshot above.
-14. **QR code wallet self-signup + ClubCoins (Ball Bender week-2 ask):** Player scans QR at table → enters Name + Mobile + Amount → pays UPI → bonus credited as "ClubCoins" (label change on existing wallet — convert to minutes at consumption, not rupees). NO new data model; just a label and a config field for "minutes per coin" rate.
+3. Razorpay LIVE mode switch (needs KYC first)
+4. GST invoicing + email notifications (next sprint)
+5. PWA stale service worker — needs "Update Available" banner so users get new deploys without hard-refresh (S6)
+6. **Wallet Phase 3:** Refund UI. New debit row with `referenceType: 'refund'` + mandatory notes.
+7. **PAYMENT MODE backfill (v13 follow-up):** historic items revenue missing from `paymentBreakdown.cash` — v13 upgrade used `session.amount` (time only). Understates cash for pre-v13 dates. Defer until Ball Bender notices.
+8. **QR code wallet self-signup + ClubCoins (Ball Bender week-2 ask):** Player scans QR → enters Name + Mobile + Amount → pays UPI → bonus credited as ClubCoins.
 
 **Known limitations:**
 - **LIMIT-001 (partially fixed):** IndexedDB is now per-user per-browser (`ClubKeeperDB_<userId>`). Two Gmail accounts on the same browser see separate data. Cross-device sync is still not implemented — same account on Chrome vs Edge sees different data. Full fix requires cloud sync (Supabase). Warn Sugeet if he asks for multi-device access.

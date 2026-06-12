@@ -1,5 +1,22 @@
 # Changelog
 
+---
+
+## 12 Jun 2026 — Deploy fix: SPA rewrite + favicon/PWA icons
+
+**Root cause found:** `vercel.json` was missing entirely. Vercel was treating every deep route as a file lookup and returning HTTP 404. The Workbox `navigateFallback: 'index.html'` only works once the service worker is active — useless on first load in incognito or fresh device.
+
+**Changes shipped (commit 9d474b0):**
+- `vercel.json` created at project root with catch-all SPA rewrite (excludes `/api/*`)
+- `public/favicon.ico`, `public/favicon-16x16.png`, `public/favicon-32x32.png`, `public/apple-touch-icon.png` added
+- `public/pwa-192x192.png`, `public/pwa-512x512.png` added (were missing — referenced in vite.config.ts manifest but files did not exist in `public/`)
+- `public/logo_master.svg` added
+- `index.html` `<head>` updated with `<link rel="icon">` and `<link rel="apple-touch-icon">` tags
+
+**Unblocked by this fix:** Player QR URL (`/c/<slug>`), Poster route (`/poster/<slug>`), Google OAuth callback (`/auth/callback`), all other deep-link routes.
+
+**Files touched:** `vercel.json` (new), `index.html`, `public/` (7 new files)
+
 Chronological record of what shipped, when, and what manual setup was done. Read only when Sugeet asks "when did we ship X" or needs to retrace a specific past step. Current state of the app lives in `SKILL.md` under "Current State Snapshot" — read that first for "where are we now?" questions.
 
 ---
