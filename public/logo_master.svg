@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Rounded square background, iOS-style corner radius (~22% of side) -->
+  <rect width="512" height="512" rx="112" ry="112" fill="#0A0A0A"/>
+
+  <!-- Faint clock-face guide circle, very subtle -->
+  <circle cx="256" cy="256" r="140" fill="none" stroke="#C9A24B" stroke-width="1.6" stroke-opacity="0.35"/>
+
+  <!-- The K, drawn as three stroke-segments. Spine = 12-6 axis. Diagonals = clock hands pivoting from a single point on the spine. -->
+  <!-- Spine (vertical) -->
+  <line x1="147" y1="120" x2="147" y2="392" stroke="#C9A24B" stroke-width="32" stroke-linecap="round"/>
+
+  <!-- Upper diagonal (the "minute hand" pointing up-right) -->
+  <line x1="147" y1="256" x2="256" y2="160" stroke="#C9A24B" stroke-width="32" stroke-linecap="round"/>
+
+  <!-- Lower diagonal (the "hour hand" pointing down-right) -->
+  <line x1="147" y1="256" x2="365" y2="371" stroke="#C9A24B" stroke-width="32" stroke-linecap="round"/>
+
+  <!-- Pivot dot at the K's center — the clock's center pin -->
+  <circle cx="147" cy="256" r="13" fill="#C9A24B"/>
+</svg>
