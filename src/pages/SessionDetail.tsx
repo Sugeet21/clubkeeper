@@ -113,6 +113,21 @@ function MoveTableList({
     } else {
       if ((t.ratePerFrame ?? 0) !== (srcTable?.ratePerFrame ?? 0)) return false
     }
+    // Mirror rate-card compatibility from moveSessionToTable (Pattern T7 + T8)
+    const srcHasCard = (srcTable?.rateCard?.length ?? 0) > 0
+    const destHasCard = (t.rateCard?.length ?? 0) > 0
+    if (srcHasCard || destHasCard) {
+      const srcTiers = srcTable?.rateCard ?? []
+      const destTiers = t.rateCard ?? []
+      const tiersMatch =
+        srcTiers.length === destTiers.length &&
+        srcTiers.every((tier, i) => tier.minutes === destTiers[i].minutes && tier.price === destTiers[i].price)
+      const billingMatch =
+        (srcTable?.rateCardBilling ?? 'prorated') === (t.rateCardBilling ?? 'prorated')
+      const toleranceMatch =
+        (srcTable?.toleranceMinutes ?? 10) === (t.toleranceMinutes ?? 10)
+      if (!tiersMatch || !billingMatch || !toleranceMatch) return false
+    }
     if (occupiedTableIds.has(t.id)) return false
     return true
   })
@@ -135,7 +150,9 @@ function MoveTableList({
         >
           <div className="min-w-0">
             <p className="text-[15px] font-semibold text-text truncate">{t.name}</p>
-            <p className="text-[12px] text-text-faint mt-0.5">Same rate ({rateLabel})</p>
+            <p className="text-[12px] text-text-faint mt-0.5">
+              {session.rateCardSnapshot?.length ? 'Same rate card' : `Same rate (${rateLabel})`}
+            </p>
           </div>
           <span className="text-text-faint shrink-0">
             <MoveIcon />

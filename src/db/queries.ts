@@ -847,6 +847,27 @@ export async function moveSessionToTable(
       throw new IncompatibleTableError()
     }
 
+    // Rate card compatibility (Pattern T7 + T8): if either table has a rate card,
+    // all three rate-card fields must match exactly — billing mode, tolerance, and
+    // every tier's minutes + price. A session moved to a table with a different
+    // billing algorithm would produce a silently wrong bill.
+    const srcHasCard = (srcTable?.rateCard?.length ?? 0) > 0
+    const destHasCard = (destTable.rateCard?.length ?? 0) > 0
+    if (srcHasCard || destHasCard) {
+      const srcTiers = srcTable?.rateCard ?? []
+      const destTiers = destTable.rateCard ?? []
+      const tiersMatch =
+        srcTiers.length === destTiers.length &&
+        srcTiers.every((t, i) => t.minutes === destTiers[i].minutes && t.price === destTiers[i].price)
+      const billingMatch =
+        (srcTable?.rateCardBilling ?? 'prorated') === (destTable.rateCardBilling ?? 'prorated')
+      const toleranceMatch =
+        (srcTable?.toleranceMinutes ?? 10) === (destTable.toleranceMinutes ?? 10)
+      if (!tiersMatch || !billingMatch || !toleranceMatch) {
+        throw new IncompatibleTableError()
+      }
+    }
+
     // Verify destination is not currently occupied (race condition guard)
     const occupying = await db.sessions
       .where('tableId')
