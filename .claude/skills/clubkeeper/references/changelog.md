@@ -738,3 +738,4 @@ Every inline `customer.name ?? customer.walkInCode ?? 'Customer'` chain replaced
 ---
 
 14 Jun 2026 — SKILL.md: tightened bug-tracking rules. Issues now created BEFORE code, closed ONLY after Sugeet's explicit verification (Rule F).
+14 Jun 2026 — fix #69 (2b83dd1): QuickSale now shows UPI QR overlay for the UPI split amount after a successful sale. `UpiQrCard` now has 3 consumers — ripple_effects.md updated. Bug sprint issues #68–74 created and logged in bug_archive.md.

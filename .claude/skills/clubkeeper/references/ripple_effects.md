@@ -776,9 +776,10 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 
 ### If you change `UpiQrCard.tsx` or `PaymentQR.tsx`
 
-**Affects (two consumers — change one, verify both):**
+**Affects (three consumers — change one, verify all three):**
 - `src/pages/SessionDetail.tsx` — post-stop payment screen. Fixed-viewport `fixed inset-0 z-50` layout. `<UpiQrCard>` sits in a `flex-1` centered middle zone. Changing card dimensions affects the fixed-layout fit.
 - `src/pages/WalletTopup.tsx` — inline topup QR. Scrollable page. `<UpiQrCard>` sits between payment-mode buttons and summary card. Changing card dimensions affects scroll length.
+- `src/pages/QuickSale.tsx` — post-confirm UPI QR screen (added 14 Jun 2026, fix #69). Fixed-viewport `fixed inset-0 z-50` layout, same shape as SessionDetail. Shows only the UPI split amount, not the full subtotal.
 - `src/components/PaymentQR.tsx` — the actual QR generator (unchanged). Props: `upiId`, `payeeName`, `amount`, `transactionNote`. Renders at 560px internally for retina, CSS-scaled to parent (Pattern U7).
 - `UpiQrCard` props: `amount`, `upiId`, `payeeName`, `transactionNote`. No store access inside.
 - QR encodes `upi://pay?pa=<vpa>&pn=<name>&am=<amount>&cu=INR`. Amount is always the **paid amount** — never the credited total (bonus is owner-side ledger, never sent over UPI).
