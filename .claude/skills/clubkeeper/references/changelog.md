@@ -2,6 +2,13 @@
 
 ---
 
+## 14 Jun 2026 — Payment fixes: #75+#76 (commit 4b0cf3f)
+
+- **#75 (Dexie tx missing objectStore):** `confirmPaymentAndStop` tx was missing `db.settings` from its table list — reads `db.settings.get(1)` inside the callback for rounding. Added `db.settings` to `db.transaction('rw', ...)` list. One-line fix in `src/db/queries.ts`.
+- **#76 (UPI QR wrong amount / shows when UPI=0):** Replaced `postConfirmUpiAmount` state with `confirmedBreakdown`. Post-confirm screen now: `upi > 0` → QR for UPI portion only; `upi === 0` → "Payment recorded ✓" card. Added `setPaymentScreenOpen(false)` on all confirm paths. Both changes in `src/pages/SessionDetail.tsx`.
+
+---
+
 ## 14 Jun 2026 — Bug sprint: #73+#74 pause-first stop flow (commit 69cd1b4)
 
 - `src/types/index.ts`: Added `Session.paymentInProgress?: boolean` — true while session is paused waiting for staff to confirm payment.

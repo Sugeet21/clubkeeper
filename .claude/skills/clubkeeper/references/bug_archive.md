@@ -125,6 +125,13 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 14 Jun 2026 — Payment fixes (issues #75–76)
+
+- **BUG-75** (#75, fixed, 4b0cf3f) — confirmPaymentAndStop tx missing db.settings → IDBTransaction "objectStore not found" on every Confirm tap — see GitHub
+- **BUG-76** (#76, fixed, 4b0cf3f) — Post-confirm QR showed grand total instead of UPI split; also showed when UPI=0 (payment screen never dismissed) — see GitHub
+
+---
+
 ## 14 Jun 2026 — Bug sprint (issues #68–74)
 
 - **BUG-QS-UPI-QR** (#69, fixed, 2b83dd1) — QuickSale showed no UPI QR after UPI payment selected — see GitHub
