@@ -41,7 +41,9 @@ const runningAmount = activeSessions.reduce(
 const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.items ?? 0) + runningAmount
 ```
 
-**Check this pattern anywhere:** aggregate totals on Home (`todayTotal`), any future dashboard widget showing live revenue. Summary.tsx already uses the correct pattern — its aggregates are computed in the render body, not inside a live query.
+**Pattern T4 also applies to `useMemo`:** If a `useMemo` calls `getElapsedMs()` or `calculateAmount()` on running sessions, it only recomputes when its dep array object-references change. `useTick()` re-renders do NOT change `detailSessions` or `detailItemsMap` references, so the memo freezes between DB writes. Fix: remove the `useMemo` wrapper so the computation runs inline on every render (fine for small arrays — ≤30 sessions/day). Fixed in Summary.tsx `rankTables` + `bucketByHour` calls (fix #70, 9f7e2aa, 14 Jun 2026).
+
+**Check this pattern anywhere:** aggregate totals on Home (`todayTotal`), any future dashboard widget showing live revenue. In Summary.tsx: `tablesRevenue`, `canteenRevenue`, `totalElapsedMs`, `rankTables`, and `bucketByHour` are all computed inline (no useMemo) so they tick correctly. `topTables` and `hourlyBuckets` also now computed inline after fix #70.
 
 ### Pattern T2 — Settings flags must be plumbed into actions
 **Symptom signature:** A Settings toggle exists but does nothing.
