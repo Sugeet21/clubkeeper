@@ -222,6 +222,36 @@ export default function MyPage() {
 
 **Prevention:** When building a new page with `useLiveQuery`, separate the query consumer (a sub-component or section) from the page wrapper. The wrapper renders unconditionally.
 
+### Pattern D10 — Lifecycle ops over multiple stores must enumerate ALL stores; drift = silent data leak (15 Jun 2026)
+
+**Symptom signature:** A "wipe everything" or "export everything" operation completes without error, but afterwards a subset of data either survives the wipe or never made it into the export. User reports "I reset/exported, but X is still there / missing X." No console error — the op silently does less than its name promises.
+
+**Root cause:** Any function that iterates over Dexie stores by NAME (`db.gameTables`, `db.sessions`, …) is a hardcoded list that drifts the moment a new store is added in a later Dexie version. The new store gets a table object on `db`, but the lifecycle function doesn't know about it. The op succeeds (it does what it lists) and quietly skips the rest.
+
+This has fired twice in this codebase:
+- **#78 (14 Jun 2026):** `getAllDataForExport()` listed 3 of 9 stores → backups silently missed customers, wallet, canteen, items, sales, stock purchases. Phone died → customer lost everything because the "backup" was incomplete.
+- **#81 (15 Jun 2026):** `resetEverything()` cleared 3 of 9 stores → canteen items, customers, wallet ledger, session items, canteen sales, stock purchases all survived a "Reset everything."
+
+**Rule:** Three functions in this codebase enumerate all Dexie stores — they MUST stay 1:1 with each other AND with the active Dexie version's store list:
+1. `resetEverything()` in `src/db/queries.ts` — clear list
+2. `getAllDataForExport()` in `src/db/queries.ts` — read list
+3. `importEverythingFromFile()` in `src/lib/importEverything.ts` — tx table list + `clear()` Promise.all + `bulkAdd` block + `requiredArrayKeys` shape validator
+
+**When you add a new Dexie store (new `this.version(N).stores({...})`):**
+- Update all 3 functions in the SAME commit
+- Bump `CURRENT_SCHEMA_VERSION` in `queries.ts`
+- Add the field to `ClubKeeperBackupV16` (rename the interface to bump version if needed)
+- Add a snapshot measure to `src/lib/__devTools__/importExportRoundTrip.ts` so the dev self-test fails loudly on drift instead of passing while quietly skipping the new store
+
+**Guard rails:**
+- Lifecycle wipes (`resetEverything`, `importEverythingFromFile`) MUST pre-check active sessions (`status !== 'completed'`) and throw before opening the tx. Wiping a DB under a running timer corrupts the next timer's math (Pattern T1).
+- Both wipes use a single flat `db.transaction('rw', [all stores], …)`. Partial wipe rolls back atomically.
+- `seedIfEmpty()` runs AFTER the tx commits — never inside it (the tx might throw and roll back the seed).
+
+**Cross-link:** `ripple_effects.md` → "If you add a new Dexie table" — same checklist. The ripple file is the canonical list; this pattern explains the failure mode if you skip the ripple.
+
+**Files affected:** `src/db/queries.ts` (resetEverything, getAllDataForExport, CURRENT_SCHEMA_VERSION, ClubKeeperBackupV16), `src/lib/importEverything.ts`, `src/lib/__devTools__/importExportRoundTrip.ts`.
+
 ### Pattern D7 — Never call a function with its own internal `db.transaction()` from inside an outer transaction (7 Jun 2026)
 
 **Symptom signature:** Stock decrements correctly but the session item is never written. Console error: "Transaction has already completed or failed." Inner write succeeds, outer write silently fails.
