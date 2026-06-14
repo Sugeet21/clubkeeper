@@ -128,7 +128,7 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 ## 14 Jun 2026 — Bug sprint (issues #68–74)
 
 - **BUG-QS-UPI-QR** (#69, fixed, 2b83dd1) — QuickSale showed no UPI QR after UPI payment selected — see GitHub
-- **BUG-MOVE-BILLINGMODE** (#72, open) — Table Move allows cross billing-mode moves (rateCardBilling / rateCard / toleranceMinutes not checked) — see GitHub
+- **BUG-MOVE-BILLINGMODE** (#72, fixed, 6be8ed0) — Table Move allows cross billing-mode moves (rateCardBilling / rateCard / toleranceMinutes not checked) — see GitHub
 - **BUG-SUMMARY-STALE** (#70, open) — Summary Table block + Today's Sessions frozen while sessions run (T4 violation) — see GitHub
 - **BUG-SUMMARY-INCONSISTENT** (#71, open) — Audit: which Summary widgets tick live vs frozen — see GitHub
 - **BUG-STOP-PAYMENT-RACE** (#73, open) — Session stopped even when staff cancels payment sheet — see GitHub

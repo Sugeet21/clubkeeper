@@ -238,7 +238,7 @@ If a change isn't documented here yet, pause and trace dependencies first.
 - `src/db/seed.ts` — seed tables that have `rateCard` must include `rateCardBilling: 'prorated'`
 - `src/components/TableFormModal.tsx` — Tiered Pricing collapsible: tier input rows, tolerance field, Billing Behavior toggle (Pro-rated / Minimum charge)
 - `src/lib/validation.ts` — `validateRateCard(tiers, toleranceMinutes, billingMode?)` — third param validates billing mode string
-- **Table Move compatibility check** in `moveSessionToTable()` — currently only checks `ratePerHour`/`ratePerFrame`. If rate card is added to the compatibility check in future, update `moveSessionToTable` too.
+- **Table Move compatibility check** in `moveSessionToTable()` — now checks all six fields including rate card tiers, billing mode, and tolerance (fix #72, 14 Jun 2026). `MoveTableList` in `SessionDetail.tsx` mirrors these checks. Keep the two in sync.
 
 ### If you change `Session.rateCardSnapshot`, `toleranceMinutesSnapshot`, or `rateCardBillingSnapshot` (added v10/v11, 9 Jun 2026)
 
@@ -815,12 +815,19 @@ The more this file grows, the safer changes become. Sugeet, especially when you 
 
 **Error classes exported from queries.ts:** `IncompatibleTableError`, `TableOccupiedError` — catch by type in UI for inline error display (Pattern F7). Never show a toast for these.
 
-**Compatibility rule (all three must match):**
+**Compatibility rule (all six must match — fix #72, 14 Jun 2026):**
 1. `srcTable.gameType === destTable.gameType`
 2. Session `billingMode === 'per_hour'` → `srcTable.ratePerHour === destTable.ratePerHour`
 3. Session `billingMode === 'per_frame'` → `srcTable.ratePerFrame === destTable.ratePerFrame`
+4. If either table has `rateCard`: deep-equal tier array (length + every `minutes`/`price`)
+5. `(srcTable.rateCardBilling ?? 'prorated') === (destTable.rateCardBilling ?? 'prorated')`
+6. `(srcTable.toleranceMinutes ?? 10) === (destTable.toleranceMinutes ?? 10)` (only when either has a rate card)
 
-**Discovered when:** Table Move Phase 1, 8 Jun 2026.
+**IMPORTANT:** `MoveTableList` in `SessionDetail.tsx` mirrors these same six checks client-side so incompatible tables never appear in the list. If you update the compatibility logic in `moveSessionToTable`, update the filter in `MoveTableList` to match. The two must stay in sync.
+
+**Subtitle rule:** When `session.rateCardSnapshot?.length` is truthy, show "Same rate card" instead of "Same rate (₹X/hr)" in the candidate list.
+
+**Discovered when:** Table Move Phase 1, 8 Jun 2026. Rate-card checks added fix #72, 14 Jun 2026.
 
 ---
 
