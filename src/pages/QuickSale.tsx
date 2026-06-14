@@ -4,6 +4,8 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { getCanteenItems, createCanteenSale, CanteenSaleStockError } from '../db/queries'
 import { useToastStore } from '../store/toastStore'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
+import { UpiQrCard } from '../components/UpiQrCard'
+import { useSettings } from '../hooks/useLiveData'
 import type { CanteenItem } from '../types'
 
 interface CartLine {
@@ -17,10 +19,13 @@ interface CartLine {
 export default function QuickSale() {
   const navigate = useNavigate()
   const showToast = useToastStore((s) => s.show)
+  const settings = useSettings()
 
   const items = useLiveQuery(() => getCanteenItems(false), [])
   const [cart, setCart] = useState<Map<number, CartLine>>(new Map())
   const [paymentOpen, setPaymentOpen] = useState(false)
+  // After a successful sale with upi > 0, store the UPI amount to show the QR screen.
+  const [pendingUpiAmount, setPendingUpiAmount] = useState<number | null>(null)
 
   function addToCart(item: CanteenItem) {
     if (item.id === undefined) return
@@ -96,10 +101,13 @@ export default function QuickSale() {
         customerId: customerId ?? undefined,
       })
       setPaymentOpen(false)
-      showToast(
-        `Sale ₹${subtotal.toLocaleString('en-IN')} recorded`,
-      )
-      navigate('/tables', { replace: true })
+      if (breakdown.upi > 0) {
+        // Show UPI QR for the UPI portion only — not the full subtotal.
+        setPendingUpiAmount(breakdown.upi)
+      } else {
+        showToast(`Sale ₹${subtotal.toLocaleString('en-IN')} recorded`)
+        navigate('/tables', { replace: true })
+      }
     } catch (e) {
       if (e instanceof CanteenSaleStockError) {
         showToast(`${e.itemName}: only ${e.available} in stock`)
@@ -108,6 +116,63 @@ export default function QuickSale() {
       }
       throw e
     }
+  }
+
+  function handleUpiDone() {
+    showToast(`Sale ₹${subtotal.toLocaleString('en-IN')} recorded`)
+    navigate('/tables', { replace: true })
+  }
+
+  // UPI QR screen — shown after a successful sale when upi > 0.
+  // Fixed-viewport layout mirrors SessionDetail's post-stop QR screen.
+  if (pendingUpiAmount !== null) {
+    const upiId = settings?.upiId?.trim()
+    const clubName = settings?.clubName || 'ClubKeeper'
+    return (
+      <div className="fixed inset-0 z-50 bg-bg flex flex-col" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <header className="shrink-0 px-5 pt-4 pb-2 flex items-center gap-3" style={{ paddingTop: 'max(16px, env(safe-area-inset-top))' }}>
+          <div>
+            <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint">Quick Sale · UPI Payment</p>
+            <p className="text-2xl font-bold text-accent tabular-nums mt-0.5">
+              ₹{pendingUpiAmount.toLocaleString('en-IN')}
+            </p>
+          </div>
+        </header>
+        <main className="flex-1 flex flex-col items-center justify-center min-h-0 gap-4">
+          {upiId ? (
+            <>
+              <UpiQrCard
+                upiId={upiId}
+                payeeName={clubName}
+                amount={pendingUpiAmount}
+                transactionNote="Quick Sale"
+              />
+              <p className="text-text-dim text-sm">Scan to pay UPI amount</p>
+            </>
+          ) : (
+            <div className="text-center px-8">
+              <p className="text-4xl font-bold text-accent tabular-nums">
+                ₹{pendingUpiAmount.toLocaleString('en-IN')}
+              </p>
+              <p className="text-text-faint text-xs text-center mt-3">
+                Add your UPI ID in Settings to show a payment QR here.
+              </p>
+            </div>
+          )}
+        </main>
+        <footer className="shrink-0 px-5 pt-2 pb-4 flex flex-col gap-3">
+          {upiId && (
+            <p className="text-xs text-text-faint text-center">Works with GPay, PhonePe, Paytm, BHIM</p>
+          )}
+          <button
+            onClick={handleUpiDone}
+            className="w-full bg-accent text-bg font-bold py-4 rounded-2xl min-h-[48px]"
+          >
+            Done — back to tables
+          </button>
+        </footer>
+      </div>
+    )
   }
 
   return (
