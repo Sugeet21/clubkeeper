@@ -397,12 +397,11 @@ export default function SessionDetail() {
   const [customAlarmError, setCustomAlarmError] = useState<string | null>(null)
   const [showCustomAlarm, setShowCustomAlarm] = useState(false)
 
-  // Payment screen state — values cached BEFORE stopSession() so they don't
-  // change when the DB record flips to completed (pattern from the build prompt)
-  const [paymentScreenOpen, setPaymentScreenOpen] = useState(false)
+  // Payment state — values frozen at pauseForPayment() so they don't change when
+  // the DB record flips; reused by PaymentSplitSheet total + headline props.
   const [finalRoundedMs, setFinalRoundedMs] = useState(0)
   const [finalGrandTotal, setFinalGrandTotal] = useState(0)
-  // v13: split-payment capture sheet (sits above the QR screen)
+  // v13: split-payment capture sheet
   const [splitSheetOpen, setSplitSheetOpen] = useState(false)
   const [breakdownRecorded, setBreakdownRecorded] = useState(false)
   // v15: coin redemption on payment screen
@@ -416,8 +415,7 @@ export default function SessionDetail() {
   // fires exactly once per mount.
   const [autoOpenHandled, setAutoOpenHandled] = useState(false)
   // Post-confirm screen: stores the confirmed breakdown so we can show UPI QR
-  // (if upi > 0) or a "Payment recorded ✓" card (if upi === 0). Both branches
-  // render in place of the paymentScreenOpen QR overlay after confirm.
+  // (if upi > 0) or a "Payment recorded ✓" card (if upi === 0).
   const [confirmedBreakdown, setConfirmedBreakdown] = useState<{ cash: number; upi: number; wallet: number } | null>(null)
 
   // Load coin config once on mount
@@ -443,21 +441,13 @@ export default function SessionDetail() {
     if (autoOpenHandled) return
     if (!session) return
     if (items === undefined) return
-    if (paymentScreenOpen) {
-      setAutoOpenHandled(true)
-      return
-    }
 
-    // Case 1 (new): session is paused with paymentInProgress — re-enter payment screen
+    // Case 1 (new): session is paused with paymentInProgress — re-enter payment flow
     if (session.status === 'paused' && session.paymentInProgress) {
       setAutoOpenHandled(true)
-      // Re-derive the frozen total from what pauseForPayment would have computed.
-      // We can't recover the exact billableMs stored in state, so re-derive from
-      // session fields. This is only for the display label — confirmPaymentAndStop
-      // will recompute the authoritative amount inside its tx.
-      const pausedTotalMs = session.pausedAt
-        ? session.pausedTotalMs // pausedAt is "now" from pauseForPayment; delta ≈ 0
-        : session.pausedTotalMs
+      // Re-derive the frozen total from session fields so PaymentSplitSheet gets the
+      // right total prop. confirmPaymentAndStop recomputes authoritative amount in its tx.
+      const pausedTotalMs = session.pausedTotalMs
       const rawMs = (session.pausedAt ?? Date.now()) - session.startedAt - pausedTotalMs
       const isRateCardSession = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
       const billableMs =
@@ -469,11 +459,13 @@ export default function SessionDetail() {
       const grandTotal = tableAmt + itemsTotal
       setFinalRoundedMs(billableMs)
       setFinalGrandTotal(grandTotal)
-      setPaymentScreenOpen(true)
       if (grandTotal === 0) {
         const sid = Number(session.id)
         void confirmPaymentAndStop(sid, { cash: 0, upi: 0, wallet: 0 })
-          .then(() => setBreakdownRecorded(true))
+          .then(() => {
+            setBreakdownRecorded(true)
+            setConfirmedBreakdown({ cash: 0, upi: 0, wallet: 0 })
+          })
           .catch(() => {})
       } else {
         setSplitSheetOpen(true)
@@ -492,7 +484,6 @@ export default function SessionDetail() {
       session.roundedDurationMs ??
         ((session.endedAt ?? Date.now()) - session.startedAt - session.pausedTotalMs),
     )
-    setPaymentScreenOpen(true)
     if (grandTotal === 0) {
       const sid = Number(session.id)
       void recordSessionPaymentBreakdown(sid, { cash: 0, upi: 0, wallet: 0 })
@@ -600,7 +591,15 @@ export default function SessionDetail() {
       setCoinsApplied(0)
       setCoinDiscount(0)
       setLinkedCustomer(null)
-      setPaymentScreenOpen(true)
+      // Open split sheet directly — no pre-record QR screen (#77)
+      if (grandTotal === 0) {
+        const sid = Number(session.id)
+        await confirmPaymentAndStop(sid, { cash: 0, upi: 0, wallet: 0 })
+        setBreakdownRecorded(true)
+        setConfirmedBreakdown({ cash: 0, upi: 0, wallet: 0 })
+      } else {
+        setSplitSheetOpen(true)
+      }
     } finally {
       setPending(false)
     }
@@ -613,10 +612,9 @@ export default function SessionDetail() {
     } catch {
       // If cancel fails (e.g. session already completed), just close the screen.
     }
-    setPaymentScreenOpen(false)
     setSplitSheetOpen(false)
     setBreakdownRecorded(false)
-    setPostConfirmUpiAmount(null)
+    setConfirmedBreakdown(null)
   }
 
   async function handleFrameChange(delta: number) {
@@ -726,220 +724,6 @@ export default function SessionDetail() {
     )
   }
 
-  // ─── Payment screen (shown after session pause-for-payment) ───────────────
-  // Fixed-viewport, no-scroll layout. QR centered in flex-1 middle.
-  // Bottom nav is intentionally hidden — this is a payment moment.
-
-  if (paymentScreenOpen) {
-    const upiId = settings?.upiId?.trim()
-    const clubName = settings?.clubName || 'ClubKeeper'
-    const transactionNote = `${tableName} - ${formatDuration(finalRoundedMs)}`
-
-    // Duration label: <1m → "<1 min", 1-59m → "12 min", 60+m → "1h 12m"
-    function durationLabel(ms: number): string {
-      const totalMin = Math.floor(ms / 60000)
-      if (totalMin < 1) return '<1 min'
-      if (totalMin < 60) return `${totalMin} min`
-      const h = Math.floor(totalMin / 60)
-      const m = totalMin % 60
-      return m > 0 ? `${h}h ${m}m` : `${h}h`
-    }
-
-    const summaryLine = session.playerName
-      ? `${tableName} · ${durationLabel(finalRoundedMs)} · ${session.playerName}`
-      : `${tableName} · ${durationLabel(finalRoundedMs)}`
-
-    return (
-      <div
-        className="fixed inset-0 z-50 bg-bg flex flex-col px-5"
-        style={{
-          paddingTop: 'max(12px, env(safe-area-inset-top))',
-          paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
-        }}
-      >
-        {/* Compact header */}
-        <header className="flex flex-col items-center gap-1 shrink-0 pt-2">
-          <div className="flex items-center gap-2 text-accent">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-              <polyline points="22 4 12 14.01 9 11.01" />
-            </svg>
-            <span className="text-sm font-semibold uppercase tracking-widest">Session ended</span>
-          </div>
-          <div className="text-text-dim text-xs">{summaryLine}</div>
-        </header>
-
-        {/* Hero — QR + amount, fills remaining vertical space */}
-        <main className="flex-1 flex flex-col items-center justify-center min-h-0 gap-4">
-          {upiId ? (
-            <>
-              <UpiQrCard
-                upiId={upiId}
-                payeeName={clubName}
-                amount={finalGrandTotal}
-                transactionNote={transactionNote}
-              />
-              <div className="flex flex-col items-center gap-1">
-                <div className="text-3xl font-mono font-bold text-text tabular-nums">
-                  ₹{finalGrandTotal.toLocaleString('en-IN')}
-                </div>
-                <div className="text-xs text-text-dim">Scan to pay exact amount</div>
-              </div>
-            </>
-          ) : (
-            <div className="bg-bg-card border border-border rounded-2xl p-8 flex flex-col items-center gap-2 w-full max-w-xs">
-              <div className="text-3xl font-mono font-bold text-text tabular-nums">
-                ₹{finalGrandTotal.toLocaleString('en-IN')}
-              </div>
-              <div className="text-text-dim text-sm">to collect from player</div>
-              <p className="text-text-faint text-xs text-center mt-1">
-                Add your UPI ID in Settings to show a payment QR here.
-              </p>
-            </div>
-          )}
-        </main>
-
-        {/* Coin redemption pill — only shown when coins enabled + customer linked + time redemption allowed */}
-        {coinConfig.coinsEnabled && linkedCustomer && !breakdownRecorded && coinConfig.coinRedemptionModes !== 'canteen' && (
-          <div className="shrink-0 px-0 pb-1">
-            <CoinRedemptionPill
-              customer={linkedCustomer}
-              config={coinConfig}
-              maxApplicable={finalGrandTotal}
-              applied={coinsApplied}
-              onChange={(coins, rupees) => {
-                setCoinsApplied(coins)
-                setCoinDiscount(rupees)
-              }}
-            />
-          </div>
-        )}
-
-        {/* Footer — pinned at bottom, z-50 overlay guarantees it's above BottomNav */}
-        <footer className="shrink-0 flex flex-col gap-3 pt-2">
-          {upiId && (
-            <p className="text-xs text-text-faint text-center max-w-xs mx-auto">
-              Works with GPay, PhonePe, Paytm, BHIM
-            </p>
-          )}
-          {coinDiscount > 0 && !breakdownRecorded && (
-            <div className="flex justify-between text-[13px] px-1">
-              <span className="text-text-dim">After coin discount</span>
-              <span className="text-text font-bold font-mono">
-                ₹{(finalGrandTotal - coinDiscount).toLocaleString('en-IN')}
-              </span>
-            </div>
-          )}
-          {breakdownRecorded ? (
-            <button
-              onClick={() => navigate('/tables', { replace: true })}
-              className="w-full min-h-[48px] rounded-xl bg-accent text-bg font-semibold text-base active:scale-[0.98] transition-transform"
-            >
-              Done — back to tables
-            </button>
-          ) : (
-            <button
-              onClick={async () => {
-                const effectiveTotal = finalGrandTotal - coinDiscount
-                if (effectiveTotal === 0) {
-                  const sid = Number(session.id)
-                  if (coinsApplied > 0 && linkedCustomer) {
-                    await redeemCoins({
-                      customerId: linkedCustomer.id,
-                      coins: coinsApplied,
-                      rupeeEquivalent: coinDiscount,
-                      referenceType: 'coin_redemption',
-                      referenceId: sid.toString(),
-                    })
-                  }
-                  // Use confirmPaymentAndStop for pause-first sessions; legacy path for completed-but-unrecorded
-                  const stopFn = session.paymentInProgress
-                    ? confirmPaymentAndStop
-                    : (id: number, bd: { cash: number; upi: number; wallet: number }) =>
-                        recordSessionPaymentBreakdown(id, bd, linkedCustomer?.id)
-                  await stopFn(sid, { cash: 0, upi: 0, wallet: 0 })
-                  setPaymentScreenOpen(false)
-                  setBreakdownRecorded(true)
-                  setConfirmedBreakdown({ cash: 0, upi: 0, wallet: 0 })
-                  if (linkedCustomer) {
-                    checkAndAwardStreak(linkedCustomer.id)
-                      .then(({ awarded, coins, customerName }) => {
-                        if (awarded) {
-                          showToast({
-                            message: `🪙 Streak bonus! ${customerName ?? 'Customer'} earned ${coins} ClubCoins for visiting multiple days this week.`,
-                            duration: 4000,
-                          })
-                        }
-                      })
-                      .catch(() => {/* non-critical */})
-                  }
-                  return
-                }
-                setSplitSheetOpen(true)
-              }}
-              className="w-full min-h-[48px] rounded-xl bg-accent text-bg font-semibold text-base active:scale-[0.98] transition-transform"
-            >
-              {(finalGrandTotal - coinDiscount) === 0 ? 'Mark as paid' : 'Record payment'}
-            </button>
-          )}
-        </footer>
-
-        <PaymentSplitSheet
-          open={splitSheetOpen}
-          total={finalGrandTotal - coinDiscount}
-          headline={summaryLine}
-          initialCustomer={linkedCustomer}
-          onCustomerLinked={(c) => setLinkedCustomer(c)}
-          onCancel={() => {
-            setSplitSheetOpen(false)
-            // If session is paused-for-payment, resume it so the timer restarts
-            if (session.paymentInProgress) {
-              void handleCancelPayment()
-            }
-          }}
-          onConfirm={async (breakdown, customerId) => {
-            const numericSessionId = Number(session.id)
-            const effectiveCustomerId = customerId ?? linkedCustomer?.id ?? null
-            // Write coin redemption row before payment breakdown
-            if (coinsApplied > 0 && linkedCustomer) {
-              await redeemCoins({
-                customerId: linkedCustomer.id,
-                coins: coinsApplied,
-                rupeeEquivalent: coinDiscount,
-                referenceType: 'coin_redemption',
-                referenceId: numericSessionId.toString(),
-              })
-            }
-            // Atomically stop the session + record breakdown in one tx
-            await confirmPaymentAndStop(
-              numericSessionId,
-              breakdown,
-              effectiveCustomerId ?? undefined,
-            )
-            setSplitSheetOpen(false)
-            setPaymentScreenOpen(false)
-            setBreakdownRecorded(true)
-            // Store the confirmed breakdown — drives conditional post-confirm screen
-            // (UPI QR if upi > 0, else "Payment recorded ✓" card). Never use finalGrandTotal here.
-            setConfirmedBreakdown(breakdown)
-            // Streak check
-            if (effectiveCustomerId) {
-              checkAndAwardStreak(effectiveCustomerId)
-                .then(({ awarded, coins, customerName }) => {
-                  if (awarded) {
-                    showToast({
-                      message: `🪙 Streak bonus! ${customerName ?? 'Customer'} earned ${coins} ClubCoins for visiting multiple days this week.`,
-                      durationMs: 4000,
-                    })
-                  }
-                })
-                .catch(() => {/* streak failure is non-critical */})
-            }
-          }}
-        />
-      </div>
-    )
-  }
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -1419,6 +1203,86 @@ export default function SessionDetail() {
         allTables={allTables}
         onMoved={() => setMoveModalOpen(false)}
       />
+
+      {/* ── Payment split sheet + coin pill ─────────────────────────────── */}
+      {/* Rendered in main tree so it's accessible from both fresh stop and auto-resume paths. */}
+      {splitSheetOpen && (() => {
+        function durationLabel(ms: number): string {
+          const totalMin = Math.floor(ms / 60000)
+          if (totalMin < 1) return '<1 min'
+          if (totalMin < 60) return `${totalMin} min`
+          const h = Math.floor(totalMin / 60)
+          const m = totalMin % 60
+          return m > 0 ? `${h}h ${m}m` : `${h}h`
+        }
+        const summaryLine = session.playerName
+          ? `${tableName} · ${durationLabel(finalRoundedMs)} · ${session.playerName}`
+          : `${tableName} · ${durationLabel(finalRoundedMs)}`
+        return (
+          <>
+            {coinConfig.coinsEnabled && linkedCustomer && coinConfig.coinRedemptionModes !== 'canteen' && (
+              <div className="fixed bottom-24 left-0 right-0 px-4 z-40">
+                <CoinRedemptionPill
+                  customer={linkedCustomer}
+                  config={coinConfig}
+                  maxApplicable={finalGrandTotal}
+                  applied={coinsApplied}
+                  onChange={(coins, rupees) => {
+                    setCoinsApplied(coins)
+                    setCoinDiscount(rupees)
+                  }}
+                />
+              </div>
+            )}
+            <PaymentSplitSheet
+              open={splitSheetOpen}
+              total={finalGrandTotal - coinDiscount}
+              headline={summaryLine}
+              initialCustomer={linkedCustomer}
+              onCustomerLinked={(c) => setLinkedCustomer(c)}
+              onCancel={() => {
+                setSplitSheetOpen(false)
+                if (session.paymentInProgress) {
+                  void handleCancelPayment()
+                }
+              }}
+              onConfirm={async (breakdown, customerId) => {
+                const numericSessionId = Number(session.id)
+                const effectiveCustomerId = customerId ?? linkedCustomer?.id ?? null
+                if (coinsApplied > 0 && linkedCustomer) {
+                  await redeemCoins({
+                    customerId: linkedCustomer.id,
+                    coins: coinsApplied,
+                    rupeeEquivalent: coinDiscount,
+                    referenceType: 'coin_redemption',
+                    referenceId: numericSessionId.toString(),
+                  })
+                }
+                await confirmPaymentAndStop(
+                  numericSessionId,
+                  breakdown,
+                  effectiveCustomerId ?? undefined,
+                )
+                setSplitSheetOpen(false)
+                setBreakdownRecorded(true)
+                setConfirmedBreakdown(breakdown)
+                if (effectiveCustomerId) {
+                  checkAndAwardStreak(effectiveCustomerId)
+                    .then(({ awarded, coins, customerName }) => {
+                      if (awarded) {
+                        showToast({
+                          message: `🪙 Streak bonus! ${customerName ?? 'Customer'} earned ${coins} ClubCoins for visiting multiple days this week.`,
+                          durationMs: 4000,
+                        })
+                      }
+                    })
+                    .catch(() => {/* streak failure is non-critical */})
+                }
+              }}
+            />
+          </>
+        )
+      })()}
     </div>
   )
 }
