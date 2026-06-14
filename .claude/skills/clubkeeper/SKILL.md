@@ -192,10 +192,32 @@ Read MULTIPLE files when the question spans domains.
 
 `bug_archive.md` now contains one-line pointers only. Full description, root cause, and fix details live on GitHub.
 
-**When a new bug is found:**
-1. `gh issue create` with the standard format (title: "BUG-ID — description", labels: bug + priority + domain + status)
-2. Add a ONE-LINE pointer to `bug_archive.md`
-3. When fixed: close issue with commit SHA as comment, update pointer in `bug_archive.md`
+**When Sugeet reports a new bug or set of bugs — MANDATORY ORDER:**
+
+1. **STOP. Do NOT write any code yet.** First, search GitHub for prior occurrences:
+     gh issue list --search "<keywords>" --state all --repo Sugeet21/clubkeeper
+   If a similar issue exists, reference it. Do not create a duplicate.
+
+2. **Create a GitHub issue for EACH distinct bug** before any code change:
+     gh issue create --repo Sugeet21/clubkeeper \
+       --title "BUG-XX — <short symptom>" \
+       --label "bug,priority-<p0|p1|p2>,domain-<area>,status-open" \
+       --body "<symptom / repro / expected / suspected root cause / files likely affected>"
+   Multiple bugs in one report = multiple issues. Never bundle.
+
+3. **Reply to Sugeet with the issue numbers and links** before writing fix code. Wait for his go-ahead.
+
+4. **Fix the bug.** Reference the issue number in the commit message:
+     git commit -m "fix(<area>): <one-line>  (closes #NN — pending owner verification)"
+
+5. **NEVER close the issue yourself.** After the commit, post a comment on the issue with the commit SHA and a one-line of what was changed. Then explicitly ask Sugeet:
+     "Issue #NN — fix committed in <SHA>. Please verify on your device. Reply 'close #NN' (or 'closed') only after you've tested it. I will not close it until you do."
+
+6. **Only close after Sugeet confirms.** When Sugeet replies "close #NN" / "closed" / "verified" for that specific issue number:
+     gh issue close NN --repo Sugeet21/clubkeeper --comment "Verified by owner. Fixed in <SHA>."
+   Then update the bug_archive.md pointer to add the SHA.
+
+**This rule overrides any urge to be efficient.** Even if a bug is trivial and the fix is one line, the issue gets created first and stays open until Sugeet says close. The only exception is a typo/wording fix Sugeet asked for in plain English with no symptom — those don't need an issue.
 
 ## Updating This Skill — MANDATORY RULES
 
@@ -233,3 +255,10 @@ Proactively ask Sugeet: "Skill update checklist:
 - Any new pattern → bug_patterns.md updated?
 - Current State Snapshot still accurate?"
 Do NOT skip this. Sugeet has explicitly asked for this check.
+
+### Rule F: Bug fix flow — issue first, owner closes last
+- New bug report → create GitHub issue(s) BEFORE writing any code
+- One bug = one issue. Never bundle multiple bugs into one issue.
+- After commit, post SHA as comment on the issue and ask Sugeet to verify
+- Only Sugeet's explicit "close #NN" / "closed" / "verified" triggers `gh issue close`
+- The AI never auto-closes an issue, even if the fix is trivial or "obviously works"

@@ -734,3 +734,7 @@ Every inline `customer.name ?? customer.walkInCode ?? 'Customer'` chain replaced
 - Tap + Quick Sale on Home → cart items → pay → CanteenSale row + stock decrement + (optional) wallet debit all atomic.
 - Summary PAYMENT MODE strip aggregates today's payment splits across both sessions and canteen sales.
 - Settings → Piggy → Set opening balance → Summary PIGGY tile reflects it. Restock from /canteen with source=Piggy → piggy drops by cost; source=Other → unchanged.
+
+---
+
+14 Jun 2026 — SKILL.md: tightened bug-tracking rules. Issues now created BEFORE code, closed ONLY after Sugeet's explicit verification (Rule F).
