@@ -462,22 +462,44 @@ this.version(2).stores({
 });
 ```
 
-## Data Export Format
+## Data Export Format (v16 — current, fixed 14 Jun 2026, #78)
 
-When exporting for backup (Settings → Export All Data):
+When exporting for backup (Settings → Data & Backup → Export everything), `getAllDataForExport()` in `src/db/queries.ts` returns ALL 9 Dexie stores plus a schema version and timestamp. Shape:
 
-```json
-{
-  "version": 2,
-  "exportedAt": 1716123456789,
-  "clubName": "My Club",
-  "tables": [...],
-  "sessions": [...],
-  "settings": {...}
+```ts
+// Source of truth: ClubKeeperBackupV16 in src/db/queries.ts
+interface ClubKeeperBackupV16 {
+  schemaVersion: 16              // mirror of CURRENT_SCHEMA_VERSION in queries.ts
+  exportedAt: number             // Date.now() at export time
+  tables: GameTable[]            // db.gameTables
+  sessions: Session[]            // db.sessions
+  sessionItems: SessionItem[]    // db.sessionItems  (POS line items)
+  settings: ClubSettings | undefined  // db.settings.get(1) — singleton row
+  customers: Customer[]          // db.customers
+  walletTransactions: WalletTransaction[]  // db.walletTransactions
+  canteenItems: CanteenItem[]    // db.canteenItems  (master menu)
+  canteenSales: CanteenSale[]    // db.canteenSales  (walk-in POS sales)
+  stockPurchases: StockPurchase[] // db.stockPurchases  (piggy math depends on these)
 }
 ```
 
-Future: implement Import that reads this format and restores data.
+### Why v16 reshape
+
+Before #78 (fixed 14 Jun 2026), the export was a 3-key object: `{ tables, sessions, settings }` only. That format silently omitted 6 of 9 stores including all wallet customers, canteen items, canteen sales, walletTransactions, sessionItems, stockPurchases — a P0 data-loss bug. Any owner who exported and restored lost their entire customer wallet ledger and canteen history.
+
+### Forward-compatibility rule
+
+- `schemaVersion` MUST mirror the current Dexie version in `database.ts`. When you bump Dexie, also bump `CURRENT_SCHEMA_VERSION` in `queries.ts`. Pair commits.
+- Import (#79) rejects any file with `schemaVersion > CURRENT_SCHEMA_VERSION` (forward-unknown) AND rejects any file without `schemaVersion` (legacy 3-table format — incomplete, never lossless).
+- IDs (`id`, `tableId`, `sessionId`, `customerId`) MUST be preserved verbatim on import — foreign-key links across tables would break otherwise.
+
+### Ripple — when you add a new Dexie table
+
+1. Add it to `getAllDataForExport()` in `src/db/queries.ts` — every store in `ClubKeeperDB` must appear.
+2. Add the corresponding field to `ClubKeeperBackupV16` interface (same file).
+3. Bump `CURRENT_SCHEMA_VERSION` to match the new Dexie version.
+4. Update the import side (Phase A of #79) — add the table to the clear+bulkAdd loop.
+5. Update this section of `data_model.md`.
 
 ## Query Patterns
 

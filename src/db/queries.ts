@@ -15,6 +15,28 @@ import type {
   CanteenSale,
   StockPurchase,
 } from '../types'
+import type { Customer } from '../types/customer'
+import type { WalletTransaction } from '../types/walletTransaction'
+
+/**
+ * Current Dexie schema version. Mirror of `this.version(N)` in `database.ts`.
+ * Used by export/import to gate forward-compatibility. Bump when database.ts bumps.
+ */
+export const CURRENT_SCHEMA_VERSION = 16
+
+export interface ClubKeeperBackupV16 {
+  schemaVersion: 16
+  exportedAt: number
+  tables: GameTable[]
+  sessions: Session[]
+  sessionItems: SessionItem[]
+  settings: ClubSettings | undefined
+  customers: Customer[]
+  walletTransactions: WalletTransaction[]
+  canteenItems: CanteenItem[]
+  canteenSales: CanteenSale[]
+  stockPurchases: StockPurchase[]
+}
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -460,17 +482,41 @@ export async function resetEverything(): Promise<void> {
   await seedIfEmpty()
 }
 
-export async function getAllDataForExport(): Promise<{
-  tables: GameTable[]
-  sessions: Session[]
-  settings: ClubSettings | undefined
-}> {
-  const [tables, sessions, settings] = await Promise.all([
+export async function getAllDataForExport(): Promise<ClubKeeperBackupV16> {
+  const [
+    tables,
+    sessions,
+    sessionItems,
+    settings,
+    customers,
+    walletTransactions,
+    canteenItems,
+    canteenSales,
+    stockPurchases,
+  ] = await Promise.all([
     db.gameTables.toArray(),
     db.sessions.toArray(),
+    db.sessionItems.toArray(),
     db.settings.get(1),
+    db.customers.toArray(),
+    db.walletTransactions.toArray(),
+    db.canteenItems.toArray(),
+    db.canteenSales.toArray(),
+    db.stockPurchases.toArray(),
   ])
-  return { tables, sessions, settings }
+  return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    exportedAt: Date.now(),
+    tables,
+    sessions,
+    sessionItems,
+    settings,
+    customers,
+    walletTransactions,
+    canteenItems,
+    canteenSales,
+    stockPurchases,
+  }
 }
 
 /** Sessions running or paused that started more than 24 h ago. */

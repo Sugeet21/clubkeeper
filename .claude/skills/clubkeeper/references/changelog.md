@@ -2,6 +2,24 @@
 
 ---
 
+## 14 Jun 2026 — Phase A0: Fix Export (#78 — P0 data-loss bug)
+
+**Issue:** Export Everything was silently writing only 3 of 9 Dexie tables. Wallet customers, canteen items/sales, walletTransactions, sessionItems, stockPurchases all dropped on export. Lossy backups for the entire app lifetime up to today.
+
+**Fix in `src/db/queries.ts`:**
+- `getAllDataForExport()` now returns all 9 stores: `tables, sessions, sessionItems, settings, customers, walletTransactions, canteenItems, canteenSales, stockPurchases`.
+- Added top-level `schemaVersion: 16` (mirrors Dexie version) and `exportedAt: Date.now()`.
+- Strict return type: new exported interface `ClubKeeperBackupV16`.
+- New exported constant `CURRENT_SCHEMA_VERSION = 16` — sole source of truth, must bump alongside Dexie version.
+
+**Why this is the foundation for #79 (Import):** Import contract reads exactly this shape. Old 3-table backups will be rejected by Import with a useful "legacy_incomplete_format" error — they were never lossless, so silent acceptance would hide the data loss further.
+
+**Paired skill update:** `data_model.md` "Data Export Format" section replaced (v2 stub → v16 reality + forward-compat rules + ripple checklist for new tables).
+
+Phase A0 of #79 — Import follows. Build clean. Pending Sugeet verification.
+
+---
+
 ## 14 Jun 2026 — Remove legacy pre-record QR: #77 (commit 72d9edb)
 
 - Deleted `paymentScreenOpen` state + pre-record QR overlay block (~200 lines) from `src/pages/SessionDetail.tsx`
