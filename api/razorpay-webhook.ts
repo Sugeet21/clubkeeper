@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { createHmac } from 'crypto'
+import { createHmac, timingSafeEqual } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -57,7 +57,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const expectedSig = createHmac('sha256', secret).update(rawBody).digest('hex')
-  if (expectedSig !== signature) {
+  
+  // Fix: Use constant-time comparison to prevent timing side-channel attacks
+  const expectedBuf = Buffer.from(expectedSig, 'hex')
+  const signatureBuf = Buffer.from(signature, 'hex')
+
+  if (expectedBuf.length !== signatureBuf.length || !timingSafeEqual(expectedBuf, signatureBuf)) {
     return res.status(401).json({ error: 'Invalid signature' })
   }
 
