@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useTables, useSettings, useSyncClubFromSupabase } from '../hooks/useLiveData'
-import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport, getPiggyBalance } from '../db/queries'
+import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport, getPiggyBalance, ActiveSessionsPresentError } from '../db/queries'
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
 import { Toggle } from '../components/Toggle'
@@ -363,6 +363,12 @@ export default function Settings() {
       setResetModal(false)
       setResetConfirmText('')
       navigate('/tables')
+    } catch (err) {
+      if (err instanceof ActiveSessionsPresentError) {
+        useToastStore.getState().show('Stop all active sessions before resetting.', 'error')
+      } else {
+        useToastStore.getState().show('Reset failed. Please try again.', 'error')
+      }
     } finally {
       setBusy(false)
     }

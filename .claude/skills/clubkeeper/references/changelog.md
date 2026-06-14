@@ -2,6 +2,26 @@
 
 ---
 
+## 15 Jun 2026 — Fix: Reset everything now clears all 9 Dexie stores (#81)
+
+**Bug:** Settings → Reset everything left 6 of 9 Dexie stores untouched. Canteen items, customers, wallet transactions, session items, canteen sales, and stock purchases all survived. Sugeet reported it after seeing the canteen stock list still populated post-reset.
+
+**Root cause:** `resetEverything()` in `src/db/queries.ts` only called `.clear()` on `gameTables`, `sessions`, and `settings`. Same drift class as #78 (export was also missing 6 stores). New Dexie versions (v3, v5, v8, v13) added stores but this function was never updated.
+
+**Fix:**
+- `resetEverything()` now clears all 9 stores inside a single `db.transaction('rw', [all 9], …)`. Partial wipe rolls back atomically.
+- New exported `ActiveSessionsPresentError` class — thrown BEFORE opening the tx if any session is running/paused. Mirrors the import-everything guard.
+- `seedIfEmpty()` runs AFTER the tx commits so its inserts aren't rolled back by tx-internal throws.
+- `Settings.tsx` `handleReset` catches `ActiveSessionsPresentError` → toast "Stop all active sessions before resetting." Any other throw → generic "Reset failed" toast.
+
+**Ripple file updated:** `ripple_effects.md` now documents the 3-way single-source-of-truth invariant — `resetEverything()` / `getAllDataForExport()` / `importEverythingFromFile()` MUST share the same 9-store list. Added a new "If you change `resetEverything()`" section. Updated the "If you add a new Dexie table" checklist to also bump `resetEverything()`.
+
+Build clean. Pending owner verification.
+
+Closes #81 — pending owner verification.
+
+---
+
 ## 14 Jun 2026 — Phase C: Import/Export round-trip self-test (#79)
 
 **New file:** `src/lib/__devTools__/importExportRoundTrip.ts` — `runImportExportRoundTrip(): Promise<RoundTripResult>`.

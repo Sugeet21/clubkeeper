@@ -76,7 +76,7 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 14 Jun 2026 (Import Everything Phase A+B shipped; export bug #78 closed)*
+*Last updated: 15 Jun 2026 (Reset everything now clears all 9 stores — #81 fixed; Import Everything #79 closed)*
 
 **Built and live on app.handbookhq.in (primary) / clubkeeper.vercel.app (backup):**
 - **13 private screens** (behind RequireAccess): Tables (`/tables`), StartSession (`/start/:tableId`), SessionDetail (`/session/:sessionId`), Settings (`/settings`), History (`/history`), Summary (`/summary`), Wallet (`/wallet`), WalletNewCustomer (`/wallet/new`), WalletTopup (`/wallet/topup/:customerId`), CustomerProfile (`/customer/:customerId`), Canteen (`/canteen`), QuickSale (`/quick-sale`), Piggy (`/piggy`)

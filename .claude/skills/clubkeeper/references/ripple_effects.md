@@ -1231,11 +1231,32 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 
 The ripple is wider than usual because of import/export:
 - `src/db/database.ts` — new `this.version(N).stores({...})` block
-- `src/db/queries.ts` — bump `CURRENT_SCHEMA_VERSION` to `N`; add field to `ClubKeeperBackupV16`; add `toArray()` call in `getAllDataForExport`
+- `src/db/queries.ts` — bump `CURRENT_SCHEMA_VERSION` to `N`; add field to `ClubKeeperBackupV16`; add `toArray()` call in `getAllDataForExport`; **add `db.<newTable>` to `resetEverything()`'s tx table list AND its `clear()` Promise.all**
 - `src/lib/importEverything.ts` — add table to `requiredArrayKeys`, the typed coercion block, the `db.transaction('rw', [...])` table list, the `clear()` Promise.all, and the bulkAdd block
 - `references/data_model.md` — "Data Export Format (v16)" section interface
 
-**Discovered when:** Import Everything Phase A, 14 Jun 2026 (#79). Phase A0 closed #78 (export was missing 6 of 9 tables).
+**Discovered when:** Import Everything Phase A, 14 Jun 2026 (#79). Phase A0 closed #78 (export was missing 6 of 9 tables). #81 (15 Jun 2026) found the same drift in `resetEverything()` — only 3 of 9 stores cleared, canteen/wallet/customers all survived a "reset".
+
+### If you change `resetEverything()` (`src/db/queries.ts`)
+
+**Single-source-of-truth invariant:** the 9-store list inside `resetEverything()` MUST stay 1:1 with:
+- `getAllDataForExport()` (also in `queries.ts`) — same 9 stores
+- `importEverythingFromFile()` (in `src/lib/importEverything.ts`) — its tx table list + `clear()` Promise.all
+
+If any of the three drift, the symptom is silent data leakage (export misses a store → #78; reset misses a store → #81). Adding a Dexie store = update all three in the same commit.
+
+**Affects:**
+- `src/db/queries.ts` — `resetEverything` body, `ActiveSessionsPresentError` export
+- `src/pages/Settings.tsx` — `handleReset` catches `ActiveSessionsPresentError` and shows toast "Stop all active sessions before resetting." Mirrors the import flow's active-session guard.
+- `src/db/seed.ts` — `seedIfEmpty()` is called AFTER the clear tx commits; seed must populate enough state for a brand-new install (currently: 1 tables row + 1 settings singleton)
+
+**Critical correctness rules:**
+- Single flat `db.transaction('rw', [all 9 stores], …)` — partial wipe must roll back.
+- Active-session pre-check throws `ActiveSessionsPresentError` BEFORE opening the tx. Resetting on top of a running session corrupts the next session's timer math (Pattern T1).
+- Auth / subscription / Supabase state NEVER touched — Dexie-only.
+- `seedIfEmpty()` runs AFTER the tx so its inserts aren't rolled back by a tx-internal throw.
+
+**Discovered when:** #81 (15 Jun 2026) — Sugeet reset everything and the canteen item list still showed up. Same drift class as #78.
 
 ### `src/lib/importEverything.ts`
 

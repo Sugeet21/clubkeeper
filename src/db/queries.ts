@@ -475,10 +475,47 @@ export async function clearAllSessions(): Promise<void> {
   await db.sessions.clear()
 }
 
+export class ActiveSessionsPresentError extends Error {
+  constructor() {
+    super('Stop all active sessions before resetting.')
+    this.name = 'ActiveSessionsPresentError'
+  }
+}
+
 export async function resetEverything(): Promise<void> {
-  await db.gameTables.clear()
-  await db.sessions.clear()
-  await db.settings.clear()
+  const activeCount = await db.sessions
+    .where('status')
+    .anyOf(['running', 'paused'])
+    .count()
+  if (activeCount > 0) throw new ActiveSessionsPresentError()
+
+  await db.transaction(
+    'rw',
+    [
+      db.gameTables,
+      db.sessions,
+      db.sessionItems,
+      db.settings,
+      db.customers,
+      db.walletTransactions,
+      db.canteenItems,
+      db.canteenSales,
+      db.stockPurchases,
+    ],
+    async () => {
+      await Promise.all([
+        db.gameTables.clear(),
+        db.sessions.clear(),
+        db.sessionItems.clear(),
+        db.settings.clear(),
+        db.customers.clear(),
+        db.walletTransactions.clear(),
+        db.canteenItems.clear(),
+        db.canteenSales.clear(),
+        db.stockPurchases.clear(),
+      ])
+    },
+  )
   await seedIfEmpty()
 }
 
