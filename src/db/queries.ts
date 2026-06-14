@@ -288,6 +288,7 @@ export async function confirmPaymentAndStop(
     db.sessionItems,
     db.customers,
     db.walletTransactions,
+    db.settings,
     async () => {
       const session = await db.sessions.get(sessionId)
       if (!session) throw new Error(`Session ${sessionId} not found`)
