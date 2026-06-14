@@ -211,6 +211,175 @@ export async function stopSession(sessionId: number): Promise<Session> {
   return (await db.sessions.get(sessionId))!
 }
 
+/**
+ * Pause a running session for payment collection.
+ * Sets status='paused', paymentInProgress=true, records pausedAt.
+ * Returns the frozen billableMs and grandTotal so the payment screen
+ * can display the exact amount that will be written on confirm.
+ * Does NOT write endedAt or amount — those are written only in confirmPaymentAndStop.
+ */
+export async function pauseForPayment(
+  sessionId: number,
+): Promise<{ billableMs: number; grandTotal: number }> {
+  const session = await db.sessions.get(sessionId)
+  if (!session) throw new Error(`Session ${sessionId} not found`)
+  if (session.status !== 'running' && session.status !== 'paused') {
+    throw new Error('Session is not active')
+  }
+
+  const now = Date.now()
+  // If already paused mid-game, fold the existing pause first
+  let pausedTotalMs = session.pausedTotalMs
+  if (session.status === 'paused' && session.pausedAt !== null) {
+    pausedTotalMs += now - session.pausedAt
+  }
+
+  const rawElapsedMs = now - session.startedAt - pausedTotalMs
+  const settings = await db.settings.get(1)
+  const isRateCard = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
+  let billableMs = rawElapsedMs
+  if (!isRateCard && session.billingMode === 'per_hour' && settings && settings.rounding !== 'none') {
+    billableMs = applyRounding(rawElapsedMs, settings.rounding)
+  }
+  const tableAmt = calculateAmount(session, billableMs, settings?.rounding ?? 'none')
+  const sessionItems = await db.sessionItems.where('sessionId').equals(sessionId).toArray()
+  const itemsTotal = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
+  const grandTotal = tableAmt + itemsTotal
+
+  await db.sessions.update(sessionId, {
+    status: 'paused',
+    pausedAt: now,
+    pausedTotalMs,
+    paymentInProgress: true,
+  })
+
+  return { billableMs, grandTotal }
+}
+
+/**
+ * Atomically stop a session AND record its payment breakdown.
+ * Only valid when session.paymentInProgress === true (set by pauseForPayment).
+ * Writes endedAt, status='completed', amount, roundedDurationMs, paymentBreakdown
+ * in a single Dexie transaction. Wallet debit inlined in the same tx (Pattern D7).
+ */
+export async function confirmPaymentAndStop(
+  sessionId: number,
+  breakdown: { cash: number; upi: number; wallet: number },
+  customerId?: string,
+): Promise<void> {
+  if (typeof sessionId !== 'number' || !Number.isFinite(sessionId) || sessionId <= 0) {
+    throw new Error(`confirmPaymentAndStop: invalid sessionId (got ${typeof sessionId} ${String(sessionId)})`)
+  }
+  const { cash, upi, wallet } = breakdown
+  if (
+    !Number.isInteger(cash) || cash < 0 ||
+    !Number.isInteger(upi) || upi < 0 ||
+    !Number.isInteger(wallet) || wallet < 0
+  ) {
+    throw new PaymentBreakdownInvalidError('Cash, UPI, and wallet must be non-negative integers.')
+  }
+  if (wallet > 0 && !customerId) {
+    throw new PaymentBreakdownInvalidError('A linked customer is required for wallet payments.')
+  }
+
+  await db.transaction(
+    'rw',
+    db.sessions,
+    db.sessionItems,
+    db.customers,
+    db.walletTransactions,
+    async () => {
+      const session = await db.sessions.get(sessionId)
+      if (!session) throw new Error(`Session ${sessionId} not found`)
+      if (!session.paymentInProgress) {
+        throw new PaymentBreakdownInvalidError('Session is not in payment-in-progress state.')
+      }
+
+      const now = Date.now()
+      // Fold any remaining pause time (pauseForPayment set pausedAt=now, so delta≈0 in practice)
+      let pausedTotalMs = session.pausedTotalMs
+      if (session.pausedAt !== null) {
+        pausedTotalMs += now - session.pausedAt
+      }
+
+      const rawElapsedMs = now - session.startedAt - pausedTotalMs
+      const settings = await db.settings.get(1)
+      const isRateCard = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
+      let billableMs = rawElapsedMs
+      let roundedDurationMs: number | undefined
+      if (!isRateCard && session.billingMode === 'per_hour' && settings && settings.rounding !== 'none') {
+        roundedDurationMs = applyRounding(rawElapsedMs, settings.rounding)
+        billableMs = roundedDurationMs
+      }
+      const amount = calculateAmount(session, billableMs, settings?.rounding ?? 'none')
+
+      const sessionItems = await db.sessionItems.where('sessionId').equals(sessionId).toArray()
+      const itemsTotal = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
+      const grandTotal = amount + itemsTotal
+
+      if (cash + upi + wallet !== grandTotal) {
+        throw new PaymentBreakdownInvalidError(
+          `Breakdown sum ₹${cash + upi + wallet} does not match total ₹${grandTotal}.`,
+        )
+      }
+
+      if (wallet > 0) {
+        const customer = await db.customers.get(customerId!)
+        if (!customer) throw new Error('Customer not found')
+        if (customer.walletBalance < wallet) {
+          throw new WalletInsufficientError(customer.walletBalance, wallet)
+        }
+        const newBalance = customer.walletBalance - wallet
+        await db.walletTransactions.add({
+          id: crypto.randomUUID(),
+          customerId: customer.id,
+          type: 'debit',
+          amount: wallet,
+          balanceAfter: newBalance,
+          paymentMode: null,
+          referenceType: 'session',
+          referenceId: sessionId.toString(),
+          notes: null,
+          createdAt: now,
+        })
+        await db.customers.update(customer.id, {
+          walletBalance: newBalance,
+          lastVisitAt: now,
+        })
+      }
+
+      await db.sessions.update(sessionId, {
+        endedAt: now,
+        status: 'completed',
+        pausedTotalMs,
+        pausedAt: null,
+        amount,
+        roundedDurationMs,
+        paymentBreakdown: { cash, upi, wallet },
+        paymentInProgress: false,
+      })
+    },
+  )
+}
+
+/**
+ * Cancel a payment-in-progress pause and resume the session as running.
+ * Only valid when session.paymentInProgress === true.
+ */
+export async function cancelPaymentAndResume(sessionId: number): Promise<void> {
+  const session = await db.sessions.get(sessionId)
+  if (!session) throw new Error(`Session ${sessionId} not found`)
+  if (!session.paymentInProgress || session.pausedAt === null) return
+
+  const delta = Date.now() - session.pausedAt
+  await db.sessions.update(sessionId, {
+    status: 'running',
+    pausedTotalMs: session.pausedTotalMs + delta,
+    pausedAt: null,
+    paymentInProgress: false,
+  })
+}
+
 export async function editSessionStart(
   sessionId: number,
   newStartedAt: number,

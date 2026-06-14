@@ -12,6 +12,9 @@ import {
   updateSessionNotify,
   moveSessionToTable,
   recordSessionPaymentBreakdown,
+  pauseForPayment,
+  confirmPaymentAndStop,
+  cancelPaymentAndResume,
   IncompatibleTableError,
   TableOccupiedError,
 } from '../db/queries'
@@ -412,6 +415,8 @@ export default function SessionDetail() {
   // re-enter the payment flow on mount. Tracked here so the auto-open effect
   // fires exactly once per mount.
   const [autoOpenHandled, setAutoOpenHandled] = useState(false)
+  // Post-confirm UPI QR: when breakdown.upi > 0, show QR for that portion only.
+  const [postConfirmUpiAmount, setPostConfirmUpiAmount] = useState<number | null>(null)
 
   // Load coin config once on mount
   useEffect(() => {
@@ -428,28 +433,55 @@ export default function SessionDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editStartOpen])
 
-  // ADDENDUM-4: Auto-resume payment capture if we land on a completed session
-  // whose paymentBreakdown was never recorded (e.g. user closed the tab during
-  // the Phase 2 sheet). We compute the grand total from current DB state and
-  // open the payment screen + split sheet automatically. Runs once per mount,
-  // after `session` and `items` finish loading.
-  // ADDENDUM-5: if grand total is 0 (free / zero-amount session), skip the
-  // sheet entirely and record {0,0,0} directly.
+  // Re-enter payment screen when navigating to a session that is paused-for-payment
+  // (staff closed the tab or navigated away after pauseForPayment but before confirming).
+  // Also handles legacy: completed session with no paymentBreakdown (Pattern P4).
+  // Runs once per mount after session + items load.
   useEffect(() => {
     if (autoOpenHandled) return
-    if (!session || session.status !== 'completed') return
-    if (session.paymentBreakdown !== undefined) return
-    // items is always an array (useLiveQuery default), but bail until loaded
+    if (!session) return
     if (items === undefined) return
-    // If the payment screen is already open, the user just went through the
-    // normal Stop flow on THIS mount — handleConfirmStop has populated
-    // finalGrandTotal / finalRoundedMs and is showing the QR. Do not auto-
-    // open the sheet (that's a re-entry-only behaviour). Mark handled so
-    // we never run again this mount.
     if (paymentScreenOpen) {
       setAutoOpenHandled(true)
       return
     }
+
+    // Case 1 (new): session is paused with paymentInProgress — re-enter payment screen
+    if (session.status === 'paused' && session.paymentInProgress) {
+      setAutoOpenHandled(true)
+      // Re-derive the frozen total from what pauseForPayment would have computed.
+      // We can't recover the exact billableMs stored in state, so re-derive from
+      // session fields. This is only for the display label — confirmPaymentAndStop
+      // will recompute the authoritative amount inside its tx.
+      const pausedTotalMs = session.pausedAt
+        ? session.pausedTotalMs // pausedAt is "now" from pauseForPayment; delta ≈ 0
+        : session.pausedTotalMs
+      const rawMs = (session.pausedAt ?? Date.now()) - session.startedAt - pausedTotalMs
+      const isRateCardSession = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
+      const billableMs =
+        !isRateCardSession && session.billingMode === 'per_hour'
+          ? applyRounding(rawMs, rounding)
+          : rawMs
+      const tableAmt = calculateAmount(session, billableMs)
+      const itemsTotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
+      const grandTotal = tableAmt + itemsTotal
+      setFinalRoundedMs(billableMs)
+      setFinalGrandTotal(grandTotal)
+      setPaymentScreenOpen(true)
+      if (grandTotal === 0) {
+        const sid = Number(session.id)
+        void confirmPaymentAndStop(sid, { cash: 0, upi: 0, wallet: 0 })
+          .then(() => setBreakdownRecorded(true))
+          .catch(() => {})
+      } else {
+        setSplitSheetOpen(true)
+      }
+      return
+    }
+
+    // Case 2 (legacy Pattern P4): completed session with no paymentBreakdown
+    if (session.status !== 'completed') return
+    if (session.paymentBreakdown !== undefined) return
     const itemsTotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
     const grandTotal = session.amount + itemsTotal
     setAutoOpenHandled(true)
@@ -460,12 +492,10 @@ export default function SessionDetail() {
     )
     setPaymentScreenOpen(true)
     if (grandTotal === 0) {
-      // ADDENDUM-5: zero-amount path. Write {0,0,0} immediately, mark recorded,
-      // and let the QR screen render the "Done — back to tables" button.
       const sid = Number(session.id)
       void recordSessionPaymentBreakdown(sid, { cash: 0, upi: 0, wallet: 0 })
         .then(() => setBreakdownRecorded(true))
-        .catch(() => { /* leave to user via standard sheet flow */ })
+        .catch(() => {})
     } else {
       setSplitSheetOpen(true)
     }
@@ -559,31 +589,32 @@ export default function SessionDetail() {
     if (pending) return
     setPending(true)
     try {
-      // Capture billable values BEFORE stopping so the payment screen shows
-      // exactly what was stored — stopSession() uses the same math
-      const nowElapsed = getElapsedMs(session)
-      const isRateCardSession = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
-      const billableMs =
-        !isRateCardSession && session.billingMode === 'per_hour' ? applyRounding(nowElapsed, rounding) : nowElapsed
-      const tableAmt = calculateAmount(session, billableMs)
-      const itemsNow = calculateItemsTotal(items)
+      // Pause the session for payment (freeze the bill, don't stop yet).
+      // confirmPaymentAndStop will atomically stop + record breakdown on confirm.
+      const { billableMs, grandTotal } = await pauseForPayment(session.id!)
       setFinalRoundedMs(billableMs)
-      setFinalGrandTotal(tableAmt + itemsNow)
-
-      await stopSession(session.id!)
+      setFinalGrandTotal(grandTotal)
       setConfirmStop(false)
-      // Reset coin redemption state for this fresh payment screen
       setCoinsApplied(0)
       setCoinDiscount(0)
       setLinkedCustomer(null)
       setPaymentScreenOpen(true)
-
-      // Streak check — fire-and-forget after stop; skip walk-ins (no linkedCustomer yet,
-      // but check against the payment-screen customer once they link in the sheet).
-      // The main streak trigger is in the onConfirm of PaymentSplitSheet below.
     } finally {
       setPending(false)
     }
+  }
+
+  async function handleCancelPayment() {
+    // Staff backed out of payment sheet — resume the session as running.
+    try {
+      await cancelPaymentAndResume(session.id!)
+    } catch {
+      // If cancel fails (e.g. session already completed), just close the screen.
+    }
+    setPaymentScreenOpen(false)
+    setSplitSheetOpen(false)
+    setBreakdownRecorded(false)
+    setPostConfirmUpiAmount(null)
   }
 
   async function handleFrameChange(delta: number) {
@@ -633,9 +664,53 @@ export default function SessionDetail() {
     await handleSetAlarm(mins * 60_000)
   }
 
-  const isActive = session.status !== 'completed'
+  const isActive = session.status !== 'completed' && !session.paymentInProgress
 
-  // ─── Payment screen (shown after session stop) ────────────────────────────
+  // ─── Post-confirm UPI QR screen ───────────────────────────────────────────
+  // Shown after payment is confirmed and breakdown.upi > 0.
+  // Session is already completed at this point. QR shows UPI portion only.
+  if (postConfirmUpiAmount !== null) {
+    const upiId = settings?.upiId?.trim()
+    const clubName = settings?.clubName || 'ClubKeeper'
+    return (
+      <div className="fixed inset-0 z-50 bg-bg flex flex-col px-5" style={{ paddingTop: 'max(12px, env(safe-area-inset-top))', paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
+        <header className="flex flex-col items-center gap-1 shrink-0 pt-2">
+          <div className="flex items-center gap-2 text-accent">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+            <span className="text-sm font-semibold uppercase tracking-widest">Collect UPI payment</span>
+          </div>
+          <div className="text-text-dim text-xs">{tableName}</div>
+        </header>
+        <main className="flex-1 flex flex-col items-center justify-center min-h-0 gap-4">
+          {upiId ? (
+            <>
+              <UpiQrCard upiId={upiId} payeeName={clubName} amount={postConfirmUpiAmount} transactionNote={`${tableName} - UPI`} />
+              <div className="flex flex-col items-center gap-1">
+                <div className="text-3xl font-mono font-bold text-text tabular-nums">₹{postConfirmUpiAmount.toLocaleString('en-IN')}</div>
+                <div className="text-xs text-text-dim">UPI portion — scan to pay</div>
+              </div>
+            </>
+          ) : (
+            <div className="bg-bg-card border border-border rounded-2xl p-8 flex flex-col items-center gap-2 w-full max-w-xs">
+              <div className="text-3xl font-mono font-bold text-text tabular-nums">₹{postConfirmUpiAmount.toLocaleString('en-IN')}</div>
+              <div className="text-text-dim text-sm">UPI portion to collect</div>
+              <p className="text-text-faint text-xs text-center mt-1">Add your UPI ID in Settings to show a QR here.</p>
+            </div>
+          )}
+        </main>
+        <footer className="shrink-0 flex flex-col gap-3 pt-2">
+          {upiId && <p className="text-xs text-text-faint text-center">Works with GPay, PhonePe, Paytm, BHIM</p>}
+          <button onClick={() => navigate('/tables', { replace: true })} className="w-full min-h-[48px] rounded-xl bg-accent text-bg font-semibold text-base active:scale-[0.98] transition-transform">
+            Done — back to tables
+          </button>
+        </footer>
+      </div>
+    )
+  }
+
+  // ─── Payment screen (shown after session pause-for-payment) ───────────────
   // Fixed-viewport, no-scroll layout. QR centered in flex-1 middle.
   // Bottom nav is intentionally hidden — this is a payment moment.
 
@@ -761,7 +836,12 @@ export default function SessionDetail() {
                       referenceId: sid.toString(),
                     })
                   }
-                  await recordSessionPaymentBreakdown(sid, { cash: 0, upi: 0, wallet: 0 }, linkedCustomer?.id)
+                  // Use confirmPaymentAndStop for pause-first sessions; legacy path for completed-but-unrecorded
+                  const stopFn = session.paymentInProgress
+                    ? confirmPaymentAndStop
+                    : (id: number, bd: { cash: number; upi: number; wallet: number }) =>
+                        recordSessionPaymentBreakdown(id, bd, linkedCustomer?.id)
+                  await stopFn(sid, { cash: 0, upi: 0, wallet: 0 })
                   setBreakdownRecorded(true)
                   if (linkedCustomer) {
                     checkAndAwardStreak(linkedCustomer.id)
@@ -792,7 +872,13 @@ export default function SessionDetail() {
           headline={summaryLine}
           initialCustomer={linkedCustomer}
           onCustomerLinked={(c) => setLinkedCustomer(c)}
-          onCancel={() => setSplitSheetOpen(false)}
+          onCancel={() => {
+            setSplitSheetOpen(false)
+            // If session is paused-for-payment, resume it so the timer restarts
+            if (session.paymentInProgress) {
+              void handleCancelPayment()
+            }
+          }}
           onConfirm={async (breakdown, customerId) => {
             const numericSessionId = Number(session.id)
             const effectiveCustomerId = customerId ?? linkedCustomer?.id ?? null
@@ -806,14 +892,19 @@ export default function SessionDetail() {
                 referenceId: numericSessionId.toString(),
               })
             }
-            await recordSessionPaymentBreakdown(
+            // Atomically stop the session + record breakdown in one tx
+            await confirmPaymentAndStop(
               numericSessionId,
               breakdown,
               effectiveCustomerId ?? undefined,
             )
             setSplitSheetOpen(false)
             setBreakdownRecorded(true)
-            // Streak check — runs after payment confirmed; has the linked customer
+            // Show UPI QR for the UPI portion only (not the full total)
+            if (breakdown.upi > 0) {
+              setPostConfirmUpiAmount(breakdown.upi)
+            }
+            // Streak check
             if (effectiveCustomerId) {
               checkAndAwardStreak(effectiveCustomerId)
                 .then(({ awarded, coins, customerName }) => {

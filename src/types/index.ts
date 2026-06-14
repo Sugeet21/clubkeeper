@@ -80,6 +80,7 @@ export interface Session {
   rateCardBillingSnapshot?: 'minimum' | 'prorated'  // v11: captured at startSession; default 'prorated'
   isBackEntry?: boolean               // v12: true if logged via Back Entry flow, not live timer
   paymentBreakdown?: PaymentBreakdown // v13: cash/UPI/wallet split captured at stopSession; sum === amount
+  paymentInProgress?: boolean         // true while session is paused waiting for staff to confirm payment
 }
 
 /**

@@ -145,10 +145,17 @@ export default function TableCard({ table, session, onStartTap }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-2 mb-2">
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold uppercase tracking-widest px-2.5 py-1 rounded-md bg-paused/20 text-paused border border-paused/30">
-            <span className="w-1.5 h-1.5 rounded-full bg-paused" />
-            Paused
-          </span>
+          {session.paymentInProgress ? (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold uppercase tracking-widest px-2.5 py-1 rounded-md bg-accent/15 text-accent border border-accent/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+              Paying…
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold uppercase tracking-widest px-2.5 py-1 rounded-md bg-paused/20 text-paused border border-paused/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-paused" />
+              Paused
+            </span>
+          )}
         </div>
         <Timer session={session} paused={true} />
       </Link>
