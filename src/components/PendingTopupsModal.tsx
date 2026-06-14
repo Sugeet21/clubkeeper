@@ -56,7 +56,9 @@ function ConfirmRow({
     () => db.customers.where('phone').equals(formattedMobile).first(),
     [formattedMobile],
   )
-  const isNewCustomer = existingCustomer === null  // null = loaded + not found
+  // undefined = still loading, null = loaded + not found, Customer = found
+  const customerLoaded = existingCustomer !== undefined
+  const isNewCustomer = existingCustomer === null
 
   const previewTierCoins = coinConfig.coinsEnabled
     ? coinsEarnedForTopup(intent.amount, coinConfig.coinTiers)
@@ -64,8 +66,8 @@ function ConfirmRow({
   const previewWelcomeCoins =
     coinConfig.coinsEnabled &&
     engagementConfig?.welcomeBonusEnabled &&
-    isNewCustomer &&
-    !existingCustomer?.firstTopupAt
+    customerLoaded &&
+    isNewCustomer
       ? (engagementConfig.welcomeBonusCoins ?? 0)
       : 0
   const previewCoins = previewTierCoins + previewWelcomeCoins
@@ -120,11 +122,16 @@ function ConfirmRow({
         .eq('id', intent.id)
 
       if (cloudErr) {
-        // Local credit succeeded; queue cloud retry
+        // Local credit succeeded; queue cloud retry — do NOT decrement yet,
+        // the intent will reappear on next poll and the idempotency guard
+        // will prevent double-credit.
         const pending: string[] = JSON.parse(localStorage.getItem('ck_failedConfirmTopups') ?? '[]') as string[]
         if (!pending.includes(intent.id)) pending.push(intent.id)
         localStorage.setItem('ck_failedConfirmTopups', JSON.stringify(pending))
         showToast('Wallet updated but cloud sync failed. Will retry on next open.', 6000)
+        // Keep row visible so owner knows to check connectivity
+        setRowStatus((s) => ({ ...s, state: 'idle', error: 'Cloud sync failed — will retry' }))
+        return
       }
 
       decrementPending()
@@ -236,14 +243,14 @@ function ConfirmRow({
         <div className="flex gap-2 mt-3">
           <button
             onClick={handleConfirm}
-            disabled={rowStatus.state === 'confirming'}
+            disabled={rowStatus.state === 'confirming' || !customerLoaded}
             className={`flex-1 min-h-[44px] rounded-xl text-[13px] font-bold transition-opacity ${
-              rowStatus.state === 'confirming'
+              rowStatus.state === 'confirming' || !customerLoaded
                 ? 'bg-free/20 text-free/60 cursor-not-allowed'
                 : 'bg-free/12 text-free border border-free/30'
             }`}
           >
-            {rowStatus.state === 'confirming' ? 'Confirming…' : 'Confirm received'}
+            {rowStatus.state === 'confirming' ? 'Confirming…' : !customerLoaded ? 'Loading…' : 'Confirm received'}
           </button>
           <button
             onClick={() => setRowStatus((s) => ({ ...s, state: 'rejecting' }))}

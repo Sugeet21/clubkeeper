@@ -101,10 +101,12 @@ export default function PlayerScan() {
   useEffect(() => {
     if (pageState !== 'waiting_confirm' || !intentId) return
 
+    let mounted = true
+
     pollRef.current = setInterval(async () => {
       try {
         const result = await getTopupIntentStatus(intentId)
-        if (!result) return
+        if (!mounted || !result) return
         if (result.status === 'confirmed') { stopPolling(); setPageState('confirmed') }
         else if (result.status === 'rejected') { stopPolling(); setRejectReason(result.rejectReason); setPageState('rejected') }
         else if (result.status === 'expired') { stopPolling(); setPageState('expired') }
@@ -112,9 +114,13 @@ export default function PlayerScan() {
     }, 5000)
 
     // 10-minute expire
-    expireRef.current = setTimeout(() => { stopPolling(); setPageState('expired') }, 10 * 60 * 1000)
+    expireRef.current = setTimeout(() => {
+      if (!mounted) return
+      stopPolling()
+      setPageState('expired')
+    }, 10 * 60 * 1000)
 
-    return stopPolling
+    return () => { mounted = false; stopPolling() }
   }, [pageState, intentId, stopPolling])
 
   // ─── Validation ────────────────────────────────────────────────────────────

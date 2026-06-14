@@ -12,14 +12,16 @@ import type { GameTable, Session, ClubSettings, SessionItem } from '../types'
 // Dexie match Supabase, fixing the cross-device desync bug where a fresh
 // device has no local settings yet.
 
-let _clubSyncDone = false
+// Keyed by userId so a second user signing in on the same tab gets their own sync.
+let _clubSyncDoneForUser: string | null = null
 
 export function useSyncClubFromSupabase() {
   const { dbReady, session } = useAuthStore()
+  const userId = session?.user?.id ?? null
 
   useEffect(() => {
-    if (!dbReady || !session || _clubSyncDone) return
-    _clubSyncDone = true
+    if (!dbReady || !userId || _clubSyncDoneForUser === userId) return
+    _clubSyncDoneForUser = userId
 
     getOwnerClub()
       .then(async (club) => {
@@ -41,9 +43,9 @@ export function useSyncClubFromSupabase() {
       })
       .catch(() => {
         // Network failure — leave Dexie as-is; will retry on next mount.
-        _clubSyncDone = false
+        _clubSyncDoneForUser = null
       })
-  }, [dbReady, session])
+  }, [dbReady, userId])
 }
 
 export type SessionWithItems = { session: Session; items: SessionItem[] }
