@@ -262,6 +262,21 @@ If a change isn't documented here yet, pause and trace dependencies first.
 
 **If you add a new modal that needs pinned action buttons:** pass `footer={<YourButtons />}` to `<Modal>`. Do NOT move buttons back into `children` — they will scroll off-screen on small devices.
 
+### If you change the stop-session flow (pause-first, added 14 Jun 2026, #73+#74)
+
+The stop flow is PAUSE-FIRST. "End Session" → `pauseForPayment` → PaymentSplitSheet → `confirmPaymentAndStop` (atomic). Cancel → `cancelPaymentAndResume`.
+
+**Affects (all must stay in sync):**
+- `src/types/index.ts` — `Session.paymentInProgress?: boolean` field (set by `pauseForPayment`, cleared by `confirmPaymentAndStop` and `cancelPaymentAndResume`)
+- `src/db/queries.ts` — `pauseForPayment`, `confirmPaymentAndStop`, `cancelPaymentAndResume` (the three atomic functions). Also affects `getPiggyBalance` filter — completed sessions always have `paymentBreakdown` now, but keep the `!== undefined` filter for legacy rows
+- `src/pages/SessionDetail.tsx` — `handleConfirmStop` calls `pauseForPayment` (not `stopSession`); new `handleCancelPayment`; PaymentSplitSheet `onCancel` conditionally calls `handleCancelPayment`; zero-total "Mark as paid" uses `confirmPaymentAndStop`; auto-resume `useEffect` handles both legacy (completed+no breakdown) and new (paused+paymentInProgress) cases
+- `src/components/TableCard.tsx` — "Paying…" badge for `session.paymentInProgress === true` on the paused card branch (distinct from regular "Paused" badge)
+- `src/components/PaymentSplitSheet.tsx` — `onCancel` prop is now conditionally used for "cancel payment and resume" (SessionDetail) vs just "close sheet" (QuickSale). Callers must understand the difference
+- `src/pages/Summary.tsx` — PAYMENT MODE filter: `paymentBreakdown !== undefined` still required for legacy rows
+- `bug_patterns.md` — Pattern P4 updated: auto-resume `useEffect` now handles Case 1 (paused+paymentInProgress) AND Case 2 (legacy completed+no-breakdown)
+
+**Rule:** NEVER call `stopSession()` directly from the SessionDetail UI. Always go through `pauseForPayment` → `confirmPaymentAndStop`. `stopSession()` is only for back-entry flow and legacy programmatic stops.
+
 ### If you change `applyRounding()` or rounding logic
 
 **Affects:**

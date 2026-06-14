@@ -113,6 +113,18 @@ All ⏳ Not tested.
 
 ---
 
+## Section O — Pause-first stop flow (#73+#74, 14 Jun 2026)
+
+| # | Test | Status | Notes |
+|---|---|---|---|
+| O1 | Start session → End Session → Stop & Pay → tap Cancel → session resumes running (not stopped) | ⏳ Not tested | `cancelPaymentAndResume` must clear `paymentInProgress` and restore `status='running'` |
+| O2 | Start session → End Session → Stop & Pay → enter payment amounts → Confirm → session stopped atomically with breakdown recorded | ⏳ Not tested | `confirmPaymentAndStop` must write `endedAt + status='completed' + amount + paymentBreakdown + paymentInProgress=false` in single tx |
+| O3 | UPI split in stop flow → post-confirm screen shows UPI QR for UPI portion only (not grand total) | ⏳ Not tested | `postConfirmUpiAmount` state drives QR; `breakdown.upi` is the amount shown |
+| O4 | Table card for session in paymentInProgress state shows "Paying…" badge (not "Paused") | ⏳ Not tested | `TableCard.tsx` paused branch conditional |
+| O5 | Close tab mid-payment (session paused+paymentInProgress) → reopen session → payment sheet auto-opens | ⏳ Not tested | Case 1 of auto-resume `useEffect` |
+
+---
+
 ## Section M — Signup Flow (added Prompt 11)
 
 | # | Test | Status | Notes |

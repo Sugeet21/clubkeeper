@@ -131,8 +131,8 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 - **BUG-MOVE-BILLINGMODE** (#72, fixed, 6be8ed0) — Table Move allows cross billing-mode moves (rateCardBilling / rateCard / toleranceMinutes not checked) — see GitHub
 - **BUG-SUMMARY-STALE** (#70, fixed, 41a7bb1) — Day's earnings + Avg session + TopTablesList + HourlyHeatmap frozen (useMemo T4 violation on runningRevenueToday + rankTables + bucketByHour) — see GitHub
 - **BUG-SUMMARY-INCONSISTENT** (#71, open) — Audit: which Summary widgets tick live vs frozen — see GitHub
-- **BUG-STOP-PAYMENT-RACE** (#73, open) — Session stopped even when staff cancels payment sheet — see GitHub
-- **BUG-STOP-PAUSE-FIRST** (#74, open) — End Session should PAUSE first; only stop on payment confirm — see GitHub
+- **BUG-STOP-PAYMENT-RACE** (#73, fixed, 69cd1b4) — Session stopped even when staff cancels payment sheet — see GitHub
+- **BUG-STOP-PAUSE-FIRST** (#74, fixed, 69cd1b4) — End Session now PAUSEs first; confirmPaymentAndStop is atomic; cancel resumes session — see GitHub
 - **BUG-CANTEEN-TOD** (#68, open) — Time-of-day pricing for canteen items (enhancement, design-first) — see GitHub
 
 ---

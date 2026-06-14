@@ -2,6 +2,21 @@
 
 ---
 
+## 14 Jun 2026 — Bug sprint: #73+#74 pause-first stop flow (commit 69cd1b4)
+
+- `src/types/index.ts`: Added `Session.paymentInProgress?: boolean` — true while session is paused waiting for staff to confirm payment.
+- `src/db/queries.ts`: Added three atomic functions:
+  - `pauseForPayment(sessionId)` — pauses session + sets `paymentInProgress=true`; returns `{ billableMs, grandTotal }` for confirm preview
+  - `confirmPaymentAndStop(sessionId, breakdown, customerId?)` — single tx: validates `paymentInProgress`, writes `endedAt + status='completed' + amount + paymentBreakdown + paymentInProgress=false`; inlines wallet debit (Pattern D7)
+  - `cancelPaymentAndResume(sessionId)` — clears `paymentInProgress`, restores `status='running'`
+- `src/pages/SessionDetail.tsx`: Full rewrite of stop flow — `handleConfirmStop` → `pauseForPayment`; new `handleCancelPayment`; PaymentSplitSheet `onCancel` conditionally resumes session; auto-resume `useEffect` extended with Case 1 (paused+paymentInProgress); post-confirm UPI QR state; `isActive` guard updated.
+- `src/components/TableCard.tsx`: Paused card shows "Paying…" badge (accent, pulsing dot) when `session.paymentInProgress === true`.
+- **Pattern P4 updated:** stop flow is now pause-first; completed sessions always have `paymentBreakdown`; legacy "stopped-but-unrecorded" handled by Case 2 of auto-resume effect.
+- **ripple_effects.md:** New section "If you change the stop-session flow".
+- **test_status.md:** Section O added (5 scenarios).
+
+---
+
 ## 13 Jun 2026 — Auth fixes (commit e7b0522)
 
 - `authStore.signOut()`: `window.location.href = '/'` hard nav after clearing state. Also resets `loading` + `subscriptionLoaded` flags.
