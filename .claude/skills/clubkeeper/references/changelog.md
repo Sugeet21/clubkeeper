@@ -2,6 +2,22 @@
 
 ---
 
+## 15 Jun 2026 — UX: QuickSale UPI screen layout now matches SessionDetail (#82)
+
+QuickSale's post-payment UPI QR screen had its amount in the upper-left corner with a `Quick Sale · UPI Payment` kicker, while SessionDetail's post-stop UPI screen uses a centered "Collect UPI payment" chip header and puts the amount UNDER the QR. Two flows, same screen, inconsistent layout.
+
+QuickSale now mirrors SessionDetail exactly:
+- Centered chip header: ✓ icon + "Collect UPI payment" + "Quick Sale" subtitle
+- Amount block under the QR: `text-3xl font-mono font-bold tabular-nums` + "UPI portion — scan to pay" caption
+- No-UPI-ID fallback: card with `bg-bg-card border border-border rounded-2xl p-8` (was bare centered text)
+- Done button class aligned to SessionDetail's (`active:scale-[0.98] transition-transform`)
+
+Single-file diff: `src/pages/QuickSale.tsx` UPI branch (lines ~128-176). `<UpiQrCard>` itself untouched. Build clean.
+
+Closes #82 — pending owner verification.
+
+---
+
 ## 15 Jun 2026 — Fix: Reset everything now clears all 9 Dexie stores (#81)
 
 **Bug:** Settings → Reset everything left 6 of 9 Dexie stores untouched. Canteen items, customers, wallet transactions, session items, canteen sales, and stock purchases all survived. Sugeet reported it after seeing the canteen stock list still populated post-reset.
