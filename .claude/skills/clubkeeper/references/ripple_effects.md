@@ -262,7 +262,7 @@ If a change isn't documented here yet, pause and trace dependencies first.
 
 **If you add a new modal that needs pinned action buttons:** pass `footer={<YourButtons />}` to `<Modal>`. Do NOT move buttons back into `children` — they will scroll off-screen on small devices.
 
-### If you change the stop-session flow (pause-first, added 14 Jun 2026, #73+#74)
+### If you change the stop-session flow (pause-first, updated 14 Jun 2026, #73+#74+#77)
 
 The stop flow is PAUSE-FIRST. "End Session" → `pauseForPayment` → PaymentSplitSheet → `confirmPaymentAndStop` (atomic). Cancel → `cancelPaymentAndResume`.
 
@@ -276,6 +276,7 @@ The stop flow is PAUSE-FIRST. "End Session" → `pauseForPayment` → PaymentSpl
 - `bug_patterns.md` — Pattern P4 updated: auto-resume `useEffect` now handles Case 1 (paused+paymentInProgress) AND Case 2 (legacy completed+no-breakdown)
 
 **Rule:** NEVER call `stopSession()` directly from the SessionDetail UI. Always go through `pauseForPayment` → `confirmPaymentAndStop`. `stopSession()` is only for back-entry flow and legacy programmatic stops.
+**As of #77 (14 Jun 2026):** Only ONE screen exists between End Session and Done — the POST-confirm screen driven by `confirmedBreakdown.upi`. The legacy pre-record full-amount QR screen (`paymentScreenOpen`) is deleted. `PaymentSplitSheet` now lives in the main render tree, gated by `splitSheetOpen`. End Session sheet → `pauseForPayment` → `PaymentSplitSheet` opens directly (no QR shown until after Confirm).
 
 ### If you change `applyRounding()` or rounding logic
 

@@ -125,6 +125,12 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 14 Jun 2026 — Legacy pre-record QR removed (issue #77)
+
+- **BUG-77** (#77, fixed, 72d9edb) — Legacy full-amount QR screen between End Session and Record Payment removed; stop flow now goes directly to PaymentSplitSheet — see GitHub
+
+---
+
 ## 14 Jun 2026 — Payment fixes (issues #75–76)
 
 - **BUG-75** (#75, fixed, 4b0cf3f) — confirmPaymentAndStop tx missing db.settings → IDBTransaction "objectStore not found" on every Confirm tap — see GitHub

@@ -2,6 +2,17 @@
 
 ---
 
+## 14 Jun 2026 — Remove legacy pre-record QR: #77 (commit 72d9edb)
+
+- Deleted `paymentScreenOpen` state + pre-record QR overlay block (~200 lines) from `src/pages/SessionDetail.tsx`
+- `handleConfirmStop`: after `pauseForPayment()`, opens `PaymentSplitSheet` directly (zero-total auto-confirms)
+- Auto-resume `useEffect` (Case 1 + Case 2): opens split sheet directly — no intermediate screen
+- `PaymentSplitSheet` + `CoinRedemptionPill` moved to main render tree, gated by `splitSheetOpen`
+- Post-confirm screen (`confirmedBreakdown`) unchanged from #76
+- Stop flow: End Session → PaymentSplitSheet → Confirm → conditional UPI QR or "Payment recorded ✓"
+
+---
+
 ## 14 Jun 2026 — Payment fixes: #75+#76 (commit 4b0cf3f)
 
 - **#75 (Dexie tx missing objectStore):** `confirmPaymentAndStop` tx was missing `db.settings` from its table list — reads `db.settings.get(1)` inside the callback for rounding. Added `db.settings` to `db.transaction('rw', ...)` list. One-line fix in `src/db/queries.ts`.
