@@ -2,6 +2,25 @@
 
 ---
 
+## 14 Jun 2026 — Phase C: Import/Export round-trip self-test (#79)
+
+**New file:** `src/lib/__devTools__/importExportRoundTrip.ts` — `runImportExportRoundTrip(): Promise<RoundTripResult>`.
+
+What it does (in order):
+1. Refuses to run if any session has `status !== 'completed'` (same guard as the production importer).
+2. Snapshots 11 measures: row counts for all 9 stores + `walletBalanceTotal` (sum across customers) + `piggyCurrent` (from `getPiggyBalance()`).
+3. Calls `getAllDataForExport()` → `JSON.stringify` → wraps in a `new File(...)`.
+4. Runs `importEverythingFromFile()` on that file — wipes + restores the current Dexie DB inside one atomic tx.
+5. Re-snapshots and `console.assert`s every measure matches. Logs `[round-trip] PASS` in green or `[round-trip] FAIL` with mismatches in red.
+
+Mounted on `window.runImportExportRoundTrip` ONLY when `import.meta.env.DEV === true` — `main.tsx` adds the dynamic import behind the DEV gate, Vite tree-shakes it out of production. Verified: production bundle stayed at 954.91 kB (no growth from Phase B), confirming the dev tool is excluded.
+
+Why this matters: protects against silent format drift between export and import. Any time we change either side without updating the other, this self-test fails immediately. Sugeet runs it once locally before each release.
+
+Phase C of #79. Build clean. Pending owner verification (full round-trip on real data).
+
+---
+
 ## 14 Jun 2026 — Phase B: Import Everything UI (#79)
 
 **`src/pages/Settings.tsx` Data & Backup section:**

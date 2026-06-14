@@ -1240,8 +1240,16 @@ The ripple is wider than usual because of import/export:
 ### `src/lib/importEverything.ts`
 
 - **Imports:** `src/db/database.ts` (`db`), `src/db/queries.ts` (`CURRENT_SCHEMA_VERSION`), `src/types`, `src/types/customer`, `src/types/walletTransaction`
-- **Imported by:** `src/pages/Settings.tsx` (production consumer — `importEverythingFromFile`, `ImportSuccess`, `ImportFailureReason` types), `src/main.tsx` (DEV-only dynamic import for `window.__importEverythingFromFile`)
+- **Imported by:** `src/pages/Settings.tsx` (production consumer — `importEverythingFromFile`, `ImportSuccess`, `ImportFailureReason` types), `src/main.tsx` (DEV-only dynamic import for `window.__importEverythingFromFile` + `window.runImportExportRoundTrip`), `src/lib/__devTools__/importExportRoundTrip.ts` (dev round-trip self-test)
 - **Failure-reason union (`ImportFailureReason`)** — UI must handle all of: `parse_error`, `not_clubkeeper_file`, `legacy_incomplete_format`, `schema_too_new`, `active_sessions_present`, `empty_file`, `transaction_failed`. Adding a new reason → update the `importErrorMessage()` switch at the top of `Settings.tsx`.
+
+### `src/lib/__devTools__/importExportRoundTrip.ts` (DEV-only)
+
+- **Imports:** `src/db/database.ts` (`db`), `src/db/queries.ts` (`getAllDataForExport`, `getPiggyBalance`), `src/lib/importEverything.ts` (`importEverythingFromFile`)
+- **Imported by:** `src/main.tsx` ONLY, behind `import.meta.env.DEV` dynamic import — tree-shaken from production bundle (verified: bundle unchanged at 954.91 kB across Phase B → Phase C)
+- **Exposes:** `window.runImportExportRoundTrip(): Promise<RoundTripResult>` in dev
+- **Snapshot measures (11):** counts for all 9 stores + `walletBalanceTotal` + `piggyCurrent`. If you add a new Dexie store, ALSO add it to the snapshot here (or the self-test will pass while quietly missing the new store).
+- **DESTRUCTIVE:** wipes and restores the live Dexie DB. Same `active_sessions_present` guard as the production importer.
 
 ### If you change the import flow in Settings (#79 Phase B)
 
