@@ -327,6 +327,21 @@ Files most affected: `src/store/authStore.ts`, `src/pages/Signup.tsx`, `src/page
 
 **Files affected:** `src/store/authStore.ts`, `src/hooks/useAccessGuard.ts`, `src/components/RequireAccess.tsx`.
 
+### Pattern A7 — Public routes must NOT share supabase-js auth lock with owner (#83, 15 Jun 2026)
+
+**Symptom signature:** `/c/<slug>` (PlayerScan) opens in a second tab and hangs forever on "Loading club info…". Hard-refreshing the original owner tab makes it work on next open. Ping-pongs between owner tab and player tab — whichever was just refreshed works, the other breaks.
+
+**Root cause:** Single `supabase` singleton used for BOTH owner-authenticated calls AND anon public RPCs. When the owner tab is initializing or refreshing the session, supabase-js holds an internal auth lock; any public RPC fired from the second tab via the same client queues behind that lock and never resolves. Cross-tab `BroadcastChannel` sync between two clients on the same domain compounds it. PlayerScan's 8s `AbortController` was a no-op because the call was queued inside supabase-js, not in `fetch`.
+
+**Fix (three layers):**
+1. `src/lib/supabasePublic.ts` (NEW) — separate anon client with `persistSession: false`, `autoRefreshToken: false`, `detectSessionInUrl: false`. The three public RPC wrappers in `playerHubApi.ts` (`getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`) use this client. Owner functions in the same file still use the main `supabase` client.
+2. `AuthInitializer` and `ExpirySweepRunner` in `App.tsx` skip when `window.location.pathname` starts with `/c/` or `/poster/` (helper `isPlayerHubRoute()`). Player Hub public pages never trigger owner auth.
+3. Defence-in-depth: `withTimeout(rpcPromise, 8000, label)` wraps every public RPC so any future supabase-js queue hang surfaces as a typed error (`error.message` ends in `_timeout`), not an infinite spinner.
+
+**Rule:** Any new public, anon-accessible Supabase RPC for Player Hub or future public pages MUST (a) use `supabasePublic`, (b) be wrapped in `withTimeout`, and (c) never appear on a route that also boots owner auth. If a new public route is added, extend the `isPlayerHubRoute()` check in `App.tsx` to include its prefix.
+
+**Files affected:** `src/lib/supabase.ts`, `src/lib/supabasePublic.ts` (NEW), `src/lib/playerHubApi.ts`, `src/App.tsx`.
+
 ### Pattern A5 — Auth store initializer must use try/finally on loading flag (BUG-020)
 **Symptom signature:** OAuth succeeds (token visible in URL hash), page stuck forever on "Signing you in…". Refreshing is the only escape.
 **Root cause:** `initialize()` set `loading: false` in the try block only. Any throw (network error, RLS error, bad Supabase response) in `refreshProfile()` left `loading=true` permanently. Any component gating on `if (loading) return` was permanently frozen.

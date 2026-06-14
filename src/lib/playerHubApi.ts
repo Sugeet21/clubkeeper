@@ -1,11 +1,32 @@
 import { supabase } from './supabase'
+import { supabasePublic } from './supabasePublic'
 import type { ClubPublicInfo } from '../types/playerHub'
 import type { CoinTier } from '../types'
 
 // ─── Public (anon-accessible) calls ──────────────────────────────────────────
+// These run on the public anon client (supabasePublic) so they never queue
+// behind the owner client's auth refresh lock. See #83 for the bug this
+// solves: /c/<slug> hung on "Loading club info…" when the owner was logged
+// in in another tab on the same browser.
+
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}_timeout`)), ms)
+  })
+  try {
+    return await Promise.race([p, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 export async function getClubPublicInfo(slug: string): Promise<ClubPublicInfo | null> {
-  const { data, error } = await supabase.rpc('get_club_public_info', { p_slug: slug })
+  const { data, error } = await withTimeout(
+    supabasePublic.rpc('get_club_public_info', { p_slug: slug }),
+    8000,
+    'get_club_public_info',
+  )
   if (error) throw error
   if (!data || data.length === 0) return null
   const row = data[0]
@@ -24,12 +45,16 @@ export async function submitTopupIntent(
   playerMobile: string,
   amount: number,
 ): Promise<string> {
-  const { data, error } = await supabase.rpc('submit_topup_intent', {
-    p_slug: slug,
-    p_player_name: playerName || '',
-    p_player_mobile: playerMobile,
-    p_amount: amount,
-  })
+  const { data, error } = await withTimeout(
+    supabasePublic.rpc('submit_topup_intent', {
+      p_slug: slug,
+      p_player_name: playerName || '',
+      p_player_mobile: playerMobile,
+      p_amount: amount,
+    }),
+    8000,
+    'submit_topup_intent',
+  )
   if (error) {
     // Map Postgres exceptions to typed errors
     const msg = error.message ?? ''
@@ -44,9 +69,13 @@ export async function submitTopupIntent(
 export async function getTopupIntentStatus(
   intentId: string,
 ): Promise<{ status: string; rejectReason: string | null } | null> {
-  const { data, error } = await supabase.rpc('get_topup_intent_status', {
-    p_intent_id: intentId,
-  })
+  const { data, error } = await withTimeout(
+    supabasePublic.rpc('get_topup_intent_status', {
+      p_intent_id: intentId,
+    }),
+    8000,
+    'get_topup_intent_status',
+  )
   if (error) throw error
   if (!data || data.length === 0) return null
   return {

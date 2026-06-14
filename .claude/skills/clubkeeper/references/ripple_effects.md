@@ -475,7 +475,7 @@ All 4 paths are guarded by `!paying` — cannot escape mid-payment.
 - `src/hooks/useAccessGuard.ts` — reads loading/session/subscription/dbReady, returns typed guard result
 - `src/components/RequireAccess.tsx` — uses useAccessGuard, redirects to /signup or /subscribe
 - `src/pages/AuthCallback.tsx` — reads loading + subscription to route after OAuth
-- `src/App.tsx` — AuthInitializer calls initialize(); AppLayout hides BottomNav on public paths
+- `src/App.tsx` — AuthInitializer calls initialize(); AppLayout hides BottomNav on public paths. **AuthInitializer skips `initialize()` on `/c/` and `/poster/` routes (#83 fix)** — Player Hub public pages must never trigger owner auth or supabase-js auth lock contention. `ExpirySweepRunner` has the same gate.
 - All private routes: /tables, /start/:id, /session/:id, /summary, /history, /settings
 
 **Rules:**
@@ -1099,9 +1099,15 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 ## Player Hub + ClubCoins + Engagement ripples (10–11 Jun 2026)
 
 ### src/lib/playerHubApi.ts
-- **Imports:** `src/lib/supabase.ts`
-- **Imported by:** `src/pages/PlayerHubSettings.tsx`, `src/pages/Settings.tsx` (updateClubNameRemote), `src/pages/Wallet.tsx` (getOwnerClub), `src/hooks/useLiveData.ts` (getOwnerClub)
+- **Imports:** `src/lib/supabase.ts` (owner client, used by owner-authenticated functions), `src/lib/supabasePublic.ts` (anon client, used ONLY by the three public RPC wrappers — `getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`)
+- **Imported by:** `src/pages/PlayerHubSettings.tsx`, `src/pages/Settings.tsx` (updateClubNameRemote), `src/pages/Wallet.tsx` (getOwnerClub), `src/hooks/useLiveData.ts` (getOwnerClub), `src/pages/player/PlayerScan.tsx` (3 public fns), `src/pages/Poster.tsx` (getClubPublicInfo)
 - **Ripple:** If you change the Supabase `clubs` table columns → update all `select()`/`update()` calls in this file. If you change `upsertClub()` signature → update `PlayerHubSettings.tsx` caller. If you add a new function → also export from this file's index.
+- **Two-client rule (#83 fix):** Owner functions use `supabase`. Public anon RPCs use `supabasePublic`. NEVER call a public RPC on the owner client — it queues behind the owner client's auth lock and hangs `/c/<slug>` when the owner is logged in in another tab. New public RPCs must use `supabasePublic` AND be wrapped in `withTimeout(..., 8000, label)` so transient supabase-js queue hangs surface as errors instead of infinite spinners.
+
+### src/lib/supabasePublic.ts (NEW — #83 fix)
+- **Imports:** `@supabase/supabase-js`
+- **Imported by:** `src/lib/playerHubApi.ts` ONLY
+- **Ripple:** Anon-only client with `persistSession: false`, `autoRefreshToken: false`, `detectSessionInUrl: false`. Do NOT add auth code here. Do NOT import this client from any owner-side module. Do NOT use it for realtime subscriptions (those are owner-side — keep them on `supabase`).
 
 ### src/lib/realtimeTopups.ts
 - **Imports:** `src/lib/supabase.ts`, `src/store/topupInbox.ts`, `src/lib/playerHubApi.ts`

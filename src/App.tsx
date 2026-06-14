@@ -33,9 +33,23 @@ const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback']
 // They must NOT be in PUBLIC_PATHS (would hide BottomNav on /tables if added).
 // The BottomNav hides on any path in PUBLIC_PATHS — wallet paths are not in it.
 
-// Initializes Supabase auth once on mount
+// Returns true if the current URL is a public Player Hub route.
+// Read from window.location directly so callers don't need to be inside Router.
+function isPlayerHubRoute(): boolean {
+  if (typeof window === 'undefined') return false
+  const p = window.location.pathname
+  return p.startsWith('/c/') || p.startsWith('/poster/')
+}
+
+// Initializes Supabase auth once on mount.
+// SKIPPED entirely on /c/ and /poster/ routes — these are public Player Hub
+// pages that must never touch owner auth. Without this gate, an owner who is
+// logged in in another tab causes the same supabase-js client to hold an auth
+// lock that public RPCs queue behind, hanging /c/<slug> on "Loading club
+// info…" indefinitely. See issue #83.
 function AuthInitializer() {
   useEffect(() => {
+    if (isPlayerHubRoute()) return
     useAuthStore.getState().initialize()
   }, [])
   return null
@@ -67,6 +81,7 @@ function ExpirySweepRunner() {
   const { dbReady, session, subscriptionLoaded } = useAuthStore()
 
   useEffect(() => {
+    if (isPlayerHubRoute()) return
     if (!dbReady || !session || !subscriptionLoaded) return
 
     const FOUR_HOURS = 4 * 60 * 60 * 1000

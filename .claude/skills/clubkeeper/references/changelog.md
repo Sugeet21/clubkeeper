@@ -2,6 +2,22 @@
 
 ---
 
+## 15 Jun 2026 — Fix: PlayerScan no longer hangs on "Loading club info…" (#83)
+
+**Bug:** Opening `/c/<slug>` in a second tab while the owner was signed in in the first tab left PlayerScan stuck on the spinner forever. Hard-refreshing the owner tab "fixed" the slug tab but then broke the owner tab on next load — classic ping-pong.
+
+**Root cause:** Single `supabase` singleton was used for both owner auth flows and public Player Hub anon RPCs. supabase-js holds an internal auth lock while a session refresh / `onAuthStateChange` re-fire is in progress. Anon RPCs from the other tab queued behind that lock and never resolved. The 8s `AbortController` in PlayerScan was a no-op because the call was stuck inside supabase-js's queue, not in `fetch`. New Pattern A7.
+
+**Fix (three layers):**
+- `src/lib/supabasePublic.ts` (NEW) — anon-only client with `persistSession/autoRefreshToken/detectSessionInUrl` all `false`. Cannot share an auth lock because it has no auth.
+- `src/lib/playerHubApi.ts` — three public RPC wrappers (`getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`) routed to `supabasePublic`. Owner-side functions in the same file unchanged.
+- `src/App.tsx` — new `isPlayerHubRoute()` helper. `AuthInitializer` and `ExpirySweepRunner` skip when the URL starts with `/c/` or `/poster/`. Player Hub public pages never boot owner auth.
+- Defensive `withTimeout(rpcPromise, 8000, label)` wraps every public RPC — any future queue hang surfaces as `<label>_timeout` Error instead of an infinite spinner.
+
+Build clean (957.02 kB index). Closes #83 — pending owner verification.
+
+---
+
 ## 15 Jun 2026 — UX: QuickSale UPI screen layout now matches SessionDetail (#82)
 
 QuickSale's post-payment UPI QR screen had its amount in the upper-left corner with a `Quick Sale · UPI Payment` kicker, while SessionDetail's post-stop UPI screen uses a centered "Collect UPI payment" chip header and puts the amount UNDER the QR. Two flows, same screen, inconsistent layout.
