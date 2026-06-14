@@ -129,7 +129,7 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 - **BUG-QS-UPI-QR** (#69, fixed, 2b83dd1) — QuickSale showed no UPI QR after UPI payment selected — see GitHub
 - **BUG-MOVE-BILLINGMODE** (#72, fixed, 6be8ed0) — Table Move allows cross billing-mode moves (rateCardBilling / rateCard / toleranceMinutes not checked) — see GitHub
-- **BUG-SUMMARY-STALE** (#70, fixed, 9f7e2aa) — TopTablesList + HourlyHeatmap frozen while sessions run (useMemo T4 violation) — see GitHub
+- **BUG-SUMMARY-STALE** (#70, fixed, 41a7bb1) — Day's earnings + Avg session + TopTablesList + HourlyHeatmap frozen (useMemo T4 violation on runningRevenueToday + rankTables + bucketByHour) — see GitHub
 - **BUG-SUMMARY-INCONSISTENT** (#71, open) — Audit: which Summary widgets tick live vs frozen — see GitHub
 - **BUG-STOP-PAYMENT-RACE** (#73, open) — Session stopped even when staff cancels payment sheet — see GitHub
 - **BUG-STOP-PAUSE-FIRST** (#74, open) — End Session should PAUSE first; only stop on payment confirm — see GitHub
