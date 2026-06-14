@@ -181,13 +181,55 @@ Read MULTIPLE files when the question spans domains.
 - **LIMIT-002:** `/api/*` requires `vercel dev` locally, not `npm run dev`. Handled with friendly 404 error in `handlePayNow`.
 - **LIMIT-003 (multi-device sync request count: 2/3):** Two paying customers have now asked for multi-device sync (Customer #1: 12-table club, 7 Jun 2026; Customer #2: Ball Bender 4-partner club, 9 Jun 2026). Threshold per decision is 3+. Keep deferring full Supabase sync until the third ask. Interim solution for Ball Bender: "Shift Handover" JSON export/import between partner phones (not yet built; defer until they actually complain).
 
-## Updating This Skill
+## Bug Tracking — GitHub Issues
 
-After every meaningful session:
-1. **New bug fixed?** Append entry to `bug_archive.md`. If it's a new class of bug or matches an existing pattern → update the relevant section of `bug_patterns.md`.
-2. **New active decision?** Append to `decisions_active.md`. If it supersedes an old one → move the old one to `decisions_archive.md`.
-3. **Feature shipped?** Update Current State Snapshot above + append to `changelog.md`.
-4. **Pricing/business shift?** Update `business_context.md`.
-5. **New architectural pattern?** Update `architecture.md`.
+**As of 14 Jun 2026, bugs are tracked at: https://github.com/Sugeet21/clubkeeper/issues**
 
-At end of substantial sessions, proactively ask: "Want me to update the skill with what we just decided?"
+- **67 issues created** covering all bugs from bug_archive.md + the June 2026 audit
+- **Issues #1–54:** fixed bugs (all closed with commit reference)
+- **Issues #55–67:** open bugs from the audit (A1–A5, P1–P2, W1–W2, S1–S2, R1–R2)
+- **Q1 skipped:** was a false alarm — null-guard already existed in PlayerScan.tsx:102
+
+`bug_archive.md` now contains one-line pointers only. Full description, root cause, and fix details live on GitHub.
+
+**When a new bug is found:**
+1. `gh issue create` with the standard format (title: "BUG-ID — description", labels: bug + priority + domain + status)
+2. Add a ONE-LINE pointer to `bug_archive.md`
+3. When fixed: close issue with commit SHA as comment, update pointer in `bug_archive.md`
+
+## Updating This Skill — MANDATORY RULES
+
+### Rule A: Update skill AFTER EVERY PHASE, not after the module
+When Opus gives multi-phase prompts, the skill MUST be updated at
+the end of EACH phase before moving to the next. Compaction will
+eat details otherwise.
+
+### Rule B: Every src/ commit needs a paired skill commit
+If you change anything in src/, you MUST update at least one of:
+changelog.md, ripple_effects.md, bug_archive.md, decisions_active.md,
+or Current State Snapshot in SKILL.md — in the same working session.
+Run `git log --since="2 hours ago" --name-only` before declaring
+"done" — if src/ files appear but no skill files do, the skill is
+stale. Fix it before stopping.
+
+### Rule C: Bugs go to GitHub Issues, not bug_archive.md
+New bugs → `gh issue create` with the format established in
+github.com/Sugeet21/clubkeeper/issues. bug_archive.md only gets a
+one-line pointer. Full description, discussion, and fix details live
+on GitHub.
+
+### Rule D: Before fixing any bug in a known-bug area
+1. Read the relevant section of bug_patterns.md (existing rule).
+2. Search GitHub issues for prior occurrences:
+     gh issue list --search "<keywords>" --state all
+   If a similar issue exists (open or closed), read it before writing
+   code. Reference it in your commit message.
+
+### Rule E: At end of every session
+Proactively ask Sugeet: "Skill update checklist:
+- changelog.md updated?
+- ripple_effects.md updated for files touched?
+- Any new bug → GitHub issue created?
+- Any new pattern → bug_patterns.md updated?
+- Current State Snapshot still accurate?"
+Do NOT skip this. Sugeet has explicitly asked for this check.

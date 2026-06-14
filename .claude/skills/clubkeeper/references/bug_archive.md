@@ -1,206 +1,169 @@
-# Bug History
+# Bug Archive — Pointer Index
 
-Every bug found in ClubKeeper, with root cause and fix. Always check this before suggesting a code change — the bug might have been seen before.
+Bugs are tracked as GitHub Issues at:
+**https://github.com/Sugeet21/clubkeeper/issues**
 
-## How to use this file
+This file contains one-line pointers only. For the full description, root cause,
+fix details, and commit SHA, use:
 
-When Sugeet reports a new bug:
-1. Search this file for similar symptoms first.
-2. If similar pattern found → apply same fix pattern.
-3. If new → fix it, then APPEND a new entry to this file.
-
-Format for entries:
 ```
-### [Date] — [Short title]
-**Symptom:** What Sugeet saw  
-**Root cause:** Technical explanation  
-**Fix:** What was changed and where  
-**Lesson:** What to remember to avoid this class of bug  
+gh issue view <number>
+gh issue list --state all --label bug
+gh issue list --search "<keywords>" --state all
 ```
 
----
-
-### 12 Jun 2026 — All deep routes returning HTTP 404 on production [B-deploy-1]
-
-**Symptom:** Opening `app.handbookhq.in/c/<slug>` (player QR URL) in incognito returned Vercel's "404: NOT_FOUND" page. Same for `/tables`, `/auth/callback`, any route other than `/`. Google OAuth login was broken because the callback URL 404'd. PWA icons (pwa-192x192.png, pwa-512x512.png) also 404'd.
-**Root cause:** `vercel.json` was missing. Vercel's CDN treats each path as a file lookup — no file at `/c/star-club` → 404. The Workbox `navigateFallback: 'index.html'` in `vite.config.ts` only activates after the service worker installs; on first incognito load there is no SW, so the fallback never fires. PWA icon files were referenced in the Vite manifest config but the actual PNG files were never committed to `public/`.
-**Fix:** Added `vercel.json` with a catch-all SPA rewrite `"source": "/((?!api/).*)"` → `"/index.html"`. Committed all missing PWA/favicon files to `public/`. Added `<link>` tags to `index.html <head>`.
-**Files:** `vercel.json` (new), `index.html`, `public/favicon.ico`, `public/favicon-16x16.png`, `public/favicon-32x32.png`, `public/apple-touch-icon.png`, `public/pwa-192x192.png`, `public/pwa-512x512.png`, `public/logo_master.svg`
-**Lesson:** Every Vite SPA deployed to Vercel needs `vercel.json` with a rewrite rule. Vercel does NOT auto-detect SPA routing — it only does so for frameworks it knows natively (Next.js, Nuxt, SvelteKit). Vite is treated as a static site. Add `vercel.json` at project creation, not after the first 404 report.
+Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
-### 07 Jun 2026 — Canteen page stuck on "Loading…" forever [B-canteen-1]
+## May 2026 — Initial bug sprint
 
-**Symptom:** `/canteen` route showed only "Loading…" text. No header, no back button, no FAB. Entire page was gated on the `useLiveQuery` undefined initial state.
-**Root cause:** `useLiveQuery` returns `undefined` initially (before Dexie query resolves). `Canteen.tsx` returned `<Loading />` when query returned `undefined`, gating ALL page chrome — header, FAB, stats row — on the data query.
-**Fix:** Refactored page so header + FAB always render. Only the list area branches on `undefined` (skeleton) / `[]` (empty state) / `[items]` (cards). Added 3 skeleton pulse cards when `items === undefined`.
-**Files:** `src/pages/Canteen.tsx`
-**Lesson:** Page chrome must render from the URL, never from data queries. Loading states are local to the data they wait on — never gate the entire page on them.
-
----
-
-### 07 Jun 2026 — Boolean index queried with integer in Dexie [B-canteen-2]
-
-**Symptom:** `getCanteenItems()` returned `[]` even when `canteenItems` table had rows with `isActive=true`.
-**Root cause:** Query used `.where('isActive').equals(1)`. IndexedDB stores JS booleans as booleans, not integers. `.equals(1)` never matched `true`.
-**Fix:** Changed to `.orderBy('sortOrder').filter(item => item.isActive === true)`.
-**Files:** `src/db/queries.ts`
-**Lesson:** Dexie boolean fields need `.equals(true)` or `.filter()`, never `.equals(1)`. Better to avoid boolean indexes entirely for small datasets and use `.filter()`.
+- **BUG-toggle** (#1, fixed) — Out-of-Service toggle knob misaligned (hand-rolled CSS) — see GitHub
+- **BUG-date-input** (#2, fixed) — Date inputs in History rendered as div, not tappable — see GitHub
+- **BUG-padding** (#3, fixed) — Amount column touching screen edge (inconsistent px-4 vs px-5) — see GitHub
+- **BUG-rounding** (#4, fixed) — Time Rounding setting had no effect on session billing — see GitHub
+- **BUG-delete-crash** (#5, fixed) — Delete table crashed with undefined error (modal stayed open after soft-delete) — see GitHub
+- **BUG-label-mislead** (#6, fixed) — Delete button label was misleading; action was actually Disable — see GitHub
+- **BUG-fade-btn** (#7, fixed) — Edit pencil on disabled table faded; form had stale state — see GitHub
+- **BUG-datepicker-theme** (#8, fixed) — Calendar date picker rendered in light theme on dark app — see GitHub
+- **BUG-name-overflow** (#9, fixed) — Long player name overflowed everywhere; no maxLength or truncation — see GitHub
+- **BUG-name-pollution** (#10, fixed) — Special characters in player name polluted suggestion chips — see GitHub
+- **BUG-disable-active** (#11, fixed) — Could disable a table that had a running session — see GitHub
 
 ---
 
-### 07 Jun 2026 — /canteen URL navigation silently redirected to /tables [B-canteen-3]
+## 24 May 2026 — Accessibility + auth + navigation sprint
 
-**Symptom:** Typing `localhost:5173/canteen` in the URL bar → URL flipped to `/tables`. Tables page rendered. No console errors. In-app navigation (click cart icon in TopBar) worked fine.
-**Root cause (two layered):** (1) React StrictMode + Vite HMR double-runs `initialize()`. (2) Brief window where `loading=false`, `dbReady=true`, but `subscription=undefined` (still loading). `useAccessGuard` treated `undefined` subscription as `no_subscription` → `RequireAccess` redirected to `/subscribe` → `Subscribe.tsx` saw active subscription on next tick → redirected back to `/tables`. Both used `replace: true`, making the URL flip invisible.
-**Fix:** Added `subscriptionLoaded: boolean` flag to `authStore`. Set `true` only after `refreshProfile()` resolves. Added `'subscription_loading'` reason to `useAccessGuard`. `RequireAccess` treats it as a spinner (no redirect).
-**Files:** `src/store/authStore.ts`, `src/hooks/useAccessGuard.ts`, `src/components/RequireAccess.tsx`
-**Note:** Fix didn't fully resolve localhost StrictMode behavior — a shorter timing window remains. Production is verified working on all routes. Accepting the localhost quirk.
-**Lesson:** Every field in authStore read by the guard MUST have an explicit "loaded" flag. `undefined` (not loaded yet) and `null` (definitely empty) look the same to a truthiness check — they must be disambiguated.
-
----
-
-### 07 Jun 2026 — Delete UX looked like stock tracking toggle [B-canteen-4]
-
-**Symptom:** Canteen item list showed a green ON/OFF toggle next to each item. Staff would assume it controls stock tracking (because the stock pill was next to it). The toggle actually soft-deleted the item.
-**Root cause:** UI affordance (green toggle next to "50 in stock" pill) implied "enable/disable stock tracking" rather than "remove item permanently."
-**Fix:** Replaced toggle with a red trash icon + `ConfirmModal` ("Delete {item.name}? This item will be removed from the canteen list. Past sales history is preserved.")
-**Files:** `src/pages/Canteen.tsx`
-**Lesson:** Match UI affordance to action consequence. One-tap actions with destructive consequences need confirmation. Toggles should toggle state, not delete records.
-
----
-
-### 07 Jun 2026 — Nested Dexie transaction caused silent partial write — CRITICAL money bug [B-canteen-5]
-
-**Symptom:** Adding a canteen item to a session showed error "Transaction has already completed or failed". Stock was decremented anyway. Session item was NOT added. Customer was undercharged. Stock count drifted from actual.
-**Root cause:** `AddItemBottomSheet` wrapped `decrementCanteenItemStock` + `addSessionItem` in an outer `db.transaction`. But `decrementCanteenItemStock` (in `queries.ts`) opens its OWN internal `db.transaction('rw', db.canteenItems, ...)`. The inner transaction committed and closed first. The outer transaction's subsequent `sessionItems.add()` ran on a dead transaction and failed. Stock change was already permanent — no rollback.
-**Fix:** Inlined the decrement logic directly inside the outer transaction in `AddItemBottomSheet`. One atomic `db.transaction('rw', db.canteenItems, db.sessionItems, ...)` does both the stock update AND the session item insert. Either both happen or neither. `decrementCanteenItemStock` preserved in `queries.ts` for standalone use but no longer called from `AddItemBottomSheet`.
-**Files:** `src/components/AddItemBottomSheet.tsx`
-**Lesson:** NEVER nest Dexie transactions. If a helper function opens its own `db.transaction()`, do not call it from inside another transaction — inline the logic instead. See Pattern D7.
+- **BUG-001** (#12, fixed) — FAQ accordion content readable by screen reader when collapsed — see GitHub
+- **BUG-002** (#13, fixed) — authStore.refreshProfile() fired twice on every page load (INITIAL_SESSION) — see GitHub
+- **BUG-003** (#14, fixed) — PaymentBottomSheet not hidden from screen readers when closed — see GitHub
+- **BUG-004** (#15, fixed) — Home FAB navigated to /settings instead of opening Add Table modal — see GitHub
+- **BUG-005** (#16, fixed) — FilterPills below 44px touch target — see GitHub
+- **BUG-006** (#17, fixed) — TopBar settings gear button below 44px touch target — see GitHub
+- **BUG-007** (#18, fixed) — StartSession back button and name chips below 44px touch target — see GitHub
+- **BUG-008** (#19, fixed) — Player name input silently truncated at 50 chars with no error shown — see GitHub
+- **BUG-009** (#20, fixed) — Stop session navigated to / (landing page) instead of /tables — see GitHub
+- **BUG-010** (#21, fixed) — SessionDetail back button and pencil edit button below 44px — see GitHub
+- **BUG-011** (#22, fixed) — Session amounts in History/Summary missing Indian number formatting — see GitHub
+- **BUG-012** (#23, fixed) — Modal scrim intercepted clicks on sheet; no Escape key handler — see GitHub
+- **BUG-013** (#24, fixed) — Subscription section invisible in Settings while subscription was null — see GitHub
+- **BUG-015** (#25, fixed) — Google OAuth auto-selected account with no picker shown — see GitHub
+- **BUG-016** (#26, fixed) — PaymentBottomSheet had no escape path (no ESC, no Maybe Later) — see GitHub
+- **BUG-017** (#27, fixed) — Payment click spun forever + cryptic JSON error on local dev — see GitHub
 
 ---
 
-### 19 May 2026 — Toggle button misaligned
+## 25 May 2026 — Razorpay + auth fixes
 
-**Symptom:** Out-of-Service toggle in TableFormModal had knob overlapping the track, looked broken.  
-**Root cause:** Built as styled checkbox with hand-rolled CSS, position math was off.  
-**Fix:** Rebuilt as a `<button role="switch">` with absolute-positioned knob using `translateX`. Now a reusable `<Toggle>` component.  
-**Lesson:** Don't reinvent form controls with checkboxes + CSS. Use semantic buttons with proper ARIA.
-
----
-
-### 19 May 2026 — Date inputs in History not editable
-
-**Symptom:** Tapping From/To dates did nothing.  
-**Root cause:** Dates were rendered as `<div>` not `<input type="date">`.  
-**Fix:** Real `<input type="date">` with `[color-scheme:dark]` for theme matching. Use YYYY-MM-DD strings, not Date objects, for state.  
-**Lesson:** Use native HTML inputs when possible. They give free mobile keyboards/pickers.
+- **BUG-018** (#28, fixed) — Razorpay 400 "ID invalid" — plan IDs from different account than active keys — see GitHub
+- **BUG-019** (#29, fixed, b99388b) — Server/frontend error shape mismatch hid real Razorpay errors — see GitHub
+- **BUG-020** (#30, fixed, b99388b) — Auth hung permanently on /auth/callback if refreshProfile threw — see GitHub
+- **BUG-021** (#31, fixed) — Razorpay 400 "ID invalid" — TEST key used with LIVE plan IDs (mode mismatch) — see GitHub
 
 ---
 
-### 19 May 2026 — Amount column touching screen edge
+## 29 May 2026 — Timer + UI polish
 
-**Symptom:** History session amounts had no breathing room from right edge.  
-**Root cause:** Container used `px-4` or no horizontal padding.  
-**Fix:** Standardized all page-level horizontal padding to `px-5`.  
-**Lesson:** Pick one horizontal padding value and use it everywhere. Inconsistent padding looks unprofessional.
-
----
-
-### 19 May 2026 — Time Rounding setting did nothing
-
-**Symptom:** Set rounding to 15min, stopped a session at 1 min — amount calculated as 1 min, not 15.  
-**Root cause:** `applyRounding()` existed in `money.ts` but `stopSession()` never called it.  
-**Fix:** In `stopSession()`, read settings, if `billingMode === 'per_hour'` and rounding !== 'none', round elapsed UP to nearest 15/30 min, use rounded value for amount. Store rounded duration in new `roundedDurationMs` field.  
-**Lesson:** Settings must actually be plumbed into the action that uses them. Add a test scenario after every settings flag added.
+- **BUG-022** (#32, fixed) — Today pill on /tables frozen; running sessions not contributing live amount — see GitHub
+- **BUG-023** (#33, fixed) — Payment screen QR card had uneven white borders (fluid container + fixed child) — see GitHub
+- **BUG-024** (#34, fixed) — Done button on payment screen hidden behind bottom nav (missing z-50) — see GitHub
 
 ---
 
-### 19 May 2026 — Delete table crashes app
+## 3–4 Jun 2026 — Subscription billing fixes
 
-**Symptom:** Tapping Delete on a table → "Cannot read properties of undefined (reading 'name')".  
-**Root cause:** After soft-delete, modal stayed open and tried to re-render with deleted table data.  
-**Fix:** Close modal IMMEDIATELY via `setEditingTableId(null)` after the action. Add `if (!table) return null` guard at top of modal component.  
-**Lesson:** Always close UI before mutating data, OR keep stale data accessible until UI is gone.
+- **BUG-025** (#35, fixed) — Cancel subscription failed during trial ("no billing cycle" from Razorpay) — see GitHub
+- **BUG-026** (#36, fixed) — Expired-trial users got a free fresh 7-day trial on every subscribe attempt — see GitHub
 
 ---
 
-### 19 May 2026 — "Delete" button label was misleading
+## 12 Jun 2026 — Deployment + PWA
 
-**Symptom:** Button said "Delete" but actually soft-deleted (set outOfService). Toggle let users un-delete. Confusing.  
-**Root cause:** Inherited from earlier prompt that used "Delete" terminology.  
-**Fix:** Renamed to "Disable Table" / "Enable Table" based on current state. Removed redundant "Out of Service" toggle. Single source of truth.  
-**Lesson:** Button labels must match what they actually do. If a "Delete" doesn't actually delete, name it correctly.
+- **B-deploy-1** (#37, fixed, 9d474b0) — All deep routes returning HTTP 404 on production (missing vercel.json) — see GitHub
 
 ---
 
-### 19 May 2026 — Edit pencil on disabled table opens broken form
+## 7 Jun 2026 — Canteen management sprint
 
-**Symptom:** Disabled tables looked fully faded including the edit pencil. Tapping pencil still worked but form had stale state.  
-**Root cause:** `opacity-50` was applied to the entire row, including the action button.  
-**Fix:** Apply opacity ONLY to text/info div. Pencil stays full opacity. Form button row is context-aware: shows "Enable Table" when editing a disabled table.  
-**Lesson:** Don't fade clickable elements. Either disable them properly (pointer-events-none) or keep them at full opacity.
-
----
-
-### 19 May 2026 — Calendar date picker had light theme
-
-**Symptom:** Native date picker on Summary opened with white background, jarring against dark app.  
-**Root cause:** No `color-scheme: dark` CSS property set.  
-**Fix:** Quick fix: add `[color-scheme:dark]` Tailwind class. Better fix: replace with `react-day-picker` themed to match.  
-**Lesson:** Native browser UI (date pickers, scrollbars, etc.) needs `color-scheme` for dark mode. Always add it.
+- **B-canteen-1** (#38, fixed) — Canteen page stuck on "Loading..." forever (useLiveQuery gating all chrome) — see GitHub
+- **B-canteen-2** (#39, fixed) — Boolean index queried with integer in Dexie returned empty results — see GitHub
+- **B-canteen-3** (#40, fixed) — /canteen URL silently redirected to /tables (subscription_loading race) — see GitHub
+- **B-canteen-4** (#41, fixed) — Delete UX looked like a stock tracking toggle (affordance mismatch) — see GitHub
+- **B-canteen-5** (#42, fixed) — Nested Dexie transaction caused silent partial write (CRITICAL money bug) — see GitHub
 
 ---
 
-### 19 May 2026 — Long player name overflows everywhere
+## 8 Jun 2026 — Canteen POS stock sync sprint
 
-**Symptom:** Sugeet tested with 100-char garbage name. Text overflowed Home cards, Session Detail, suggestion chips, and the input itself.  
-**Root cause:** No maxLength on input. No truncation in display.  
-**Fix:** `maxLength={50}` on input. Validation regex blocking special chars. Truncate + ellipsis in all display contexts via `truncate min-w-0 flex-1`.  
-**Lesson:** Every text input needs a maxLength. Every text display needs a max-width with truncate. Plan for adversarial input.
-
----
-
-### 19 May 2026 — Special characters in player name pollute suggestions
-
-**Symptom:** Garbage characters from testing showed up in recent-players chip list, broke layout further.  
-**Root cause:** `getRecentPlayerNames()` returned anything stored, no filter.  
-**Fix:** Filter in two places — at query time (skip names that fail validation) and at storage time (validate before save). Also added "Clean Invalid Data" button in Settings to retroactively clean.  
-**Lesson:** Validate at write AND read. If validation rules change later, old data may not match — provide a cleanup tool.
+- **B-canteen-sprint-3** (#43, fixed) — Quick Add and manual form bypassed canteen stock decrement — see GitHub
+- **B-canteen-sprint-4** (#44, fixed) — Repeated chip tap created duplicate session item rows instead of incrementing qty — see GitHub
+- **B-canteen-sprint-5** (#45, fixed) — Edit/Delete/Undo session items bypassed canteen stock sync — see GitHub
 
 ---
 
-### 19 May 2026 — Could disable a running table
+## 10 Jun 2026 — Payment split + money invariants
 
-**Symptom:** User started a session on Pool 1, went to Settings, disabled Pool 1. Pool 1 disappeared from Home. The running session was now orphaned and inaccessible from the UI.  
-**Root cause:** No check that the table is in use before allowing disable.  
-**Fix:** In TableFormModal, check for active session before allowing disable. Disable button + warning text if blocked. Re-check on submit to handle race conditions.  
-**Lesson:** Destructive/state-changing actions must check related data integrity, not just the target entity.
+- **B-payment-1** (#46, fixed) — PaymentSplitSheet breakdown mismatch (session.amount != grand total) — see GitHub
+- **B-ui-quicksale-pill** (#47, fixed) — Quick Sale pill orphaned on its own row; broken at 320px — see GitHub
+
+---
+
+## 11 Jun 2026 — Player Hub bug sprint
+
+- **B1/B2** (#48, fixed) — PendingTopupsModal confirm/reject called wrong endpoint + no idempotency — see GitHub
+- **B3/B4/B5** (#49, fixed) — Accept Topups toggle resets on nav + pending count mismatch + no wallet badge — see GitHub
+- **B6/B7/B8** (#50, fixed) — PlayerScan shows QR to player + rate input bug + double currency symbol — see GitHub
+
+---
+
+## 14 Jun 2026 — Bug audit fixes (commit f9e3e62)
+
+- **T1** (#51, fixed, f9e3e62) — PendingTopupsModal Confirm enabled before useLiveQuery loads; wrong welcome bonus preview — see GitHub
+- **T2** (#52, fixed, f9e3e62) — decrementPending called even when Supabase confirm fails; modal desyncs from cloud — see GitHub
+- **P3** (#53, fixed, f9e3e62) — _clubSyncDone module flag never resets between users on same tab — see GitHub
+- **Q2** (#54, fixed, f9e3e62) — PlayerScan polling sets state on unmounted component — see GitHub
+
+---
+
+## Open — From 14 Jun 2026 Audit (issues #55–67)
+
+- **A1** (#55, open) — Signup setTimeout double-submit race on rapid taps — see GitHub
+- **A2** (#56, open) — Subscribe hardcoded 1500ms delay instead of waiting for webhook — see GitHub
+- **A3** (#57, open) — AuthCallback 20s timeout bounces user even if subscription fetch is just slow — see GitHub
+- **A4** (#58, open) — authStore profile fetch uses .single() with no error handling — see GitHub
+- **A5** (#59, open) — authStore calls openAndSeed on every INITIAL_SESSION re-fire — see GitHub
+- **P1** (#60, open) — PlayerHubSettings syncCoinConfig errors silently swallowed — see GitHub
+- **P2** (#61, open) — PlayerHubSettings handleSaveSlug crashes if clubName is null — see GitHub
+- **W1** (#62, open) — Wallet.tsx has no fetch cancellation on navigate away — see GitHub
+- **W2** (#63, open) — WalletTopup UI freezes if db.customers.get() fails after topup — see GitHub
+- **S1** (#64, open) — Settings club name sync shows toast on failure but has no retry — see GitHub
+- **S2** (#65, open) — Settings reset dialog shows stale session count — see GitHub
+- **R1** (#66, open) — Fallback polling not cancelled when Supabase realtime reconnects — see GitHub
+- **R2** (#67, open) — Realtime initial count never loads if first fetch throws — see GitHub
 
 ---
 
 ## Patterns to Watch For
 
-These are recurring bug classes — be paranoid when these come up:
+These are recurring bug classes — see `bug_patterns.md` for the full pattern catalogue with rules and code examples.
 
 ### Pattern A: Stale data after mutation
 After delete/soft-delete, components re-render with the now-missing data. Always close UI BEFORE mutating, OR add null guards.
 
 ### Pattern B: Settings not wired to action
-A toggle in Settings does nothing because the action code doesn't read the setting. Add a checklist when implementing new settings: where is this read?
+A toggle in Settings does nothing because the action code never reads the setting.
 
-### Pattern C: Native HTML controls don't theme
-Date pickers, file inputs, select dropdowns, scrollbars — all need explicit theming. Test in actual dark mode.
+### Pattern C: Native HTML controls do not theme
+Date pickers, file inputs, select dropdowns — all need explicit `color-scheme` for dark mode.
 
 ### Pattern D: Adversarial input
-Always assume users will paste 10,000 chars, type emoji, special chars, SQL injection. maxLength + validation + truncation in display.
+Always assume users will paste 10,000 chars, emoji, special chars. maxLength + validation + truncation in display.
 
 ### Pattern E: Race conditions
-Two tabs open, both tap the same button. Or: user taps fast twice. Pre-check + re-check pattern. Or disable button after first tap.
+Two tabs open, both tap the same button. Pre-check + re-check pattern. Disable button after first tap.
 
 ### Pattern F: Timer state from counters
-ANY time someone proposes `setInterval` to increment a number — STOP. Use timestamps and derive on render.
+ANY time someone proposes setInterval to increment a number — STOP. Use timestamps and derive on render.
 
 ---
 
@@ -209,448 +172,13 @@ ANY time someone proposes `setInterval` to increment a number — STOP. Use time
 ### 21 May 2026 — IndexedDB data is shared across users in same browser
 
 **Symptom:** Two different Google accounts signing in on the same browser see the same tables and session data.
-**Root cause:** IndexedDB is per-browser-origin, not per-user. All data in `db.gameTables` and `db.sessions` is completely shared.
 **Current state:** Acceptable for v1 — product is single-user (one owner, one device).
-**Fix when:** Adding cloud sync (Supabase). At that point, scope all Dexie reads/writes by `userId`. Tables and sessions will need a `userId` field added to the schema (Dexie version bump required).
-**Lesson:** Mention this to Sugeet if he ever suggests letting multiple staff log in from one phone — it would cause data confusion until user-scoping is done.
-
----
-
----
-
-### 24 May 2026 — BUG-009: handleStop navigated to `/` instead of `/tables`
-
-**Symptom:** Stopping a session via the "Yes, End Session" button navigated back to the root route (`/`) which is the Landing page, not the app's table list.
-**Root cause:** `handleStop()` in `SessionDetail.tsx` called `navigate('/', { replace: true })`. The `/` → `/tables` migration from Prompt 9 missed this specific line (line 200 was inside an async try block).
-**Fix:** Changed `navigate('/', { replace: true })` → `navigate('/tables', { replace: true })` in `handleStop()`. Confirmed no other `navigate('/')` calls remain in the file.
-**Lesson:** When migrating route names, search for ALL occurrences in a file including those inside try/catch blocks. grep for `navigate\('/'` after every route rename.
-
----
-
-### 24 May 2026 — BUG-011: Session amounts in History and Summary missing Indian formatting
-
-**Symptom:** Session amounts in row-level `SessionRow` components showed raw numbers (e.g. `1500`) instead of Indian-formatted numbers (e.g. `1,500`). Day totals and the Summary hero were already correct.
-**Root cause:** `SessionRow` in both `History.tsx` and `Summary.tsx` rendered `{currency}{amount}` with no `toLocaleString`. The aggregate/hero displays had `toLocaleString('en-IN')` but the individual row renders were missed.
-**Fix:** Changed `{currency}{amount}` → `{currency}{amount.toLocaleString('en-IN')}` in the `SessionRow` component in both files. Swept entire files to confirm no other raw currency renders remain.
-**Lesson:** When adding `toLocaleString` in one place, sweep the entire file for similar patterns. Row-level displays are often added after top-level aggregates and miss the formatting treatment.
-
----
-
-### 24 May 2026 — BUG-003: PaymentBottomSheet not hidden from screen readers when closed
-
-**Symptom:** The payment bottom sheet was visually hidden via `translateY(100%)` when closed, but `role="dialog" aria-modal="true"` still announced it to screen readers as an open dialog.
-**Root cause:** No `aria-hidden` attribute on the dialog div when closed; screen readers could still focus into the sheet's content.
-**Fix:** Added `aria-hidden={!open}` and `tabIndex={open ? 0 : -1}` to the outer dialog div. Visual translateY animation is unchanged. When `open=false`, `aria-hidden=true` hides all descendants from the accessibility tree.
-**Lesson:** Visual-only show/hide (translateY, opacity) doesn't hide content from screen readers. Always pair with `aria-hidden` for dialog/sheet components that slide in/out.
-
----
-
-### 24 May 2026 — BUG-001: FAQ accordion content not hidden from accessibility tree when collapsed
-
-**Symptom:** Collapsed FAQ answer panels were visually hidden via `maxHeight: 0` but still readable by screen readers and accessible via Tab key.
-**Root cause:** No `aria-hidden` or `inert` attribute on the content div when collapsed.
-**Fix:** Added `aria-hidden={!isOpen}` and `inert={isOpen ? undefined : ''}` to the collapsible content div. Also added `inert` to `React.HTMLAttributes<T>` in `vite-env.d.ts` so TypeScript accepts it (React 18 doesn't include `inert` natively). The `maxHeight` transition is unchanged.
-**Lesson:** `maxHeight: 0` / `overflow: hidden` is CSS-only — it doesn't affect the accessibility tree. For interactive collapsibles, always add `aria-hidden` + `inert` to the hidden content.
-
----
-
-### 24 May 2026 — BUG-008: Player name input silently truncated at 50 chars
-
-**Symptom:** If a player name was longer than 50 characters, the `maxLength={50}` HTML attribute silently cut the input at 50 with no feedback to the user. The validation error message was never shown because the input never actually exceeded the limit.
-**Root cause:** `maxLength={PLAYER_NAME_MAX}` on the `<input>` meant the browser truncated before React's `onChange` could fire with the full value, so `validatePlayerName()` never received a >50-char string.
-**Fix:** Removed `maxLength={50}` from the player name input. The existing `validatePlayerName()` check in `handlePlayerNameChange()` now correctly fires and sets `playerNameError` when length > 50, the error message displays under the input, and `disabled={... || Boolean(playerNameError)}` on the submit button blocks submission. Removed unused `PLAYER_NAME_MAX` import to satisfy `noUnusedLocals`.
-**Lesson:** `maxLength` silences the user without feedback. Always prefer explicit validation that shows an error message. The submit disable + error message is the correct UX — `maxLength` fights against it.
-
----
-
-### 24 May 2026 — BUG-013: Subscription section hidden when subscription state is null
-
-**Symptom:** On the Settings page, the entire "Subscription" section was invisible when auth was still loading or when `refreshProfile()` hadn't completed yet. Users saw no subscription info at all during load.
-**Root cause:** The render condition was `{subscription && subscription.status !== 'none' && (...)}`. When `subscription` is `null` (the initial state in authStore before `initialize()` resolves), the condition short-circuits and renders nothing.
-**Fix:** Changed to a ternary: when `subscription === null` show a `<Section title="Subscription">` with "Loading subscription…" text; when `subscription.status !== 'none'` show the full subscription details; else render `null`. The section position is preserved in both states.
-**Lesson:** Don't `&&`-gate entire UI sections on async state — it causes invisible layout jumps. Show a loading placeholder in the same position so the page layout is stable.
-
-**BUG-013 resolved (24 May 2026). Decision: option (b).** For `status='none'`, `Settings.tsx` now renders a "No active plan, Subscribe →" card instead of hiding the section. Better UX (no blank space) + conversion nudge for unsubscribed users. The final three branches are: `null` → loading placeholder, `status !== 'none'` → full subscription detail UI, else (`status='none'`) → subscribe CTA card.
-
----
-
----
-
-### 24 May 2026 — BUG-005: FilterPills below 44px touch target
-
-**Symptom:** Game-type filter pills (All / Pool / Snooker / Carrom / PlayStation) on the Home screen were ~24px tall — too small for reliable tapping on mobile.
-**Root cause:** `py-1.5 px-3` gave only ~24px height on a 12px font; no `min-h` constraint.
-**Fix:** In `src/components/FilterPills.tsx`, replaced `py-1.5 px-3` with `min-h-[44px] px-4`. Active accent styling and count badge untouched.
-**Lesson:** Pills/chips are interactive — they need the same `min-h-[44px]` as buttons. `py-*` alone is unreliable; always anchor with `min-h`.
-
----
-
-### 24 May 2026 — BUG-006: TopBar settings gear button below 44px touch target
-
-**Symptom:** Settings gear icon in TopBar was `w-9 h-9` (36×36px) — below the 44px minimum.
-**Root cause:** `w-9 h-9` = 36px, no `min-w`/`min-h` override.
-**Fix:** In `src/components/TopBar.tsx`, changed `w-9 h-9` → `w-11 h-11` (44px). SVG icon size (20px) unchanged.
-**Lesson:** Icon-only buttons sized purely by `w-N h-N` Tailwind shorthand are easy to miss. Always check that N ≥ 11 (44px) for touch targets.
-
----
-
-### 24 May 2026 — BUG-010: SessionDetail "Home" back button and pencil edit button below 44px
-
-**Symptom:** The "← Home" back button was ~32px tall (`py-1.5`); the pencil edit button was 34×34px (`p-2` around an 18px icon).
-**Root cause:** Both used padding-based sizing with no `min-h`/`min-w` floor.
-**Fix:** In `src/pages/SessionDetail.tsx`:
-- "Home" button: replaced `py-1.5` with `min-h-[44px]`
-- Pencil button: replaced `p-2` with `min-w-[44px] min-h-[44px] flex items-center justify-center`
-Icon sizes and dark-theme colours unchanged.
-**Lesson:** Back-nav buttons and icon-only action buttons in page headers are the most commonly missed touch-target failures. Add `min-h-[44px]` as a default for any header button.
-
----
-
-### 24 May 2026 — BUG-007: StartSession "Back" chevron and recent-name chips below 44px
-
-**Symptom:** The "← Back" button on StartSession was ~32px tall; recent-player-name suggestion chips used `py-1` (~28px).
-**Root cause:** Same `py-1.5` pattern as other back buttons; chips used `py-1` with no min-h.
-**Fix:** In `src/pages/StartSession.tsx`:
-- Back button: replaced `py-1.5` with `min-h-[44px]`
-- Name chips: replaced `py-1` with `min-h-[44px] flex items-center`
-**Lesson:** Suggestion chips are tapped frequently — they need the same 44px floor as navigation buttons.
-
----
-
----
-
-### 24 May 2026 — BUG-012: Modal overlay blocks clicks + missing Escape close + scrim z-index
-
-**Symptom:** (a) Pressing Escape did not close any modal — the handler simply wasn't there. (b) The Modal scrim (`absolute inset-0`) and sheet (`relative z-10`) shared the same parent `fixed inset-0` container, causing the scrim to sit ON TOP of the sheet's clickable area in certain browser hit-test scenarios (confirmed by Playwright test: "scrim subtree intercepts pointer events"). (c) After close, no leftover DOM — `if (!open) return null` handled that correctly.
-**Root cause (found):** Two issues: (1) No Escape key handler at all. (2) The layout used `fixed inset-0 flex items-end` wrapping both an `absolute inset-0` scrim child and a `relative z-10` sheet child — the scrim's `absolute inset-0` expands to fill the whole parent including the sheet region, and stacking context tie-breaking caused the scrim to intercept pointer events on the sheet.
-**Fix:** `src/components/Modal.tsx` — complete restructure:
-1. Added `useEffect` for Escape key: `document.addEventListener('keydown', handler)` with cleanup, dep `[open, onClose]`
-2. Restructured layout: scrim is now `fixed inset-0 z-40` (independent fixed layer), sheet is `fixed bottom-0 left-0 right-0 z-50` (independent fixed layer). No shared container. Scrim has higher z-index than body but lower than sheet.
-**Cleanup code:**
-```
-useEffect(() => {
-  if (!open) return
-  function handleKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Escape') onClose()
-  }
-  document.addEventListener('keydown', handleKeyDown)
-  return () => { document.removeEventListener('keydown', handleKeyDown) }
-}, [open, onClose])
-```
-**Lesson:** Never nest `absolute inset-0` scrim as sibling of interactive sheet content. Always use two independent `fixed` layers with explicit z-index separation so stacking context never creates a pointer-events conflict.
-
----
-
-### 24 May 2026 — BUG-004: Home FAB navigated to /settings instead of opening Add Table modal
-
-**Symptom:** The `+` FAB button on the Home screen (`/tables`) navigated to `/settings` instead of opening an inline Add Table modal. Users had to navigate away from Home to add a table.
-**Root cause:** The FAB `onClick` was hardcoded to `navigate('/settings')` — the Add Table functionality existed only inside Settings. There was no `/add-table` route; this was purely a navigation choice from early development.
-**Fix:** `src/pages/Home.tsx` — three changes:
-1. Added `import { TableFormModal }` 
-2. Added `const [addTableOpen, setAddTableOpen] = useState(false)`
-3. FAB `onClick` → `setAddTableOpen(true)`; added `<TableFormModal open={addTableOpen} onClose={() => setAddTableOpen(false)} existingTables={tables} />` at end of JSX
-**Result:** `+` opens an inline modal on Home. Settings still has its own `+ Add Table` button — both work independently. No orphaned route was found.
-**Lesson:** FABs on a list/grid page should open inline modals, not navigate away. Navigation-on-FAB breaks the user's mental model (they expect to stay on the page).
-
----
-
----
-
-### 24 May 2026 — BUG-002: authStore.refreshProfile() fires twice on every page load (over-fetch)
-
-**Symptom:** On every page load (any route), Supabase `profiles` and `subscriptions` tables were each queried twice (4 total requests in prod, 8 in dev with StrictMode). Visible as duplicate Supabase REST calls in DevTools Network tab.
-**Root cause:** `initialize()` calls `refreshProfile()` once (#1), then immediately registers `supabase.auth.onAuthStateChange`. Supabase fires a synthetic `INITIAL_SESSION` event synchronously on listener registration, which triggers `refreshProfile()` a second time (#2) within milliseconds. In React 18 StrictMode (dev only), each `useEffect` runs twice, doubling the count to 4×.
-**Fix:** Added `_lastFetchedAt: number` (epoch ms, default 0) to `AuthState`. `refreshProfile()` now accepts `force?: boolean` param. On non-forced calls, it no-ops if `Date.now() - _lastFetchedAt < 3000ms`. `_lastFetchedAt` is set to `Date.now()` before the fetch. Changed two legitimate post-action calls to use `force=true`:
-  - `Subscribe.tsx:128` — post-payment Razorpay handler: `refreshProfile(true)` (already has 1500ms delay so dedup guard would catch it otherwise)
-  - `Settings.tsx:185` — post-cancel-subscription API call: `refreshProfile(true)` (real server mutation, must always refetch)
-**Files changed:** `src/store/authStore.ts`, `src/pages/Subscribe.tsx`, `src/pages/Settings.tsx`
-**Request count:** was 4 per page load (prod), now 2 (1 profile + 1 subscription). Dev was 8, now 2.
-**Option chosen:** Option 2 — `lastFetchedAt` timestamp guard in authStore. Selected over Option 1 (centralize) because Settings and Subscribe legitimately need forced refreshes after server mutations. Selected over Option 3 (useRef per consumer) because the source of duplication is inside authStore itself, not at component level.
-**Lesson:** Supabase always fires a synchronous `INITIAL_SESSION` event on `onAuthStateChange` registration when a session already exists. Any code that calls refreshProfile before registering the listener AND inside the listener will always double-fetch.
-
----
-
----
-
-### 24 May 2026 — BUG-015: Google OAuth auto-selects account — no picker shown
-
-**Symptom:** In a Chrome profile already signed into Google, clicking "Sign in with Google" on /signup immediately picks the most-recently-used Google account without showing the account picker. Users with multiple Google accounts can't choose. First-time users on shared devices get the wrong account.
-**Root cause:** `supabase.auth.signInWithOAuth` was called without `queryParams: { prompt: 'select_account' }`. Google's default behavior skips the picker if a recent session exists.
-**Fix:** Added `queryParams: { prompt: 'select_account' }` to the `options` object in `authStore.ts:signInWithGoogle()`. One-line change.
-**Files changed:** `src/store/authStore.ts`
-**Lesson:** Always pass `prompt: 'select_account'` for Google OAuth in apps where the user might have multiple Google accounts, or be on a shared device.
-
----
-
-### 24 May 2026 — BUG-016: PaymentBottomSheet traps user with no escape
-
-**Symptom:** After clicking "Select Standard" → payment sheet opens → user has no intuitive way to dismiss it. ESC key did nothing. Backdrop click worked but wasn't obvious. X button existed but lacked visual weight. No "safe exit" button at all.
-**Root cause:** (1) No ESC key listener in PaymentBottomSheet. (2) X button had no background fill — visually weak. (3) No explicit "I'm not ready" button — users who changed their mind felt trapped.
-**Fix (multi-path escape design):**
-1. `PaymentBottomSheet.tsx` — added `useEffect` ESC key listener (same pattern as BUG-012 Modal fix). Fires only when `open=true` and `!paying`.
-2. X button — added `bg-zinc-800/50 rounded-full` for visual weight; added `disabled={paying}` guard.
-3. Backdrop click — already existed in `Subscribe.tsx` overlay div (`!paying && setSheetOpen(false)`).
-4. "Maybe later" button — added at bottom of sheet footer, `min-h-[44px]`. Calls `onMaybeLater` prop.
-5. `handleMaybeLater()` in `Subscribe.tsx` — closes sheet, sets `selectedPlan` to `null`, clears error.
-6. `StickyCheckout` — updated to accept `PlanId | null` and renders `null` when no plan selected (hides checkout bar).
-7. `PlanSelection` — updated `selectedPlan: PlanId | null` prop type.
-8. Body scroll lock already handled by `sheetOpen` useEffect in Subscribe.tsx — unchanged.
-**Files changed:** `src/components/subscribe/PaymentBottomSheet.tsx`, `src/pages/Subscribe.tsx`, `src/components/subscribe/StickyCheckout.tsx`, `src/components/subscribe/PlanSelection.tsx`
-**Lesson:** Any bottom sheet that appears over content must have ≥3 independent escape paths: X button, ESC key, backdrop click. If the action is financially consequential (payment), add a 4th explicit "exit without committing" button.
-
----
-
-### 24 May 2026 — BUG-017: Payment click spins forever + cryptic JSON error
-
-**Symptom:** Clicking "Start Free Trial" (with `npm run dev`, no vercel dev) → indefinite spinner → `SyntaxError: Unexpected end of JSON input` → user completely trapped (no retry, no exit info).
-**Root cause:** (1) No timeout on the `fetch` to `/api/create-subscription` — hung forever when the endpoint returned an empty 404 body (Vite doesn't serve api/* routes). (2) `await res.json()` was not wrapped in try/catch — 404 returns empty body, `.json()` throws `SyntaxError`. (3) No 404-specific message to guide the developer.
-**Fix:**
-1. Added 15-second `AbortController` timeout to the fetch call. On `AbortError`, throws a user-friendly timeout message.
-2. Wrapped `res.json()` in try/catch at two points: the error body parse and the success body parse.
-3. Added explicit `res.status === 404` branch: throws the message "Backend payment service is unavailable. If you're testing locally, run `vercel dev` instead of `npm run dev`. If you're on production, contact support."
-4. Generic `!res.ok` path: tries to parse error body, falls back to "Payment failed. Please try again or contact support."
-5. Added "Retry" button inline in the payError block inside `PaymentBottomSheet` — calls `onRetry` prop → `handleRetryPayment()` in Subscribe.tsx (clears error + re-calls handlePayNow).
-6. "Maybe later" button (from BUG-016) always visible below error → user can exit if they don't want to retry.
-**Files changed:** `src/pages/Subscribe.tsx`, `src/components/subscribe/PaymentBottomSheet.tsx`
-**Lesson:** Every fetch call needs: (a) AbortController timeout, (b) HTTP status checks before `.json()`, (c) try/catch around `.json()` itself, (d) env-specific error messages for 404 (very common in local dev with serverless functions). Spinners must always have an exit path.
-
----
-
----
-
-### 25 May 2026 — BUG-018: Razorpay 400 "The ID provided is invalid or could not be found"
-
-**Symptom:** `/api/create-subscription` returned HTTP 500. Frontend showed generic "Payment failed" error. Vercel function logs showed Razorpay API responding 400 with description "The ID provided is invalid or could not be found."
-**Root cause:** The 6 plan IDs in `src/lib/razorpayPlans.ts` were created in a *different* Razorpay test account than the one whose keys (`VITE_RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`) were set in Vercel env vars. Razorpay accounts (test and live) are fully isolated — a key from account A cannot resolve plan IDs from account B, even if the plan ID string is valid.
-**Diagnostic that found it:** Catch block in `api/create-subscription.ts` patched to log `JSON.stringify(err, null, 2)` (commit `7ad20b1`). Vercel function logs exposed the raw Razorpay 400 response body with the real description.
-**Fix:** Recreated all 6 plans inside the same Razorpay account that owns the active API keys. Replaced the 6 plan IDs in `src/lib/razorpayPlans.ts` with the newly-created IDs.
-**Related:** BUG-019 (server/frontend error shape mismatch that hid this error).
-**Lesson:** After any key rotation or account change, verify key+plan pairing with: `curl -u KEY_ID:KEY_SECRET https://api.razorpay.com/v1/plans/PLAN_ID`. 200 = same account. 400 = mismatch. See Pattern S5.
-
----
-
-### 25 May 2026 — BUG-019: Server/frontend error response shape mismatch
-
-**Symptom:** Frontend showed the old generic "Payment failed. Please try again or contact support." even after the server was patched (commit `7ad20b1`) to return real Razorpay error details.
-**Root cause:** The server's error responses used the field name `error` (e.g. `{ error: 'Failed to...' }`) but `Subscribe.tsx`'s `handlePayNow()` reads `.message` from the response body. The real Razorpay description was thrown away by the destructure and the frontend fell back to its own hardcoded string.
-**Fix:** Server `api/create-subscription.ts` now returns `{ message, code, razorpayStatus }` on all error paths. Field name `message` matches what the frontend reads. Aligned as part of commit `b99388b`.
-**Lesson:** Any API route that wants to surface server-side error detail to the user must use the exact same field name the frontend reads (`message`, not `error`). Document the success + error JSON shape in a comment at the top of each `api/*.ts` file. See Pattern S6.
-
----
-
-### 25 May 2026 — BUG-020: Auth hang on /auth/callback if refreshProfile throws
-
-**Symptom:** After Google OAuth succeeded (URL contained valid `access_token` in hash fragment), the app was stuck on "Signing you in…" indefinitely. No navigation to `/subscribe` or `/tables`. Refreshing the page was the only escape.
-**Root cause:** `authStore.initialize()` had no `try/catch/finally` around `set({ loading: false })`. If `refreshProfile()` threw for any reason (network blip, Supabase RLS error, bad response), the exception propagated up and `loading` stayed `true` forever. `AuthCallback` gates all navigation on `if (loading) return`, so it would never navigate — permanent hang.
-**Fix:** Wrapped the body of `initialize()` in `try/catch/finally`. Moved `set({ loading: false })` into the `finally` block — it now fires unconditionally regardless of what throws. Commit `b99388b`.
-**Files changed:** `src/store/authStore.ts`
-**Lesson:** Any async store initializer that gates UI via a loading flag MUST use `try/finally` to guarantee the loading flag resets. A single unhandled throw can permanently freeze the UI. See Pattern A5.
-
----
-
-### 25 May 2026 — BUG-021: Razorpay 400 "ID not found" — mode-mismatch variant (TEST key + LIVE plan IDs)
-
-**Symptom:** Same surface as BUG-018 — `/api/create-subscription` returns HTTP 500, frontend shows "Payment failed". Vercel logs: Razorpay 400 `statusCode`, description "The ID provided is invalid or could not be found."
-**Variant:** Mode-mismatch. Keys in Vercel were TEST (`rzp_test_...`) but the plan IDs in `razorpayPlans.ts` were LIVE plans (created under a different Razorpay mode). Razorpay TEST and LIVE modes are fully isolated universes — plans created in LIVE mode are invisible to TEST keys, and vice versa.
-**Root cause:** After fixing BUG-018 (account-mismatch), new TEST-mode plan IDs were needed. LIVE plan IDs were left in code. TEST key can't see LIVE plans — same 400 error, different axis of isolation.
-**Fix:**
-1. Created 6 fresh TEST-mode plan IDs in Razorpay dashboard.
-2. Refactored `src/lib/razorpayPlans.ts` to define `TEST_PLANS` and `LIVE_PLANS` as separate `const` objects, then auto-select based on key prefix:
-   ```ts
-   const isTestMode = keyId?.startsWith('rzp_live_') !== true
-   export const PLANS = isTestMode ? TEST_PLANS : LIVE_PLANS
-   ```
-3. Created `api/_shared/plans.ts` — server-side mirror (uses `process.env`, same auto-select logic). `api/create-subscription.ts` now imports from `_shared/plans.ts` instead of `src/lib/razorpayPlans.js`.
-4. `getPlanId()` signature unchanged — zero changes needed in callers.
-5. `console.warn` at module load if `VITE_RAZORPAY_KEY_ID` is missing or has unexpected prefix.
-**Files changed:** `src/lib/razorpayPlans.ts` (refactored), `api/_shared/plans.ts` (new), `api/create-subscription.ts` (import swap)
-**Permanent fix guarantee:** Switching Vercel env between TEST and LIVE mode now requires zero code changes. Set `rzp_test_...` keys → TEST_PLANS auto-selected. Set `rzp_live_...` keys → LIVE_PLANS auto-selected.
-**Lesson:** Razorpay has two orthogonal isolation dimensions: (1) account isolation (BUG-018), (2) mode isolation (this bug). Pattern S5 now covers both. The canonical fix is the auto-select pattern — it eliminates the entire class of mode-mismatch bugs forever.
-**See:** Pattern S5 (updated to cover mode isolation).
-
----
-
-### 29 May 2026 — BUG-022: "Today" pill on /tables frozen — live amount not ticking
-
-**Symptom:** The "Today ₹X,XXX" aggregate pill on the Tables page (`/tables`) showed a stale amount that only updated when the user navigated away and back, or when a session was stopped (a DB write). Running sessions were not contributing their live elapsed amount. Summary page worked fine (ticked every second).
-**Root cause:** `calculateAmount(getElapsedMs(s))` for running sessions was placed inside the `useLiveQuery` async callback. `useLiveQuery` re-executes its callback only when IndexedDB rows change — it is not triggered by React re-renders. `useTick()` was already called in the component, causing a re-render every second, but React simply returned the same cached value from the live query. The live calculation never ran between DB writes.
-**Fix:** Split `todayTotals` into two parts in `src/pages/Home.tsx`:
-1. `todayStaticTotals` (`useLiveQuery`) — computes only completed session `amount` fields + sessionItems totals. These are DB-static and only need to update on writes.
-2. `runningAmount` — computed in the render body from `activeSessions` (already a live subscribed hook). `useTick()` re-renders every second → `getElapsedMs()` recalculates → running total ticks live.
-3. `todayTotal = completed + items + runningAmount`.
-**Files changed:** `src/pages/Home.tsx` only.
-**Lesson:** `useTick()` drives re-renders, but it cannot force a `useLiveQuery` callback to re-execute. Any `Date.now()`-derived value that needs to update every second must be computed in the render body, not inside a live query. See Pattern T4.
-
----
-
-### 29 May 2026 — BUG-023: Payment screen QR card had uneven white borders
-
-**Symptom:** After stopping a session with a UPI ID set, the white QR card showed asymmetric padding — the border was visibly thicker on some sides than others. Looked broken on all screen widths.
-**Root cause:** The white card `div` had `style={{ width: 'min(72vw, 280px)' }}` (fluid CSS width) but `PaymentQR` rendered a fixed-pixel `<img width={224} height={224}>` inside it. The fixed img didn't stretch to fill the fluid container, so the remaining space around it was distributed unevenly by the browser, producing asymmetric white padding.
-**Fix:**
-- `PaymentQR.tsx`: removed hardcoded `width`/`height` attributes from `<img>`. Added `style={{ width: '100%', height: 'auto', display: 'block' }}` so the img fills whatever the parent provides. Internal render resolution bumped to `560px` (2× retina) — the `size` prop now only controls internal QR resolution, not CSS display size.
-- `SessionDetail.tsx` white card: added `aspect-square flex items-center justify-center` classes. `aspect-square` makes the card a perfect square; `flex centering` ensures the img sits exactly in the middle. Changed `p-4` → `p-3` for uniform 12px padding on all sides.
-**Files changed:** `src/components/PaymentQR.tsx`, `src/pages/SessionDetail.tsx`
-**Lesson:** Never mix a fluid CSS container with a fixed-pixel child element and expect even margins. Either both are fluid (child `width: 100%`) or both are fixed. See Pattern U7.
-
----
-
-### 29 May 2026 — BUG-024: "Done" button on payment screen hidden behind bottom nav
-
-**Symptom:** After stopping a session, the "Done — back to tables" button at the bottom of the payment screen was visually hidden behind the bottom navigation bar and could not be tapped. The bottom nav tabs (Tables / Summary / History / Settings) remained visible on top of the overlay.
-**Root cause:** The payment screen root div used `fixed inset-0` but had no `z-index` set. BottomNav (`src/components/BottomNav.tsx`) is also `fixed` with no explicit z-index. Both ended up in the same stacking context, and DOM order determined paint order — BottomNav (rendered later in the tree via `App.tsx`) painted on top.
-**Fix:** Added `z-50` to the payment screen root overlay div in `SessionDetail.tsx`. BottomNav has no explicit z-index (browser default `auto`), so `z-50` reliably places the payment overlay above it on all browsers. Also bumped Done button to `min-h-[48px]` for a larger tap target, and added `pt-2` to the footer for breathing room.
-**Files changed:** `src/pages/SessionDetail.tsx`
-**Lesson:** Any `fixed inset-0` overlay that is meant to cover the bottom nav MUST have an explicit z-index higher than the nav. BottomNav has no z-index (`auto`) — `z-50` is sufficient and stays within the Modal tier (Pattern M1: scrim z-40, sheet z-50). See Pattern U8.
-
----
-
-### 3 Jun 2026 — BUG-025: Cancel subscription fails during trial with "no billing cycle" error
-
-**Symptom:** User in `trialing` / `authenticated` state (UPI mandate registered, first charge not yet taken) clicks "Cancel subscription" in Settings → sees "Failed to cancel subscription with payment provider" toast. Subscription stays active in Razorpay.
-**Root cause:** `api/cancel-subscription.ts` called `razorpay.subscriptions.cancel(id, 1)` (cancel at cycle end) for all states. Razorpay returns 400 `BAD_REQUEST_ERROR: Subscription cannot be cancelled since no billing cycle is going on` when no billing cycle has started yet (pre-charge trial). The original handler caught all errors and returned 500.
-**Fix:** Added fallback in the catch block: detect `statusCode === 400 && code === 'BAD_REQUEST_ERROR' && description includes 'no billing cycle'` → retry with `cancel(id, 0)` (immediate cancel). On success, update Supabase `status='cancelled', cancel_at_period_end=false`. Returns `{ cancelled: true, immediate: true }`. User loses access immediately (no partial trial credit — expected, since no charge was taken).
-**Files changed:** `api/cancel-subscription.ts`
-**Lesson:** See Pattern S7.
+**Fix when:** Adding cloud sync (Supabase). At that point, scope all Dexie reads/writes by userId.
 
 ---
 
 ## Open Issues / Not Yet Reproduced
 
-(Move here when Sugeet reports something but it can't be reproduced. Revisit later.)
+(Move here when Sugeet reports something but it cannot be reproduced. Revisit later.)
 
 (none currently)
-
----
-
-### 4 Jun 2026 — BUG-026: start_at always set to now+7d — expired-trial users got free fresh trial
-
-**Symptom:** User with expired trial paid via UPI and received "7 days left, ₹599 on 10 Jun" — should have been charged immediately. Confirmed by manual test on 3 Jun 2026: signed up `shrutiwebaudits@gmail.com`, ran SQL to set `trial_ends_at` to yesterday, paid via UPI, got fresh 7-day trial instead of immediate charge.
-**Root cause:** `api/create-subscription.ts` computed `start_at = now + 7 days` unconditionally AND overwrote `trial_ends_at` in Supabase unconditionally. No check of the existing `trial_ends_at` value — expired-trial users received a brand-new 7-day trial extension every time they tried to subscribe.
-**Fix:** 3-scenario logic reading existing `trial_ends_at` from Supabase before creating the Razorpay subscription:
-1. `new` — no row / no `trial_ends_at` yet → `start_at = now+7d`, write `trial_ends_at = now+7d` (defensive new-user path)
-2. `mid_trial` — existing `trial_ends_at` is >60s in the future → `start_at = existing trial_ends_at`, DO NOT overwrite DB value
-3. `expired` — existing `trial_ends_at` is ≤60s from now or in the past → `start_at = now+60s`, write `trial_ends_at = now` (mark trial ended)
-**Files changed:** `api/create-subscription.ts` (3-scenario math + conditional `trial_ends_at` write), `api/_shared/plans.ts` (added `'test'` tier, `Partial` map), `src/lib/razorpayPlans.ts` (added `'test'` tier, `Partial` map, exported `isLiveMode`)
-**Lesson:** See Pattern S8. Server must always read Supabase before computing billing dates. Frontend never sends timestamps — it sends only `{ tier, cycle }`. `trial_ends_at` is NEVER overwritten if existing value is in the future and still valid.
-
----
-
-### B-canteen-3 — Quick Add and manual form bypassed canteen stock decrement (8 Jun 2026)
-
-**Symptom:** Tap canteen "Coke ₹25" chip → stock drops 1 ✓. Tap Quick Add "Coke ₹25" chip (same item) → stock does NOT drop ✗. Manual form add of "Coke ₹25" → same issue.
-
-**Root cause:** Three add paths in AddItemBottomSheet — only the canteen-chip path ran the inline stock-decrement transaction. Quick Add and manual form added sessionItems directly with no stock reconciliation. Quick Add derived chips from recent sessionItems (canteen or freeform indiscriminately).
-
-**Fix:** New `src/lib/canteenMatch.ts` with `normalizeName` + `findMatchingCanteenItem` + `findCanteenItemByName`. All three add paths now run through the matcher. Match → same inline atomic tx (`runCanteenAddTransaction` — Pattern D7). No match → freeform sessionItem, no stock touch. Quick Add chips filtered to canteen-matched recent items only. Manual form collapsed behind "+ Add other item" button. Price mismatch on manual submit → inline warning with one-tap "Use canteen price" button (Pattern F7).
-
-**Files touched:**
-- `src/lib/canteenMatch.ts` (NEW)
-- `src/components/AddItemBottomSheet.tsx`
-- `.claude/skills/clubkeeper/references/ripple_effects.md`, `decisions_active.md`, `bug_archive.md`
-
----
-
-### B-canteen-4 — Duplicate session-item rows on repeated tap (8 Jun 2026)
-
-**Symptom:** Tapping "Coke ₹25" chip 5 times created 5 separate rows in "Already Added". Settlement disputes required scrolling + counting. Same problem after the canteen-matching fix shipped earlier today.
-
-**Root cause:** Add handlers in AddItemBottomSheet always called `db.sessionItems.add(...)` — never checked for existing matching rows on the same session.
-
-**Fix:** New `addOrIncrementSessionItem` query (sessionItems-only tx). All four add paths in AddItemBottomSheet now check `(sessionId, normalizeName(name), exactPrice)` for an existing row before inserting. Canteen-matched paths INLINE the merge inside their outer canteen+sessionItems tx (Pattern D7). Freeform path calls the new helper directly.
-
-**Files touched:**
-- `src/db/queries.ts` (added `addOrIncrementSessionItem`, imported `normalizeName`)
-- `src/components/AddItemBottomSheet.tsx` (import `normalizeName` + `addOrIncrementSessionItem`, inline merge in `runCanteenAddTransaction`, freeform via helper)
-- `.claude/skills/clubkeeper/references/ripple_effects.md`, `decisions_active.md`, `bug_archive.md`
-
----
-
-### B-canteen-5 — Edit/Delete/Undo bypassed canteen stock sync (8 Jun 2026)
-
-**Symptom:** Tap canteen "Water Bottel ₹25" chip 8 times → row `8× Water Bottel`, stock −8. Open edit modal, change qty 8 → 12, save → row `12× Water Bottel`, stock STILL at −8 (no −4 applied). Same for delete (no stock restore) and Undo (no re-decrement).
-
-**Root cause:** updateSessionItem, deleteSessionItem, restoreSessionItem only touched db.sessionItems. Stock sync was only implemented in the add path.
-
-**Fix:** All three functions now open db.transaction('rw', db.sessionItems, db.canteenItems, ...) and INLINE stock sync via findMatchingCanteenItemForRow (private helper, not exported). New InsufficientStockError class blocks qty-up and Undo that would push stock negative — tx rolls back atomically. Edit path in handleSubmit catches InsufficientStockError and calls setError (Pattern F7). Undo callback catches it and shows a toast (justified exception — no inline surface available once toast is dismissed).
-
-**Files touched:**
-- src/db/queries.ts (3 functions extended + new findMatchingCanteenItemForRow + new InsufficientStockError; restoreSessionItem return type changed to Promise<void>)
-- src/components/AddItemBottomSheet.tsx (import InsufficientStockError; Undo callback now catches it with toast)
-- references/ripple_effects.md, decisions_active.md, bug_archive.md
-
----
-
-### 10 Jun 2026 — PaymentSplitSheet: "Breakdown sum ₹20 does not match total ₹0" on valid input [B-payment-1]
-
-**Symptom:** New session on Pool 1 + ~30s elapsed + ₹20 of canteen items added → tap Stop → Record payment → type Cash=10 UPI=10 → sheet shows green ✓ "Matches total" → tap Confirm → red error "Breakdown sum ₹20 does not match total ₹0". Confirm button stayed bright accent throughout.
-
-**Root cause:** `recordSessionPaymentBreakdown` in queries.ts checked `cash + upi + wallet === session.amount`. But `session.amount` is the TIME portion only — items revenue lives in a separate `sessionItems` table. For a fast-stopped session with items, `session.amount ≈ ₹0` and the breakdown summing to the items total was rejected.
-
-Secondary bug: when the catch block set `error`, the sheet rendered BOTH the green ✓ status line AND the red error simultaneously. The Confirm button stayed bright accent because `matches` (its local check) was still true (sum 20 === total 20).
-
-**Fix:**
-- `recordSessionPaymentBreakdown` now reads `db.sessionItems.where('sessionId').equals(sid).toArray()` inside the transaction and computes `grandTotal = session.amount + Σ(items.price × quantity)`. `db.sessionItems` added to the transaction's table list.
-- PaymentSplitSheet now has a single `canConfirm` boolean driving BOTH the status line green-state branch AND the Confirm `disabled` prop AND the Confirm className branching (no more `disabled:opacity-40` alone).
-- Status line slot has `min-h-[20px]` and shows exactly one message — `error` REPLACES the status line when present (never stacks). Editing any input clears `error`.
-- Bad-total guard (`!totalIsValid`) hides the steppers entirely; sheet renders "No amount to record" when caller mounts with `total <= 0`.
-- Route-param coercion + runtime guard at top of `recordSessionPaymentBreakdown` against stringified IDs (defence in depth — not the root cause but adjacent).
-
-**Lesson:** `session.amount` is the time portion only. Bill total = `session.amount + Σ(sessionItems)`. See Pattern P1, P2, P3 in bug_patterns.md. Single boolean → status line + button disabled + button styling, always.
-
-**Files touched:**
-- src/db/queries.ts (grandTotal computation + sessionItems in tx scope + runtime sessionId guard)
-- src/components/PaymentSplitSheet.tsx (canConfirm boolean, error replaces status, totalIsValid guard, explicit className branching, clear error on input change)
-- src/pages/SessionDetail.tsx (route param coercion + Number(session.id) defensive cast at call site)
-
----
-
-### 10 Jun 2026 — Quick Sale pill orphaned on its own right-aligned row [B-ui-quicksale-pill]
-
-**Symptom:** First implementation put the "+ Quick Sale" pill on a standalone row between TopBar and SummaryStrip, right-aligned. At 320–360px the entire left side of the row was empty, the pill looked orphaned, and it visually overlapped the Today section.
-
-**Root cause:** Wrong placement decision — putting the pill on its own row breaks the visual rhythm of the page.
-
-**Fix:** Restructured TopBar into two stacked rows. Row 1: heading + icon group (unchanged). Row 2: date subtitle `<p>` + optional pill (`flex items-center justify-between mt-1 py-1 gap-2`). Pill `h-9 px-3.5 text-[12px]` to fit the subtitle row rhythm. Date `<p>` uses `truncate min-w-0`, pill uses `shrink-0` — at 320px the date truncates with an ellipsis rather than pushing the pill off-screen. Removed the standalone row from Home.tsx; passes `onQuickSalePress={() => navigate('/quick-sale')}` to TopBar instead.
-
-**Lesson:** Don't add standalone rows for single right-aligned actions. Find an existing row with content on the left and put the action on it via `justify-between`. Always test at 320 / 360 / 412.
-
-**Files touched:**
-- src/components/TopBar.tsx (two-row restructure + onQuickSalePress prop)
-- src/pages/Home.tsx (removed standalone row, passes prop)
-
----
-
-## Player Hub Bug Sprint — 11 Jun 2026
-
-### B1 — Confirm duplicates wallet credit (P0) — RESOLVED
-Root cause: (1) `/api/confirm-topup` Vercel function doesn't exist on localhost with `npm run dev`; (2) No idempotency check — Dexie credit ran before cloud call, and retry would credit again.
-Fix: Replace fetch to Vercel function with direct `supabase.from('topup_intents').update(...)` (owner is authed, RLS permits). Added idempotency guard in `handleConfirm` — checks for existing WalletTransaction with `referenceType='topup' AND referenceId=intentId` before calling `recordTopupWithCoins`. Retry queue (localStorage) on cloud failure unchanged, but now uses Supabase client on retry (Wallet.tsx mount effect).
-
-### B2 — Reject button fails (P0) — RESOLVED
-Root cause: Same as B1 — reject also called `/api/confirm-topup` which doesn't work on localhost.
-Fix: Replace with direct `supabase.from('topup_intents').update({ status: 'rejected', reject_reason })`. Handled in same PendingTopupsModal fix as B1.
-
-### B3 — Accept Top-ups toggle broken (P0) — RESOLVED
-Root cause: Toggle wrote to Supabase only; mount `useEffect` re-fetched from Supabase on every remount (navigation back to Settings) and overwrote the user's last toggle. `topupsLoaded` flag missing.
-Fix: (1) Added `topupsLoaded` guard — mount effect runs once, not on every remount. (2) `handleToggleTopups` now writes to Dexie first (`acceptsTopups` added to `ClubSettings` type), then Supabase. (3) Initial state initialized from `settings?.acceptsTopups` instead of hardcoded `true`.
-
-### B4 — Pending count mismatch (P1) — RESOLVED
-Root cause: Modal header used `pendingCount` from Zustand store; visible row list came from `intents` prop after filtering. After a local credit the store count and the prop list could diverge.
-Fix: Modal title now uses `intents.length` (source of truth = the prop array visible in the list). Added `usePendingTopupCount()` selector in topupInbox store for shared access.
-
-### B5 — No badge on Wallet icon (P1) — RESOLVED
-Root cause: TopBar wallet button had no indicator for pending topups.
-Fix: Added `usePendingTopupCount()` to TopBar; renders an 8px amber dot (`w-2 h-2 bg-amber-400 rounded-full`) in `absolute top-1 right-1` on the wallet button when `pendingTopups > 0`.
-
-### B6 — Player scan page shows QR (useless on mobile) (P1) — RESOLVED
-Root cause: `awaiting_payment` state rendered `<UpiQrCard>` as the primary UI — the player can't scan their own screen.
-Fix: Built UPI deep-link (`upi://pay?pa=...`) and rendered it as a large green `<a href>` button as the primary CTA. `<UpiQrCard>` moved inside a `<details>` element ("Or scan from another device") that is collapsed by default. No User-Agent detection.
-
-### B7 — Redemption Rate inputs can't be cleared (P2) — RESOLVED
-Root cause: `<input type="number">` bound to numeric state — when user backspaces to empty, React re-renders with the old value from state.
-Fix: Introduced `RateInput` component (inline in PlayerHubSettings.tsx) with `draft` string state + `onBlur` validator. Empty draft saves as 0. Invalid draft shows inline error and doesn't save. Applied to all three rate inputs (rupeesPerCoin, minutesPerCoin, coinExpiryDays).
-
-### B8 — Double ₹ symbol in nudge template (P2) — RESOLVED
-Root cause: `DEFAULT_ENGAGEMENT_CONFIG.nudgeTemplate` had literal `₹` before `{rupeeValue}`; but `renderNudgeTemplate` renders `{rupeeValue}` as `₹${value}`, producing `₹₹40`.
-Fix: Removed literal `₹` from the default template string in `streak.ts`. Added migration chip in `NudgeTemplateEditor` — detects `₹{rupeeValue}` in saved template, shows "Reset to new default" button. Does not auto-migrate.
