@@ -2,6 +2,28 @@
 
 ---
 
+## 14 Jun 2026 — Phase A: Import Everything core logic (#79)
+
+**New file:** `src/lib/importEverything.ts` — `importEverythingFromFile(file: File): Promise<ImportResult>`.
+
+- Atomic restore: ONE `db.transaction('rw', [all 9 stores], …)` that clears every store then bulkAdds the file's rows. Any throw rolls back the whole tx (no partial imports — ever).
+- Failure-reason union: `parse_error | not_clubkeeper_file | legacy_incomplete_format | schema_too_new | active_sessions_present | empty_file | transaction_failed`.
+- `legacy_incomplete_format` specifically detects the pre-#78 3-table format (`tables + sessions + settings` with no `schemaVersion`) — gives users a useful "this backup was made before the fix" message instead of silently re-introducing data-loss.
+- Pre-check refuses import if ANY current-DB session has `status !== 'completed'` (importing over a running timer would corrupt elapsed math — Pattern T1).
+- Forward-compat gate: rejects `schemaVersion > CURRENT_SCHEMA_VERSION`.
+- IDs (`id`, `tableId`, `sessionId`, `customerId`) preserved verbatim via `bulkAdd` — FK links survive.
+- No `any` types. No HTML `<form>`. Strict TS.
+
+**DEV-only console hook** in `src/main.tsx`: behind `import.meta.env.DEV`, dynamic-imports the helper and exposes `window.__importEverythingFromFile` so Sugeet can verify by hand before Phase B wires the UI. Stripped from production bundle automatically.
+
+**No UI yet** — Phase B will add the Settings button + confirm modal + success overlay.
+
+**Paired skill update:** `ripple_effects.md` new section "Import Everything" — rules for the file-format contract + checklist for adding a new Dexie table.
+
+Phase A of #79. Build clean. Pending owner verification.
+
+---
+
 ## 14 Jun 2026 — Phase A0: Fix Export (#78 — P0 data-loss bug)
 
 **Issue:** Export Everything was silently writing only 3 of 9 Dexie tables. Wallet customers, canteen items/sales, walletTransactions, sessionItems, stockPurchases all dropped on export. Lossy backups for the entire app lifetime up to today.

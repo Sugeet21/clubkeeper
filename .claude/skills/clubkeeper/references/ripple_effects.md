@@ -1204,3 +1204,41 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 
 **src/pages/PlayerHubSettings.tsx** — now imports: slug.ts, playerHubApi.ts, coins.ts, realtimeTopups.ts, CoinTiersEditor, EngagementConfigCard, BringBackList, NudgeTemplateEditor
 - Heaviest import graph in the app. If any of these move → update imports here first.
+
+---
+
+## Import Everything — added 14 Jun 2026 (#79 Phase A)
+
+### If you change the export/import file format
+
+**Source of truth:** `ClubKeeperBackupV16` interface in `src/db/queries.ts`. `CURRENT_SCHEMA_VERSION` constant in the same file mirrors `database.ts` Dexie version.
+
+**Affects (every place that touches the backup contract):**
+- `src/db/queries.ts` — `getAllDataForExport()` (writer) + `ClubKeeperBackupV16` + `CURRENT_SCHEMA_VERSION`
+- `src/lib/importEverything.ts` — `importEverythingFromFile()` (reader) — its `BackupShape` validator + `requiredArrayKeys` list must match the interface keys 1:1
+- `references/data_model.md` — "Data Export Format (v16)" section
+- `src/pages/Settings.tsx` — export consumer (Phase B will add the import consumer here too)
+
+**Rules (load-bearing):**
+1. Every Dexie store in `ClubKeeperDB` MUST appear in BOTH the export builder AND the import clear+bulkAdd loop AND `ClubKeeperBackupV16`. Forgetting one = silent data loss on the next backup cycle.
+2. When you bump Dexie version in `database.ts`, also bump `CURRENT_SCHEMA_VERSION` in `queries.ts`. Pair commits — otherwise import accepts a stale-format file or rejects valid new exports.
+3. IDs (`id`, `tableId`, `sessionId`, `customerId`) are preserved verbatim across export → import. Never auto-generate fresh ids during import — foreign-key links would break.
+4. Import is atomic: one `db.transaction('rw', [all 9 stores], …)` that calls `.clear()` then `.bulkAdd()` for each store. Any throw rolls back the whole tx — never partial.
+5. Active-session pre-check (`status !== 'completed'`) blocks import. Importing on top of a running session would corrupt timer math (Pattern T1).
+6. Subscription / auth / Supabase state is NEVER touched — import is Dexie-only.
+
+### If you add a new Dexie table
+
+The ripple is wider than usual because of import/export:
+- `src/db/database.ts` — new `this.version(N).stores({...})` block
+- `src/db/queries.ts` — bump `CURRENT_SCHEMA_VERSION` to `N`; add field to `ClubKeeperBackupV16`; add `toArray()` call in `getAllDataForExport`
+- `src/lib/importEverything.ts` — add table to `requiredArrayKeys`, the typed coercion block, the `db.transaction('rw', [...])` table list, the `clear()` Promise.all, and the bulkAdd block
+- `references/data_model.md` — "Data Export Format (v16)" section interface
+
+**Discovered when:** Import Everything Phase A, 14 Jun 2026 (#79). Phase A0 closed #78 (export was missing 6 of 9 tables).
+
+### `src/lib/importEverything.ts`
+
+- **Imports:** `src/db/database.ts` (`db`), `src/db/queries.ts` (`CURRENT_SCHEMA_VERSION`), `src/types`, `src/types/customer`, `src/types/walletTransaction`
+- **Imported by:** `src/main.tsx` (DEV-only dynamic import for `window.__importEverythingFromFile`). Phase B will add `src/pages/Settings.tsx` as the production consumer.
+- **Failure-reason union (`ImportFailureReason`)** — UI must handle all of: `parse_error`, `not_clubkeeper_file`, `legacy_incomplete_format`, `schema_too_new`, `active_sessions_present`, `empty_file`, `transaction_failed`. Adding a new reason → update Phase B's switch in `Settings.tsx`.
