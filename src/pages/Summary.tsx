@@ -464,19 +464,15 @@ export default function Summary() {
   )
 
   // ── Pattern T4: render-body running-session addition ────────────────────────
-  // Only add live amounts when viewing today (past dates have no running sessions)
-  const runningRevenueToday = useMemo(() => {
-    if (!isViewedToday) return 0
-    // Active sessions that started today
-    const todayStart = startOfDay(viewedDate).getTime()
-    return activeSessions
-      .filter((s) => s.startedAt >= todayStart)
-      .reduce(
-        (sum, s) =>
-          sum + calculateAmount(s, getElapsedMs(s)),
-        0,
-      )
-  }, [activeSessions, isViewedToday, viewedDateMs]) // useTick re-renders drive this
+  // NOT in useMemo — useMemo only recomputes when activeSessions reference changes
+  // (DB writes). useTick() re-renders must drive this every second, so it must
+  // be inline in the render body.
+  const todayStart = startOfDay(viewedDate).getTime()
+  const runningRevenueToday = isViewedToday
+    ? activeSessions
+        .filter((s) => s.startedAt >= todayStart)
+        .reduce((sum, s) => sum + calculateAmount(s, getElapsedMs(s)), 0)
+    : 0
 
   // Total revenue = DB-static completed + items + live running (today only)
   // + walk-in canteen sales (Phase 3 — atomic rows, no "running" equivalent)
