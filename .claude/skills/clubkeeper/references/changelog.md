@@ -2,6 +2,25 @@
 
 ---
 
+## 15 Jun 2026 — Fix: Owner gets realtime top-up notification anywhere in app (#83 follow-up)
+
+**Bug:** After the original `/c/<slug>` hang was fixed, end-to-end test caught a second bug: when the player tapped "I've paid", the owner only saw the pending badge update if they were sitting on `/wallet`. Anywhere else (Home, Summary, History, Settings) — silent. Refresh needed.
+
+**Root cause:** `subscribeToTopupIntents()` was only called from `Wallet.tsx`'s mount effect. Navigating away unmounted the effect, which called `unsubscribeTopupIntents()`. No channel = no realtime = no badge updates anywhere except `/wallet`. New Pattern A8.
+
+**Fix:**
+- `src/components/TopupRealtimeBridge.tsx` (NEW) — mount-once at the app shell (inside `BrowserRouter`, alongside `AuthInitializer` / `ExpirySweepRunner`). Keeps the `topup_intents_<clubId>` channel open for the entire authenticated session. Gated on `dbReady && session && subscriptionLoaded && !isPlayerHubPath(pathname)`. Per-user `activeUserIdRef` (same fix-pattern as `_clubSyncDoneForUser`) so a second user signing in on the same tab gets their own channel. INSERT callback fires a "New top-up: {name} — ₹{amount} [Review]" toast unless the owner is already on `/wallet`. Pathname is read via ref inside the callback, NOT via effect deps, so navigation doesn't churn the channel.
+- `src/lib/realtimeTopups.ts` — `subscribeToTopupIntents(clubId, onInsert?)` now accepts an optional callback receiving typed `TopupInsertEvent { intentId, playerName, playerMobile, amount }`. Exported.
+- `src/pages/Wallet.tsx` — dropped `subscribeToTopupIntents` / `unsubscribeTopupIntents` calls + import. Wallet now just consumes `pendingCount` from Zustand like TopBar already does. The `pendingCount → reload intent list` effect is kept unchanged.
+
+Skill paired updates: new Pattern A8, ripple_effects bridge entry, architecture.md owner-side step 3 rewritten.
+
+Build clean (958.11 kB, +1.09 kB).
+
+Closes #83 follow-up — pending owner verification.
+
+---
+
 ## 15 Jun 2026 — Fix: PlayerScan no longer hangs on "Loading club info…" (#83)
 
 **Bug:** Opening `/c/<slug>` in a second tab while the owner was signed in in the first tab left PlayerScan stuck on the spinner forever. Hard-refreshing the owner tab "fixed" the slug tab but then broke the owner tab on next load — classic ping-pong.

@@ -26,6 +26,7 @@ import QuickSale from './pages/QuickSale'
 import Piggy from './pages/Piggy'
 import PlayerScan from './pages/player/PlayerScan'
 import Poster from './pages/Poster'
+import { TopupRealtimeBridge } from './components/TopupRealtimeBridge'
 
 const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback']
 // /c/ and /poster/ are public but use path prefixes — checked via startsWith in AppLayout
@@ -153,6 +154,7 @@ export default function App() {
         <AuthInitializer />
         <AudioUnlocker />
         <ExpirySweepRunner />
+        <TopupRealtimeBridge />
         <AppLayout />
       </BrowserRouter>
     </ErrorBoundary>

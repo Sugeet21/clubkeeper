@@ -2,8 +2,16 @@ import { supabase } from './supabase'
 import { useTopupInbox } from '../store/topupInbox'
 import { getPendingTopups } from './playerHubApi'
 
+export interface TopupInsertEvent {
+  intentId: string
+  playerName: string | null
+  playerMobile: string
+  amount: number
+}
+
 let pollingTimer: ReturnType<typeof setInterval> | null = null
 let channel: ReturnType<typeof supabase.channel> | null = null
+let activeClubId: string | null = null
 
 function playPendingSound() {
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -11,8 +19,15 @@ function playPendingSound() {
   }
 }
 
-export async function subscribeToTopupIntents(clubId: string): Promise<void> {
+export async function subscribeToTopupIntents(
+  clubId: string,
+  onInsert?: (event: TopupInsertEvent) => void,
+): Promise<void> {
+  // Idempotent re-call for the same clubId: tear down + rebuild so the
+  // (possibly updated) onInsert callback takes effect cleanly. Different
+  // clubId likewise replaces the channel.
   unsubscribeTopupIntents()
+  activeClubId = clubId
 
   const { setPendingCount, incrementPending, decrementPending } = useTopupInbox.getState()
 
@@ -37,9 +52,24 @@ export async function subscribeToTopupIntents(clubId: string): Promise<void> {
         filter: `club_id=eq.${clubId}`,
       },
       (payload) => {
-        if ((payload.new as { status?: string })?.status === 'pending') {
+        const row = payload.new as {
+          id?: string
+          status?: string
+          player_name?: string | null
+          player_mobile?: string
+          amount?: number
+        }
+        if (row?.status === 'pending') {
           incrementPending()
           playPendingSound()
+          if (onInsert && row.id && typeof row.amount === 'number' && row.player_mobile) {
+            onInsert({
+              intentId: row.id,
+              playerName: row.player_name ?? null,
+              playerMobile: row.player_mobile,
+              amount: row.amount,
+            })
+          }
         }
       },
     )
@@ -90,4 +120,9 @@ export function unsubscribeTopupIntents(): void {
     clearInterval(pollingTimer)
     pollingTimer = null
   }
+  activeClubId = null
+}
+
+export function getActiveTopupClubId(): string | null {
+  return activeClubId
 }

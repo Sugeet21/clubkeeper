@@ -11,7 +11,6 @@ import PendingTopupsModal from '../components/PendingTopupsModal'
 import { BringBackList } from '../components/BringBackList'
 import { useTopupInbox } from '../store/topupInbox'
 import { useAuthStore } from '../store/authStore'
-import { subscribeToTopupIntents, unsubscribeTopupIntents } from '../lib/realtimeTopups'
 import { getPendingTopups, getOwnerClub } from '../lib/playerHubApi'
 import type { PendingTopupRow } from '../lib/playerHubApi'
 import { useSettings, useSyncClubFromSupabase } from '../hooks/useLiveData'
@@ -47,24 +46,23 @@ export default function Wallet() {
     getEngagementConfig().then(setEngagementConfig).catch(() => {})
   }, [])
 
-  // Set up realtime subscription + load club + pending intents when ready
+  // Load club + initial pending intents when ready. The realtime channel
+  // itself is owned by <TopupRealtimeBridge /> at the app shell — this page
+  // just reads `pendingCount` from the store and reloads the intent list
+  // when that count changes (effect below).
   useEffect(() => {
     if (!dbReady || !session) return
 
     let cancelled = false
-    let currentClubId: string | null = null
 
     async function init() {
       try {
         const club = await getOwnerClub()
         if (cancelled || !club) return
-        currentClubId = club.id
         setClubId(club.id)
 
         const intents = await getPendingTopups(club.id)
         if (!cancelled) setPendingIntents(intents)
-
-        await subscribeToTopupIntents(club.id)
       } catch { /* ignore — club may not exist yet */ }
     }
 
@@ -72,7 +70,6 @@ export default function Wallet() {
 
     return () => {
       cancelled = true
-      unsubscribeTopupIntents()
     }
   }, [dbReady, session])
 

@@ -1111,8 +1111,14 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 
 ### src/lib/realtimeTopups.ts
 - **Imports:** `src/lib/supabase.ts`, `src/store/topupInbox.ts`, `src/lib/playerHubApi.ts`
-- **Imported by:** TopBar (mount/unmount), sign-out flow
+- **Imported by:** `src/components/TopupRealtimeBridge.tsx` (the ONLY mount site — app shell). Wallet.tsx no longer subscribes; it just reads `pendingCount` from `useTopupInbox` like TopBar does.
 - **Ripple:** If you change `clubs.id` lookup → update `subscribeToTopupIntents` channel name. If you change `topup_intents` table name/columns → update INSERT/UPDATE listeners here AND in `playerHubApi.ts`. Fallback polling calls `getPendingTopups` — any change to that function signature ripples here.
+- **`subscribeToTopupIntents(clubId, onInsert?)` signature:** Optional callback receives `TopupInsertEvent { intentId, playerName, playerMobile, amount }` on every pending INSERT. Only one callback per active subscription — re-calling the function tears down the channel and rebuilds. If you ever need multiple consumers, switch to a fan-out store rather than adding a second `.on('postgres_changes', …)` listener (Supabase will deliver duplicates on the same filter pair).
+
+### src/components/TopupRealtimeBridge.tsx (NEW — #83 follow-up)
+- **Imports:** `react-router-dom` (useLocation, useNavigate), `src/store/authStore.ts`, `src/store/toastStore.ts`, `src/lib/realtimeTopups.ts`, `src/lib/playerHubApi.ts` (getOwnerClub)
+- **Imported by:** `src/App.tsx` ONLY (mounted alongside AuthInitializer / ExpirySweepRunner inside BrowserRouter)
+- **Ripple:** Keeps the topup_intents realtime channel open for the entire authenticated session — not just while `/wallet` is mounted. Guards: `dbReady && session && subscriptionLoaded && !isPlayerHubPath(pathname)` (Pattern A7 + A6 + A8). Uses per-user `activeUserIdRef` (same fix-pattern as `_clubSyncDoneForUser` for P3 / #53) so a second user signing in on the same tab gets a fresh subscription. **Do NOT include `location.pathname` in the effect deps** — it'd tear down and rebuild the channel on every navigation. Pathname is read via `pathnameRef` inside the INSERT callback to suppress the "Review" toast when the owner is already on `/wallet`. If a new public-only route is added that should suppress the bridge, add its prefix to the file's `isPlayerHubPath()` helper.
 
 ### src/store/topupInbox.ts
 - **Imports:** `zustand`

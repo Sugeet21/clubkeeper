@@ -342,6 +342,23 @@ Files most affected: `src/store/authStore.ts`, `src/pages/Signup.tsx`, `src/page
 
 **Files affected:** `src/lib/supabase.ts`, `src/lib/supabasePublic.ts` (NEW), `src/lib/playerHubApi.ts`, `src/App.tsx`.
 
+### Pattern A8 — Session-scoped realtime must live at the app shell, not on a single page (#83 follow-up, 15 Jun 2026)
+
+**Symptom signature:** A Supabase realtime subscription "works on the page that opened it" but doesn't deliver updates anywhere else in the app. User on `/tables` taps something on another device → the badge in TopBar never updates → user must navigate to `/wallet` (or refresh) to see it. No console error.
+
+**Root cause:** The subscription was opened inside a single page's mount effect (in the original bug, `Wallet.tsx`'s `useEffect`). Navigating away unmounts that effect → `unsubscribeTopupIntents()` fires → channel torn down. Returning to a different route mounts that other route — which has no subscribe call — so updates from Supabase have nowhere to land. TopBar reads `pendingCount` from a Zustand store, but the store is only being written by the wallet page's mount.
+
+**Fix:** Lift any subscription that drives global UI (badges, toasts, notification icons) to a **mount-once bridge component** at the app shell, alongside `AuthInitializer` and `ExpirySweepRunner`. For #83's case: `src/components/TopupRealtimeBridge.tsx`. The bridge:
+1. Gates on `dbReady && session && subscriptionLoaded` (Patterns A6 + D6) so it never queries before auth + Dexie are ready.
+2. Gates on `!isPlayerHubPath(pathname)` (Pattern A7) so it never runs on `/c/` or `/poster/`.
+3. Uses a per-user `activeUserIdRef` to allow re-subscription when a second user signs in on the same tab — same trick that fixed P3 / #53's `_clubSyncDoneForUser`.
+4. Reads `location.pathname` via a ref inside the INSERT callback (NOT via effect deps) so it can suppress its toast on `/wallet` WITHOUT tearing down and rebuilding the channel on every navigation.
+5. Has a `cancelled` flag in the async setup path so an auth flip mid-flight doesn't leave a leaked channel bound to the old user.
+
+**Rule:** If a feature is supposed to notify the owner regardless of where they are in the app, the realtime subscription MUST live at the app shell. Never inside a page-level `useEffect`. If you're tempted to put `supabase.channel(...)` inside a page, ask: does TopBar / a badge / a toast need to react to it? If yes → mount the bridge in `App.tsx` instead.
+
+**Files affected:** `src/components/TopupRealtimeBridge.tsx` (NEW), `src/App.tsx` (mounted), `src/lib/realtimeTopups.ts` (added optional `onInsert` callback + `TopupInsertEvent` export), `src/pages/Wallet.tsx` (dropped its own subscribe/unsubscribe calls).
+
 ### Pattern A5 — Auth store initializer must use try/finally on loading flag (BUG-020)
 **Symptom signature:** OAuth succeeds (token visible in URL hash), page stuck forever on "Signing you in…". Refreshing is the only escape.
 **Root cause:** `initialize()` set `loading: false` in the try block only. Any throw (network error, RLS error, bad Supabase response) in `refreshProfile()` left `loading=true` permanently. Any component gating on `if (loading) return` was permanently frozen.
