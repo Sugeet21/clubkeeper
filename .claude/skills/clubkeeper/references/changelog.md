@@ -2,6 +2,25 @@
 
 ---
 
+## 14 Jun 2026 — Phase B: Import Everything UI (#79)
+
+**`src/pages/Settings.tsx` Data & Backup section:**
+- New "Import everything" action row directly below "Export everything", with an upload icon mirroring the export download icon. Subtitle: "Restore from a backup file. Replaces all current data."
+- Hidden `<input type="file" accept="application/json,.json">` triggered programmatically via `useRef`. Trigger reset (`e.target.value = ''`) on each pick so re-selecting the same file still fires `onChange`.
+- Pre-confirm destructive modal: "Replace all current data?" — body warns "This cannot be undone." Two buttons: Cancel (neutral) / "Yes, replace everything" (busy-red, mirrors the Reset everything style). Both `disabled` while `importing===true`.
+- Success overlay: full-viewport `fixed inset-0 z-50 bg-bg flex-col` (Pattern U8). Centered green check + "Backup restored" headline + a 9-row breakdown card (Tables / Sessions / Session items / Customers / Wallet balance ₹ / Canteen items / Canteen sales / Stock purchases / Wallet transactions). Pinned "Done" button in shrink-0 footer with `safe-area-inset-bottom`. Done calls `window.location.assign('/tables')` — hard navigation forces every `useLiveQuery` to remount and re-fetch against the restored DB.
+- Error handling: all 7 `ImportFailureReason` codes mapped to human-readable toast copy via module-level `importErrorMessage()` helper. No partial paths — every failure path resets `pendingImportFile` to null and closes the confirm modal.
+- New `<ImportCountRow>` sub-component (file-local) keeps the success overlay JSX tidy.
+- New `<IconUpload>` (16px, mirrors the existing `<IconData>` download arrow) and `<IconCheck>` (56px, used in success overlay) icons.
+
+**Pattern notes:**
+- File input uses `className="hidden"` — `type="file"` triggered via `ref.click()` is universally supported across browsers. (Pattern U9's opacity-0 overlay rule is specifically for `type="date"` Chrome quirks; file inputs don't have the same activation issue when triggered programmatically.)
+- Modal pattern follows existing Settings modals (Modal component with grid-cols-2 footer buttons).
+
+Phase B of #79. Build clean (954.91 kB bundle, +8.4 KB). Pending owner verification.
+
+---
+
 ## 14 Jun 2026 — Phase A: Import Everything core logic (#79)
 
 **New file:** `src/lib/importEverything.ts` — `importEverythingFromFile(file: File): Promise<ImportResult>`.

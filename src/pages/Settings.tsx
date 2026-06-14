@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useLiveQuery } from 'dexie-react-hooks'
@@ -15,6 +15,7 @@ import { supabase } from '../lib/supabase'
 import { playBeepOnce, triggerVibration, unlockAudio } from '../lib/alarm'
 import { PlayerHubSettings } from './PlayerHubSettings'
 import { updateClubNameRemote } from '../lib/playerHubApi'
+import { importEverythingFromFile, type ImportSuccess, type ImportFailureReason } from '../lib/importEverything'
 import type { GameTable } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -72,6 +73,25 @@ function IconData() {
       <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  )
+}
+
+function IconUpload() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  )
+}
+
+function IconCheck() {
+  return (
+    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
     </svg>
   )
 }
@@ -174,6 +194,25 @@ function formatDate(ms: number) {
 
 type RoundingMode = 'none' | '15min' | '30min'
 
+function importErrorMessage(reason: ImportFailureReason): string {
+  switch (reason) {
+    case 'parse_error':
+      return "Couldn't read that file. Make sure it's a valid ClubKeeper backup."
+    case 'not_clubkeeper_file':
+      return "This doesn't look like a ClubKeeper backup."
+    case 'legacy_incomplete_format':
+      return "This backup is from an older version that didn't include all data. We can't safely restore it. Please use a backup taken after 14 Jun 2026."
+    case 'schema_too_new':
+      return 'This backup is from a newer version of ClubKeeper. Update the app first.'
+    case 'active_sessions_present':
+      return 'Stop all running sessions before importing.'
+    case 'empty_file':
+      return 'The backup file is empty.'
+    case 'transaction_failed':
+      return 'Import failed. Your existing data is unchanged.'
+  }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -238,6 +277,13 @@ export default function Settings() {
   const [pendingRounding, setPendingRounding] = useState<RoundingMode | null>(null)
   const [roundingConfirmOpen, setRoundingConfirmOpen] = useState(false)
   const [activeSessionCount, setActiveSessionCount] = useState(0)
+
+  // Import everything state
+  const importFileRef = useRef<HTMLInputElement | null>(null)
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null)
+  const [importConfirmOpen, setImportConfirmOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importSuccess, setImportSuccess] = useState<ImportSuccess | null>(null)
 
   useEffect(() => {
     if ('storage' in navigator) {
@@ -354,6 +400,54 @@ export default function Settings() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+  }
+
+  function handleImportButtonClick() {
+    importFileRef.current?.click()
+  }
+
+  function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null
+    // Always clear the input value so picking the same file twice still fires onChange
+    e.target.value = ''
+    if (!file) return
+    setPendingImportFile(file)
+    setImportConfirmOpen(true)
+  }
+
+  function handleImportCancel() {
+    if (importing) return
+    setImportConfirmOpen(false)
+    setPendingImportFile(null)
+  }
+
+  async function handleImportConfirm() {
+    if (!pendingImportFile || importing) return
+    setImporting(true)
+    try {
+      const result = await importEverythingFromFile(pendingImportFile)
+      if (result.ok) {
+        setImportConfirmOpen(false)
+        setPendingImportFile(null)
+        setImportSuccess(result)
+      } else {
+        setImportConfirmOpen(false)
+        setPendingImportFile(null)
+        useToastStore.getState().show(importErrorMessage(result.reason), 'error')
+      }
+    } catch (err) {
+      setImportConfirmOpen(false)
+      setPendingImportFile(null)
+      useToastStore.getState().show(`Import failed: ${String(err)}`, 'error')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  function handleImportSuccessDone() {
+    setImportSuccess(null)
+    // Hard reload of /tables so every useLiveQuery refetches against the restored DB
+    window.location.assign('/tables')
   }
 
   async function handleCancelSubscription() {
@@ -807,6 +901,23 @@ export default function Settings() {
               <span className="text-[11px] text-text-faint mt-0.5">Download a backup file you can save or import later.</span>
             </button>
             <button
+              onClick={handleImportButtonClick}
+              className="w-full min-h-[44px] flex items-center justify-between px-4 py-3 rounded-xl bg-bg border border-border active:bg-bg-card transition-colors"
+            >
+              <span className="flex flex-col items-start">
+                <span className="text-[14px] text-text font-semibold">Import everything</span>
+                <span className="text-[11px] text-text-faint mt-0.5">Restore from a backup file. Replaces all current data.</span>
+              </span>
+              <span className="text-text-dim shrink-0 ml-3"><IconUpload /></span>
+            </button>
+            <input
+              ref={importFileRef}
+              type="file"
+              accept="application/json,.json"
+              onChange={handleImportFileChange}
+              className="hidden"
+            />
+            <button
               onClick={() => setClearModal(true)}
               className="w-full min-h-[44px] flex flex-col items-start px-4 py-3 rounded-xl bg-busy/8 border border-busy/20 active:bg-busy/15 transition-colors"
             >
@@ -1047,6 +1158,86 @@ export default function Settings() {
           </button>
         </div>
       </Modal>
+
+      {/* ── Import everything confirm modal ───────────────────────────── */}
+      <Modal
+        open={importConfirmOpen}
+        onClose={handleImportCancel}
+        title="Replace all current data?"
+      >
+        <p className="text-text-dim text-[14px] mb-5">
+          This will replace all your current data with the backup. This cannot be undone.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={handleImportCancel}
+            disabled={importing}
+            className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleImportConfirm}
+            disabled={importing}
+            className="py-3.5 bg-busy text-white rounded-xl text-[14px] font-bold disabled:opacity-50"
+          >
+            {importing ? 'Importing…' : 'Yes, replace everything'}
+          </button>
+        </div>
+      </Modal>
+
+      {/* ── Import success overlay ──────────────────────────────────────── */}
+      {importSuccess && (
+        <div
+          className="fixed inset-0 z-50 bg-bg flex flex-col"
+          style={{
+            paddingTop: 'env(safe-area-inset-top)',
+            paddingBottom: 'env(safe-area-inset-bottom)',
+          }}
+        >
+          <div className="flex-1 flex flex-col items-center justify-center px-5 text-center">
+            <div className="w-20 h-20 rounded-full bg-accent/15 text-accent flex items-center justify-center mb-5">
+              <IconCheck />
+            </div>
+            <h2 className="text-[22px] font-bold text-text mb-2">Backup restored</h2>
+            <p className="text-[14px] text-text-dim mb-6">Your data is back. Tap Done to continue.</p>
+            <div className="w-full max-w-sm bg-bg-card border border-border rounded-2xl divide-y divide-border">
+              <ImportCountRow label="Tables" value={importSuccess.counts.tables} />
+              <ImportCountRow label="Sessions" value={importSuccess.counts.sessions} />
+              <ImportCountRow label="Session items" value={importSuccess.counts.sessionItems} />
+              <ImportCountRow label="Customers" value={importSuccess.counts.customers} />
+              <ImportCountRow
+                label="Wallet balance"
+                value={`₹${importSuccess.walletBalanceTotal.toLocaleString('en-IN')}`}
+              />
+              <ImportCountRow label="Canteen items" value={importSuccess.counts.canteenItems} />
+              <ImportCountRow label="Canteen sales" value={importSuccess.counts.canteenSales} />
+              <ImportCountRow label="Stock purchases" value={importSuccess.counts.stockPurchases} />
+              <ImportCountRow label="Wallet transactions" value={importSuccess.counts.walletTxs} />
+            </div>
+          </div>
+          <div
+            className="shrink-0 px-5 pt-3 border-t border-border"
+            style={{ paddingBottom: 'max(20px, env(safe-area-inset-bottom))' }}
+          >
+            <button
+              onClick={handleImportSuccessDone}
+              className="w-full min-h-[44px] py-3.5 bg-accent text-bg rounded-xl text-[15px] font-bold active:opacity-90 transition-opacity"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ImportCountRow({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="flex items-center justify-between px-4 py-3">
+      <span className="text-[13px] text-text-dim">{label}</span>
+      <span className="text-[14px] text-text font-semibold tabular-nums">{value}</span>
     </div>
   )
 }

@@ -1240,5 +1240,15 @@ The ripple is wider than usual because of import/export:
 ### `src/lib/importEverything.ts`
 
 - **Imports:** `src/db/database.ts` (`db`), `src/db/queries.ts` (`CURRENT_SCHEMA_VERSION`), `src/types`, `src/types/customer`, `src/types/walletTransaction`
-- **Imported by:** `src/main.tsx` (DEV-only dynamic import for `window.__importEverythingFromFile`). Phase B will add `src/pages/Settings.tsx` as the production consumer.
-- **Failure-reason union (`ImportFailureReason`)** — UI must handle all of: `parse_error`, `not_clubkeeper_file`, `legacy_incomplete_format`, `schema_too_new`, `active_sessions_present`, `empty_file`, `transaction_failed`. Adding a new reason → update Phase B's switch in `Settings.tsx`.
+- **Imported by:** `src/pages/Settings.tsx` (production consumer — `importEverythingFromFile`, `ImportSuccess`, `ImportFailureReason` types), `src/main.tsx` (DEV-only dynamic import for `window.__importEverythingFromFile`)
+- **Failure-reason union (`ImportFailureReason`)** — UI must handle all of: `parse_error`, `not_clubkeeper_file`, `legacy_incomplete_format`, `schema_too_new`, `active_sessions_present`, `empty_file`, `transaction_failed`. Adding a new reason → update the `importErrorMessage()` switch at the top of `Settings.tsx`.
+
+### If you change the import flow in Settings (#79 Phase B)
+
+**Affects:**
+- `src/pages/Settings.tsx` — `importErrorMessage()` (module-level helper, must cover every `ImportFailureReason`), `importFileRef`, `pendingImportFile`, `importConfirmOpen`, `importing`, `importSuccess` state; `handleImportButtonClick` / `handleImportFileChange` / `handleImportCancel` / `handleImportConfirm` / `handleImportSuccessDone` handlers; the new action row in the Data & Backup section; hidden `<input type="file">` mounted as a sibling of the trigger button; the destructive confirm `<Modal>`; the full-viewport success overlay (`fixed inset-0 z-50`); inline `<ImportCountRow>` sub-component
+- `src/lib/importEverything.ts` — source of truth for `ImportSuccess` shape (counts + walletBalanceTotal). Adding a new count field → add it to `ImportSuccess`, populate in the reducer, and render a new `<ImportCountRow>` in the overlay
+- After success: `window.location.assign('/tables')` is intentional — every `useLiveQuery` must remount and re-fetch. Do NOT change to `navigate('/tables')` — SPA navigation keeps the existing Dexie observers, and although they'd refire on the bulk writes, the hard nav also resets module-level flags like `_clubSyncDone` that could otherwise leak stale state across the import boundary.
+- File input uses `className="hidden"` — programmatic `.click()` works reliably for `type="file"`. Do NOT migrate to Pattern U9's opacity-0 overlay; U9 is for `type="date"` Chrome activation quirks, irrelevant here.
+
+**Discovered when:** Import Everything Phase B, 14 Jun 2026 (#79).
