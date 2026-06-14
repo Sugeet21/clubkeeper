@@ -548,16 +548,16 @@ export default function Summary() {
     sessionCount > 0 ? Math.round(totalRevenue / sessionCount) : 0
 
   // ── Hourly heatmap ──────────────────────────────────────────────────────────
-  const { buckets: hourlyBuckets, peakHour } = useMemo(() => {
-    if (!detailSessions.length) return { buckets: Array.from({ length: 24 }, (_, h) => ({ hour: h, revenue: 0, sessionCount: 0 })), peakHour: -1 }
-    return bucketByHour(detailSessions, detailItemsMap)
-  }, [detailSessions, detailItemsMap])
+  // NOT wrapped in useMemo — running sessions call getElapsedMs() which must
+  // recompute every useTick() render. useMemo would freeze the value between
+  // DB writes (Pattern T4).
+  const { buckets: hourlyBuckets, peakHour } = !detailSessions.length
+    ? { buckets: Array.from({ length: 24 }, (_, h) => ({ hour: h, revenue: 0, sessionCount: 0 })), peakHour: -1 }
+    : bucketByHour(detailSessions, detailItemsMap)
 
   // ── Top tables ──────────────────────────────────────────────────────────────
-  const topTables = useMemo(
-    () => rankTables(detailSessions, detailItemsMap, tables),
-    [detailSessions, detailItemsMap, tables],
-  )
+  // NOT wrapped in useMemo — same Pattern T4 reason as hourlyBuckets above.
+  const topTables = rankTables(detailSessions, detailItemsMap, tables)
 
   // ── Top canteen items ───────────────────────────────────────────────────────
   const allItems = useMemo(() => {
