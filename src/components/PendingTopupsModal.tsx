@@ -119,15 +119,24 @@ function ConfirmRow({
         .filter((t) => t.referenceType === 'topup' && t.referenceId === intent.id)
         .first()
 
+      // Total coins actually credited — surfaced to the player via the
+      // topup_intents.coins_credited column. Pattern P1: the player browser
+      // can't compute welcome bonus, so the owner side must persist the
+      // authoritative total. Null in the already-credited branch — the
+      // player already saw the original confirmation, so we don't try to
+      // reconstruct it.
+      let coinsCredited: number | null = null
+
       if (alreadyCredited) {
         showToast('Already credited.')
       } else {
-        await recordTopupWithCoins({
+        const result = await recordTopupWithCoins({
           customerId: customer.id,
           rupees: intent.amount,
           paymentMode: 'upi',
           refId: intent.id,
         })
+        coinsCredited = result.coinsEarned + result.welcomeCoinsEarned
       }
 
       // ── Cloud update via Supabase client (owner is authed, RLS permits) ──
@@ -136,6 +145,7 @@ function ConfirmRow({
         .update({
           status: 'confirmed',
           confirmed_at: new Date().toISOString(),
+          ...(coinsCredited !== null ? { coins_credited: coinsCredited } : {}),
         })
         .eq('id', intent.id)
 

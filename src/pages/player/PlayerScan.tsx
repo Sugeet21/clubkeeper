@@ -48,6 +48,12 @@ export default function PlayerScan() {
   // Intent tracking
   const [intentId, setIntentId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState<string | null>(null)
+  // Authoritative coin total from the server (owner-side computed, includes
+  // welcome bonus + any future engagement bonus). Null when the legacy
+  // confirmation path was used (intent confirmed before #87 shipped, or via
+  // the failed-sync retry queue) — in that case we fall back to a local
+  // tier-only computation. See Pattern P1.
+  const [confirmedCoins, setConfirmedCoins] = useState<number | null>(null)
   const [payBtnEnabled, setPayBtnEnabled] = useState(false)
   const [elapsed, setElapsed] = useState(0)
 
@@ -107,7 +113,11 @@ export default function PlayerScan() {
       try {
         const result = await getTopupIntentStatus(intentId)
         if (!mounted || !result) return
-        if (result.status === 'confirmed') { stopPolling(); setPageState('confirmed') }
+        if (result.status === 'confirmed') {
+          stopPolling()
+          setConfirmedCoins(result.coinsCredited)
+          setPageState('confirmed')
+        }
         else if (result.status === 'rejected') { stopPolling(); setRejectReason(result.rejectReason); setPageState('rejected') }
         else if (result.status === 'expired') { stopPolling(); setPageState('expired') }
       } catch { /* ignore transient errors */ }
@@ -265,7 +275,12 @@ export default function PlayerScan() {
             <p className="text-text font-mono font-bold text-lg mt-1">{mobile.replace(/(\d{5})(\d{5})/, '$1 $2')}</p>
           </div>
           {clubInfo?.coinsEnabled && clubInfo.coinTiers.length > 0 && (() => {
-            const coins = coinsEarnedForTopup(amount, clubInfo.coinTiers)
+            // Prefer the server-side authoritative total (includes welcome
+            // bonus + any future engagement bonuses owner-side computes).
+            // Fall back to a local tier-only computation only for legacy
+            // intents confirmed before coins_credited shipped. See #87 /
+            // Pattern P1.
+            const coins = confirmedCoins ?? coinsEarnedForTopup(amount, clubInfo.coinTiers)
             if (coins <= 0) return null
             return (
               <div className="flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl w-full">
@@ -498,14 +513,21 @@ export default function PlayerScan() {
           {amountError && <p className="text-busy text-[13px] mt-1.5">{amountError}</p>}
         </div>
 
-        {/* Coin earning preview */}
+        {/* Coin earning preview. The player browser doesn't know the
+            owner-side welcome-bonus config, so we phrase the lower bound
+            ('at least N') and hint at the first-top-up bonus. The exact
+            total is surfaced server-side on the confirmation screen via
+            coins_credited. See #87 / Pattern P1. */}
         {clubInfo?.coinsEnabled && amount > 0 && clubInfo.coinTiers.length > 0 && (() => {
           const coins = coinsEarnedForTopup(amount, clubInfo.coinTiers)
           if (coins <= 0) return null
           return (
-            <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+            <div className="flex flex-col gap-0.5 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl">
               <span className="text-[14px] text-amber-400 font-semibold">
-                🪙 You'll earn {coins.toLocaleString('en-IN')} ClubCoins on this top-up
+                🪙 You'll earn at least {coins.toLocaleString('en-IN')} ClubCoins on this top-up
+              </span>
+              <span className="text-[11px] text-amber-300/80">
+                + welcome bonus if this is your first top-up here
               </span>
             </div>
           )

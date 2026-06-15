@@ -1119,6 +1119,13 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 - **Tables in `supabase_realtime` publication:** `public.topup_intents`, `public.clubs`. Set via `supabase/migrations/20260615_enable_realtime.sql`.
 - **Ripple:** Adding a new `supabase.channel(...).on('postgres_changes', { table: 'X' })` listener anywhere in the codebase REQUIRES a migration adding `X` to the publication. Without it the listener subscribes silently but never receives events. See Pattern S6. If the handler reads `payload.old.<field>` for anything beyond the PK, also set `replica identity full` on the table.
 
+### topup_intents.coins_credited + get_topup_intent_status (#87 — server-authoritative coin total)
+- **Schema:** `public.topup_intents.coins_credited int null`. `get_topup_intent_status(uuid) returns table(status text, reject_reason text, coins_credited int)`. Set via `supabase/migrations/20260615_topup_intents_coins_credited.sql`.
+- **Owner-side write site:** `src/components/PendingTopupsModal.tsx` `handleConfirm` — captures `{coinsEarned, welcomeCoinsEarned}` from `recordTopupWithCoins` and writes `coins_credited = coinsEarned + welcomeCoinsEarned` in the same Supabase UPDATE that flips status to `confirmed`. Null in the idempotency 'already credited' branch and in the Wallet.tsx failed-sync retry path — player falls back to local tier-only display for those edge cases (acceptable, player already saw original confirmation).
+- **Player-side read site:** `src/pages/player/PlayerScan.tsx` polling effect captures `result.coinsCredited` into `confirmedCoins` state; the `confirmed` render uses `confirmedCoins ?? coinsEarnedForTopup(amount, clubInfo.coinTiers)`. Form-screen preview chip stays a lower-bound ('earn at least N + welcome bonus if first') because the player doesn't have access to engagement config or `Customer.firstTopupAt`.
+- **Ripple:** If you add ANY new owner-side coin grant inside `recordTopupWithCoins` (streak bonus, surge multiplier, etc.), the return value must reflect the new total AND `PendingTopupsModal.handleConfirm` must include it in `coinsCredited`. Don't compute partial totals on the player side — Pattern P1.
+- **Ripple to `getTopupIntentStatus` callers:** PlayerScan is the only caller today. If a new public consumer is added, it must use `coinsCredited` directly — never recompute locally.
+
 ### src/components/TopupRealtimeBridge.tsx (NEW — #83 follow-up)
 - **Imports:** `react-router-dom` (useLocation, useNavigate), `src/store/authStore.ts`, `src/store/toastStore.ts`, `src/lib/realtimeTopups.ts`, `src/lib/playerHubApi.ts` (getOwnerClub)
 - **Imported by:** `src/App.tsx` ONLY (mounted alongside AuthInitializer / ExpirySweepRunner inside BrowserRouter)

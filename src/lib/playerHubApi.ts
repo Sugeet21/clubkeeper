@@ -68,7 +68,7 @@ export async function submitTopupIntent(
 
 export async function getTopupIntentStatus(
   intentId: string,
-): Promise<{ status: string; rejectReason: string | null } | null> {
+): Promise<{ status: string; rejectReason: string | null; coinsCredited: number | null } | null> {
   const { data, error } = await withTimeout(
     supabasePublic.rpc('get_topup_intent_status', {
       p_intent_id: intentId,
@@ -81,6 +81,7 @@ export async function getTopupIntentStatus(
   return {
     status: data[0].status as string,
     rejectReason: (data[0].reject_reason as string | null) ?? null,
+    coinsCredited: (data[0].coins_credited as number | null) ?? null,
   }
 }
 

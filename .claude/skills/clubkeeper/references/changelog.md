@@ -2,15 +2,22 @@
 
 ---
 
-## 15 Jun 2026 — Found, awaiting decision: Player confirmed-screen undercounts welcome-bonus coins (#87)
+## 15 Jun 2026 — Fix: Player confirmation screen shows correct welcome-bonus coin total (#87, Option 1)
 
-**Bug:** New-customer first top-up of ₹1000 — owner side credits 200 ClubCoins (150 tier + 50 welcome) correctly, but the player's confirmation screen on their phone shows '🪙 +150 ClubCoins credited!' — welcome bonus missing from the display only. Actual balance correct.
+**Bug:** New-customer first top-up of ₹1000 — owner side credited 200 coins (150 tier + 50 welcome) correctly, but the player's phone showed '+150 ClubCoins credited' — welcome bonus missing from display only. Pattern P1.
 
-**Root cause:** `src/pages/player/PlayerScan.tsx:267` (confirmed state) and `:502` (form preview chip) both call `coinsEarnedForTopup(amount, clubInfo.coinTiers)` locally — that helper computes tier coins only. The welcome bonus is gated on `Customer.firstTopupAt` (owner Dexie) and the welcome config (owner ClubSettings); neither is exposed to the anon player browser. Even though `recordTopupWithCoins` correctly credits both rows, the player never sees the welcome portion in the displayed total. New Pattern P1.
+**Fix (server-authoritative — Option 1 on the issue):**
+- `supabase/migrations/20260615_topup_intents_coins_credited.sql` — adds nullable `coins_credited int` column to `public.topup_intents`. Drops + recreates `get_topup_intent_status(uuid)` to return `(status, reject_reason, coins_credited)` — Postgres can't change OUT parameters via CREATE OR REPLACE. Applied via `mcp__supabase__apply_migration`. Anon grant preserved.
+- `src/lib/playerHubApi.ts` — `getTopupIntentStatus` return type extended with `coinsCredited: number | null`.
+- `src/components/PendingTopupsModal.tsx` `handleConfirm` — captures `{coinsEarned, welcomeCoinsEarned}` from `recordTopupWithCoins`, sums to `coinsCredited`, includes it in the same Supabase UPDATE that flips status to `confirmed`. Null in the idempotency 'already credited' branch (player already saw original confirmation).
+- `src/pages/player/PlayerScan.tsx` — polling effect captures `result.coinsCredited` into new `confirmedCoins` state. Confirmed-screen render uses `confirmedCoins ?? coinsEarnedForTopup(...)` — server value when present, local tier-only fallback for legacy intents confirmed before this fix.
+- Form-screen preview chip rephrased as a lower bound: 'earn at least N ClubCoins on this top-up' + subtitle '+ welcome bonus if this is your first top-up here'. Player browser can't know if it's first (no access to owner-side `Customer.firstTopupAt`), so we stop lying instead of overpromising.
 
-**Status:** NOT FIXED — code untouched per owner direction. Two fix options documented on GitHub #87 (Option 1 = `coins_credited` column on `topup_intents`; Option 2 = mirror engagement config to player side via RPC). Awaiting owner's choice.
+Build clean (958.60 kB, +0.38 kB).
 
-**Skill paired update only (#87 fix not yet shipped):** new Pattern P1 in bug_patterns — 'Player-side must NOT recompute owner-side derived values from incomplete inputs'. Rule: any value the player sees that the owner computes must be persisted server-side and read back via RPC, never recomputed locally. Applies to coin totals, future engagement bonuses, anything gated on owner-side Dexie state.
+Closes #87 — pending owner verification.
+
+---
 
 ---
 
