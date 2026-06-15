@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect } from 'react'
-import { useLiveQuery } from 'dexie-react-hooks'
 import { formatDistanceToNow } from 'date-fns'
 import { Modal } from './Modal'
 import { db } from '../db/database'
@@ -52,13 +51,33 @@ function ConfirmRow({
   })
 
   const formattedMobile = `+91${intent.playerMobile}`
-  const existingCustomer = useLiveQuery(
-    () => db.customers.where('phone').equals(formattedMobile).first(),
-    [formattedMobile],
-  )
-  // undefined = still loading, null = loaded + not found, Customer = found
-  const customerLoaded = existingCustomer !== undefined
-  const isNewCustomer = existingCustomer === null
+  // Three-state lookup: 'loading' until the one-shot Dexie probe resolves,
+  // then either 'new' (no customer with this phone) or 'existing'. We do NOT
+  // use useLiveQuery here because Dexie's .first() returns undefined for
+  // both loading AND not-found, which the previous code conflated and which
+  // permanently disabled the Confirm button for new players (#86).
+  const [lookupState, setLookupState] = useState<'loading' | 'new' | 'existing'>('loading')
+
+  useEffect(() => {
+    let cancelled = false
+    setLookupState('loading')
+    db.customers
+      .where('phone')
+      .equals(formattedMobile)
+      .first()
+      .then((row) => {
+        if (cancelled) return
+        setLookupState(row ? 'existing' : 'new')
+      })
+      .catch(() => {
+        if (cancelled) return
+        // Treat lookup failure as 'new' — handleConfirm does its own
+        // authoritative find-or-create, so worst case we briefly show a
+        // welcome-bonus preview that the actual tx then suppresses.
+        setLookupState('new')
+      })
+    return () => { cancelled = true }
+  }, [formattedMobile])
 
   const previewTierCoins = coinConfig.coinsEnabled
     ? coinsEarnedForTopup(intent.amount, coinConfig.coinTiers)
@@ -66,8 +85,7 @@ function ConfirmRow({
   const previewWelcomeCoins =
     coinConfig.coinsEnabled &&
     engagementConfig?.welcomeBonusEnabled &&
-    customerLoaded &&
-    isNewCustomer
+    lookupState === 'new'
       ? (engagementConfig.welcomeBonusCoins ?? 0)
       : 0
   const previewCoins = previewTierCoins + previewWelcomeCoins
@@ -243,14 +261,14 @@ function ConfirmRow({
         <div className="flex gap-2 mt-3">
           <button
             onClick={handleConfirm}
-            disabled={rowStatus.state === 'confirming' || !customerLoaded}
+            disabled={rowStatus.state === 'confirming'}
             className={`flex-1 min-h-[44px] rounded-xl text-[13px] font-bold transition-opacity ${
-              rowStatus.state === 'confirming' || !customerLoaded
+              rowStatus.state === 'confirming'
                 ? 'bg-free/20 text-free/60 cursor-not-allowed'
                 : 'bg-free/12 text-free border border-free/30'
             }`}
           >
-            {rowStatus.state === 'confirming' ? 'Confirming…' : !customerLoaded ? 'Loading…' : 'Confirm received'}
+            {rowStatus.state === 'confirming' ? 'Confirming…' : 'Confirm received'}
           </button>
           <button
             onClick={() => setRowStatus((s) => ({ ...s, state: 'rejecting' }))}
