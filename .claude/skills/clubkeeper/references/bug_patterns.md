@@ -222,6 +222,24 @@ export default function MyPage() {
 
 **Prevention:** When building a new page with `useLiveQuery`, separate the query consumer (a sub-component or section) from the page wrapper. The wrapper renders unconditionally.
 
+### Pattern P1 — Player-side (public Player Hub) must NOT recompute owner-side derived values from incomplete inputs (#87, 15 Jun 2026)
+
+**Symptom signature:** Player's QR-flow confirmation screen shows the WRONG ClubCoin total. New-customer first top-up displays 'You earned X coins' where X is the tier-tier earning only — welcome bonus / streak bonus / any future engagement bonus silently missing. Owner side shows the correct total. The actual coin balance written to Dexie + Supabase is correct. Only the player-facing display undercounts.
+
+**Root cause:** The player browser is anon — `clubInfo` from `get_club_public_info` exposes only tier config (`coin_tiers_json` + `coins_enabled`). The welcome bonus is gated on `Customer.firstTopupAt` which lives in owner-side Dexie, not visible to the player. PlayerScan calls `coinsEarnedForTopup(amount, clubInfo.coinTiers)` locally — that function ONLY computes tier coins, never adds bonuses. Any owner-side rule that doesn't flow through the public RPC is invisible to the player and produces a stale display.
+
+**Rule (mandatory for any value the player sees that the owner computes):**
+1. **Don't recompute on the player side.** The player browser is fundamentally lower-trust and lower-information. Once the owner-side computes the authoritative total in `recordTopupWithCoins` / `recordSessionPaymentBreakdown` / etc., write that total back to a server-readable place (e.g. column on `topup_intents`).
+2. Extend the relevant RPC (`get_topup_intent_status` for the confirmation poll; `get_club_public_info` for static config) to return that authoritative value.
+3. Player UI displays the server value when present and falls back to a local computation ONLY for forward-compatibility with legacy rows that pre-date the server field.
+4. If you add ANY new engagement rule (streak bonus on first-of-day top-up, tier multiplier, surge bonus, etc.) to `recordTopupWithCoins`, audit every player-side display that shows a coin total. Each one needs to read from the server field, not recompute.
+
+**Files where this matters today:**
+- `src/pages/player/PlayerScan.tsx` — `confirmed` state (line ~267) and `form` state preview chip (line ~502) both undercount welcome bonus. To be fixed via #87.
+- `src/lib/playerHubApi.ts` — `getTopupIntentStatus` return shape needs `coinsCredited` once #87 ships.
+
+**Don't conflate with:** Pattern A7 (auth lock isolation between player and owner clients) — that one is about runtime queue contention. Pattern P1 is about WHO computes derived values: always the owner, never the player.
+
 ### Pattern D11 — Dexie `.first()` returns `undefined` for not-found; `useLiveQuery` cannot distinguish loading from not-found (#86, 15 Jun 2026)
 
 **Symptom signature:** A modal row, panel, or button gated on `useLiveQuery(...).first()` shows "Loading…" forever for queries that have zero matches. Works fine for matches. No console error.

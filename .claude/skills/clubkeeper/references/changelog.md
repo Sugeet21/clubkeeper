@@ -2,6 +2,18 @@
 
 ---
 
+## 15 Jun 2026 — Found, awaiting decision: Player confirmed-screen undercounts welcome-bonus coins (#87)
+
+**Bug:** New-customer first top-up of ₹1000 — owner side credits 200 ClubCoins (150 tier + 50 welcome) correctly, but the player's confirmation screen on their phone shows '🪙 +150 ClubCoins credited!' — welcome bonus missing from the display only. Actual balance correct.
+
+**Root cause:** `src/pages/player/PlayerScan.tsx:267` (confirmed state) and `:502` (form preview chip) both call `coinsEarnedForTopup(amount, clubInfo.coinTiers)` locally — that helper computes tier coins only. The welcome bonus is gated on `Customer.firstTopupAt` (owner Dexie) and the welcome config (owner ClubSettings); neither is exposed to the anon player browser. Even though `recordTopupWithCoins` correctly credits both rows, the player never sees the welcome portion in the displayed total. New Pattern P1.
+
+**Status:** NOT FIXED — code untouched per owner direction. Two fix options documented on GitHub #87 (Option 1 = `coins_credited` column on `topup_intents`; Option 2 = mirror engagement config to player side via RPC). Awaiting owner's choice.
+
+**Skill paired update only (#87 fix not yet shipped):** new Pattern P1 in bug_patterns — 'Player-side must NOT recompute owner-side derived values from incomplete inputs'. Rule: any value the player sees that the owner computes must be persisted server-side and read back via RPC, never recomputed locally. Applies to coin totals, future engagement bonuses, anything gated on owner-side Dexie state.
+
+---
+
 ## 15 Jun 2026 — Fix: Enable Supabase realtime publication + replica identity (#85)
 
 **Bug:** Even after the TopupRealtimeBridge fix, owners still got no live notification on new top-ups. Hard refresh was required. Reported during E2E test.
