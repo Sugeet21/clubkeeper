@@ -222,6 +222,20 @@ export default function MyPage() {
 
 **Prevention:** When building a new page with `useLiveQuery`, separate the query consumer (a sub-component or section) from the page wrapper. The wrapper renders unconditionally.
 
+### Pattern D11 — Dexie `.first()` returns `undefined` for not-found; `useLiveQuery` cannot distinguish loading from not-found (#86, 15 Jun 2026)
+
+**Symptom signature:** A modal row, panel, or button gated on `useLiveQuery(...).first()` shows "Loading…" forever for queries that have zero matches. Works fine for matches. No console error.
+
+**Root cause:** Dexie's `.first()` returns `T | undefined`. It never returns `null`. `useLiveQuery` returns `undefined` while the query is in-flight AND returns the query's resolved value afterwards. For a query that resolves to "no match", the result stays `undefined` forever — indistinguishable from "still loading". Any gate like `const loaded = result !== undefined` is permanently `false` for the not-found case.
+
+**Rule:**
+1. Never gate UI on a `useLiveQuery(...).first()` result if "not found" is a valid outcome.
+2. If you need three-state loading semantics (loading / found / not-found), use a one-shot `useEffect` with explicit `useState<'loading' | 'found' | 'not-found'>` instead. Dexie's promise resolves to `undefined` for not-found, but inside an effect you can map `undefined → 'not-found'` immediately.
+3. If you only need 'is this row present', a `useLiveQuery(() => db.X.where(...).count(), [], 0)` works fine — `count()` always returns a number, never `undefined`.
+4. For Confirm/Submit buttons whose handler does its own authoritative DB lookup anyway (e.g. find-or-create), don't gate the button at all — let the handler do the work. The button can render as soon as the row mounts.
+
+**Files where this matters today:** `src/components/PendingTopupsModal.tsx` (fixed via three-state `useState` lookup). Any future modal that previews customer / table / item metadata before action should follow this pattern.
+
 ### Pattern D10 — Lifecycle ops over multiple stores must enumerate ALL stores; drift = silent data leak (15 Jun 2026)
 
 **Symptom signature:** A "wipe everything" or "export everything" operation completes without error, but afterwards a subset of data either survives the wipe or never made it into the export. User reports "I reset/exported, but X is still there / missing X." No console error — the op silently does less than its name promises.
@@ -416,6 +430,30 @@ try {
 
 ### Pattern S4 — 7-day trial via `start_at`, not `trial_period`
 **Rule:** Trial = setting `start_at = now + 7 days` on Razorpay subscription. Our `trial_ends_at` in Supabase + `useAccessGuard` date check is the truth. Don't use Razorpay's `trial_period` param.
+
+### Pattern S6 — Supabase realtime requires both publication membership AND REPLICA IDENTITY FULL (#85, 15 Jun 2026)
+
+**Symptom signature:** Client subscribes to `supabase.channel('foo').on('postgres_changes', { event: 'INSERT', table: 'X', ... })` — SUBSCRIBED status fires, no errors, but **no events ever arrive** when rows are actually inserted into X. Or: INSERTs arrive but UPDATEs deliver an `old` payload that's missing all columns except the primary key, breaking any handler that compares `old.status !== new.status` to drive a state machine.
+
+**Root cause:** Supabase realtime forwards only what the Postgres logical-replication slot publishes. Two independent gates must both pass:
+1. The table must be a member of the `supabase_realtime` publication. By default a new table is NOT added. Migrations have to do it explicitly.
+2. The table's REPLICA IDENTITY governs what columns appear in `payload.old` on UPDATE/DELETE. The default (`relreplident = 'd'`) is "primary key only". Full row in `old` requires `REPLICA IDENTITY FULL`.
+
+**Verify in two SQL queries:**
+```sql
+SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = 'supabase_realtime';
+SELECT c.relname, c.relreplident FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = '<table>';
+```
+`relreplident = 'f'` means FULL. `'d'` means default (key only).
+
+**Rule:** Any time you write a `supabase.channel(...).on('postgres_changes', ...)` listener for a new table, ship a migration in the SAME PR that contains:
+```sql
+alter publication supabase_realtime add table public.<table>;
+alter table public.<table> replica identity full;  -- only if you read payload.old fields beyond the PK
+```
+Apply via `mcp__supabase__apply_migration` so the remote DB picks it up immediately. Save the SQL under `supabase/migrations/` for source control.
+
+**Files where this matters today:** `src/lib/realtimeTopups.ts` (topup_intents — fixed via `supabase/migrations/20260615_enable_realtime.sql`). Any future realtime feature on `customers`, `sessions`, etc. needs the same setup.
 
 ### Pattern S5 — Plan IDs live in one place AND must match both account AND mode of the active key
 

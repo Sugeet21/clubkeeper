@@ -1115,6 +1115,10 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 - **Ripple:** If you change `clubs.id` lookup → update `subscribeToTopupIntents` channel name. If you change `topup_intents` table name/columns → update INSERT/UPDATE listeners here AND in `playerHubApi.ts`. Fallback polling calls `getPendingTopups` — any change to that function signature ripples here.
 - **`subscribeToTopupIntents(clubId, onInsert?)` signature:** Optional callback receives `TopupInsertEvent { intentId, playerName, playerMobile, amount }` on every pending INSERT. Only one callback per active subscription — re-calling the function tears down the channel and rebuilds. If you ever need multiple consumers, switch to a fan-out store rather than adding a second `.on('postgres_changes', …)` listener (Supabase will deliver duplicates on the same filter pair).
 
+### Supabase realtime publication (#85 — remote-DB-only config)
+- **Tables in `supabase_realtime` publication:** `public.topup_intents`, `public.clubs`. Set via `supabase/migrations/20260615_enable_realtime.sql`.
+- **Ripple:** Adding a new `supabase.channel(...).on('postgres_changes', { table: 'X' })` listener anywhere in the codebase REQUIRES a migration adding `X` to the publication. Without it the listener subscribes silently but never receives events. See Pattern S6. If the handler reads `payload.old.<field>` for anything beyond the PK, also set `replica identity full` on the table.
+
 ### src/components/TopupRealtimeBridge.tsx (NEW — #83 follow-up)
 - **Imports:** `react-router-dom` (useLocation, useNavigate), `src/store/authStore.ts`, `src/store/toastStore.ts`, `src/lib/realtimeTopups.ts`, `src/lib/playerHubApi.ts` (getOwnerClub)
 - **Imported by:** `src/App.tsx` ONLY (mounted alongside AuthInitializer / ExpirySweepRunner inside BrowserRouter)

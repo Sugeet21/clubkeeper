@@ -2,6 +2,39 @@
 
 ---
 
+## 15 Jun 2026 — Fix: Enable Supabase realtime publication + replica identity (#85)
+
+**Bug:** Even after the TopupRealtimeBridge fix, owners still got no live notification on new top-ups. Hard refresh was required. Reported during E2E test.
+
+**Root cause:** Supabase realtime only delivers `postgres_changes` events for tables that are members of the `supabase_realtime` publication. Confirmed via MCP that the publication was empty — `topup_intents` was never added. Additionally, REPLICA IDENTITY was default (`'d'`) on both `topup_intents` and `clubs`, so UPDATE events only carried the primary key in `payload.old` — breaking the bridge's `oldStatus === 'pending' && newStatus !== 'pending'` decrement guard. New Pattern S6.
+
+**Fix:**
+- `supabase/migrations/20260615_enable_realtime.sql` (NEW) — adds both tables to the publication + sets REPLICA IDENTITY FULL. Applied to production via `mcp__supabase__apply_migration`.
+- Verified: `pg_publication_tables` now lists both. `pg_class.relreplident = 'f'` on both.
+
+No code change required — the bridge was correct all along; the DB just wasn't broadcasting.
+
+Closes #85 — pending owner verification.
+
+---
+
+## 15 Jun 2026 — Fix: PendingTopupsModal 'Confirm received' stuck on 'Loading…' for new players (#86)
+
+**Bug:** When a top-up came from a phone not yet in Dexie `customers`, the Confirm row's button showed 'Loading…' forever and was disabled. Existing-customer top-ups worked fine. Owner couldn't accept new-player top-ups at all.
+
+**Root cause:** `src/components/PendingTopupsModal.tsx` used `useLiveQuery(...).first()` to detect "is this a new customer". Dexie's `.first()` returns `Customer | undefined`. It never returns `null`. The code comment claimed `null === loaded + not found` but that's never true. For new phones, the live query stayed `undefined` forever (loading semantics conflated with not-found semantics) → `customerLoaded` stuck at `false` → button frozen. New Pattern D11.
+
+**Fix:**
+- Replaced `useLiveQuery` with a one-shot `useEffect` + explicit `useState<'loading' | 'new' | 'existing'>`. Inside the effect, Dexie's `undefined` resolves to `'new'` immediately.
+- Removed the `customerLoaded` gate from the Confirm button. The button enables on mount. `handleConfirm` does its own authoritative find-or-create — no need to wait.
+- Welcome-bonus chip preview now reads `lookupState === 'new'` (truthy three-state check, never false-positive on loading).
+
+Build clean (958.22 kB, +0.11 kB).
+
+Closes #86 — pending owner verification.
+
+---
+
 ## 15 Jun 2026 — Fix: Owner gets realtime top-up notification anywhere in app (#83 follow-up)
 
 **Bug:** After the original `/c/<slug>` hang was fixed, end-to-end test caught a second bug: when the player tapped "I've paid", the owner only saw the pending badge update if they were sitting on `/wallet`. Anywhere else (Home, Summary, History, Settings) — silent. Refresh needed.
