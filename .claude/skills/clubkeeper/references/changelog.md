@@ -2,6 +2,14 @@
 
 ---
 
+## 16 Jun 2026 — Phase 0 shipped to production (#84)
+
+Pushed 83359b0 + bffac35 to `main`; Vercel auto-deployed to app.handbookhq.in. Owner verified on localhost first — pricing card renders correctly on `/c/star-club` with tables grouped by game type, all rates showing. Production verified after PWA service-worker refresh.
+
+**Lesson (new Workflow/Deploy pattern):** During the Phase 0 follow-up I spent a full diagnostic round chasing a "tables_json stays []" bug that wasn't actually a bug — `bffac35` had never been pushed, so production was running the pre-fix code while localhost ran the fix. Localhost and prod share the same Supabase project, so the prod DB looked broken even though the code was correct. New Pattern W1 in bug_patterns.md captures this. Rule: before debugging a "feature works locally but not on prod" report, FIRST confirm (a) the commit is pushed, (b) Vercel deploy finished, (c) the PWA service worker on the production tab has updated to the new bundle hash.
+
+---
+
 ## 16 Jun 2026 — Fix: tables_json mirror never landed (Phase 0 follow-up, #84)
 
 **Bug:** Post-Phase-0 ship, `clubs.tables_json` stayed `[]` on every club row even after the owner edited and saved tables. Migration was applied, `accepts_pricing_display` and `coin_tiers_json` populated correctly, so RLS + columns were fine — `syncCoinConfig` (which targets by slug) worked; my new `syncTablesJson` did not.

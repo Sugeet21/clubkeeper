@@ -795,3 +795,23 @@ The auto-open `useEffect` is guarded by `autoOpenHandled` (run-once per mount) A
 **Symptom signature:** Second user to sign in on the same tab (without full page reload) sees stale club data — wrong slug, wrong acceptsTopups, wrong coin config.
 **Root cause:** `_clubSyncDone` in `src/hooks/useLiveData.ts` is module-level. Sign-out + sign-in as a different user does NOT reset it because the module is never re-evaluated.
 **Fix (pending):** Reset `_clubSyncDone = false` in the `authStore.signOut()` flow, or move the flag into the effect cleanup properly. See Pending list item 10.
+
+---
+
+## Workflow / Deploy
+
+### Pattern W1 — Localhost shares prod Supabase; a feature can look "working locally / broken on prod" while really running two different code versions (#84, 16 Jun 2026)
+
+**Symptom signature:** Owner reports "the feature works on localhost but the production page still shows nothing / the column stays empty / nothing changes in Supabase." Code on disk is correct. Local test passes. Repeated re-reads of the code find no bug.
+
+**Root cause:** ClubKeeper localhost and `app.handbookhq.in` both point at the same Supabase project (one DB, one set of tables). The commit with the fix was never `git push`ed, or Vercel hadn't finished the deploy, or the production tab's PWA service worker was still serving the previously-cached bundle. Localhost ran the NEW code against the shared DB and worked. Production ran the OLD code against the SAME shared DB and didn't. The DB looks "broken" because the prod page is silently running pre-fix logic.
+
+**Rule (before debugging a "works local, broken on prod" report):**
+1. `git log --oneline origin/main..HEAD` — is the fix commit actually pushed?
+2. After `git push`, watch the Vercel deploy finish (dashboard, or poll `index.html` for the new bundle hash).
+3. On the production tab: hard reload, OR unregister the service worker via DevTools → Application → Service Workers → Unregister, then reload. PWA SWs aggressively cache JS — the new bundle won't reach an already-open tab until the SW updates.
+4. THEN reproduce. Only after all three confirm-the-deploy steps pass is it worth re-reading the code.
+
+**Why this keeps biting:** Pending #7 (PWA update banner via `useRegisterSW`) hasn't shipped, so there's no in-app prompt when a new bundle is available. Until S6/Pending-7 ships, this is a per-deploy manual step the owner has to remember.
+
+**How to apply:** Any future bug report that opens with "I just shipped X and prod doesn't work" — FIRST validate the deploy chain (commit pushed → Vercel green → SW refreshed). Do NOT start re-reading source until that's confirmed. Saves hours of phantom debugging.
