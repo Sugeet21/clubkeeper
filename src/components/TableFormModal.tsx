@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { Modal } from './Modal'
 import { addTable, updateTable, getActiveSessionForTable } from '../db/queries'
+import { db } from '../db/database'
 import { validateTableName, validateRateCard, TABLE_NAME_MAX } from '../lib/validation'
 import { useToastStore } from '../store/toastStore'
+import { getOwnerClub, syncTablesJson } from '../lib/playerHubApi'
 import type { GameTable, GameType, RateTier } from '../types'
 
 const GAME_TYPES: { value: GameType; label: string }[] = [
@@ -223,11 +225,25 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
           rateCardBilling: finalBilling,
         })
       }
+      void mirrorTablesToSupabase()
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function mirrorTablesToSupabase() {
+    try {
+      const settings = await db.settings.get(1)
+      if (!settings?.slug) return
+      const club = await getOwnerClub()
+      if (!club) return
+      const allTables = await db.gameTables.toArray()
+      await syncTablesJson(club.id, allTables)
+    } catch {
+      // swallow — Dexie write already succeeded
     }
   }
 
@@ -241,12 +257,14 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
     }
     onClose()
     await updateTable(table.id, { outOfService: true })
+    void mirrorTablesToSupabase()
   }
 
   async function handleEnable() {
     if (!table?.id) return
     onClose()
     await updateTable(table.id, { outOfService: false })
+    void mirrorTablesToSupabase()
   }
 
   const modalTitle = isEditing

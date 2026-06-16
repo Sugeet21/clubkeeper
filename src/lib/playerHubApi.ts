@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { supabasePublic } from './supabasePublic'
-import type { ClubPublicInfo } from '../types/playerHub'
-import type { CoinTier } from '../types'
+import type { ClubPublicInfo, PublicTableInfo } from '../types/playerHub'
+import type { CoinTier, GameTable } from '../types'
 
 // ─── Public (anon-accessible) calls ──────────────────────────────────────────
 // These run on the public anon client (supabasePublic) so they never queue
@@ -36,6 +36,8 @@ export async function getClubPublicInfo(slug: string): Promise<ClubPublicInfo | 
     acceptsTopups: row.accepts_topups as boolean,
     coinsEnabled: (row.coins_enabled as boolean | null) ?? false,
     coinTiers: (row.coin_tiers_json as CoinTier[] | null) ?? [],
+    tablesJson: (row.tables_json as PublicTableInfo[] | null) ?? [],
+    acceptsPricingDisplay: (row.accepts_pricing_display as boolean | null) ?? true,
   }
 }
 
@@ -232,4 +234,40 @@ export async function syncCoinConfig(
     })
     .eq('slug', slug)
   if (error) console.warn('[syncCoinConfig] Supabase sync failed:', error.message)
+}
+
+// Fire-and-forget: mirror the owner's active tables to the Supabase clubs row
+// as a public-safe slim projection. Called after a successful Dexie write in
+// the table-save handler. Errors are swallowed — Dexie is authoritative; the
+// player-side pricing card is allowed to be momentarily stale.
+//
+// PUBLIC-SAFE projection only. NEVER include internal IDs, session counts,
+// owner-private flags, or anything else the player shouldn't see.
+export async function syncTablesJson(
+  clubId: string,
+  tables: GameTable[],
+): Promise<void> {
+  const publicTables: PublicTableInfo[] = tables
+    .filter((t) => !t.outOfService)
+    .map((t) => {
+      const row: PublicTableInfo = {
+        name: t.name,
+        gameType: t.gameType,
+        ratePerHour: t.ratePerHour,
+      }
+      if (t.ratePerFrame !== undefined) row.ratePerFrame = t.ratePerFrame
+      if (Array.isArray(t.rateCard) && t.rateCard.length > 0) row.rateCard = t.rateCard
+      if (t.toleranceMinutes !== undefined) row.toleranceMinutes = t.toleranceMinutes
+      if (t.rateCardBilling !== undefined) row.rateCardBilling = t.rateCardBilling
+      return row
+    })
+
+  const { error } = await supabase
+    .from('clubs')
+    .update({
+      tables_json: publicTables,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', clubId)
+  if (error) console.warn('[syncTablesJson] Supabase sync failed:', error.message)
 }

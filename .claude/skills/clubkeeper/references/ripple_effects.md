@@ -1230,6 +1230,37 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 
 ---
 
+## Pricing visibility ripples (Phase 0, 16 Jun 2026, #84)
+
+### clubs.tables_json + clubs.accepts_pricing_display (Supabase)
+- **Schema:** `public.clubs.tables_json jsonb default '[]'` + `public.clubs.accepts_pricing_display boolean default true`. Migration: `supabase/migrations/20260616_pricing_visibility.sql` — ⚠ run manually.
+- **RPC:** `get_club_public_info(p_slug text)` now returns 7 columns (added `tables_json`, `accepts_pricing_display`). Drop+recreate semantics — Postgres can't extend OUT parameters via CREATE OR REPLACE alone.
+- **Ripple:** If you add any new column to `clubs` that needs to be readable by the public Player Hub page, extend `get_club_public_info` AND every accessor: `playerHubApi.ts:getClubPublicInfo`, `types/playerHub.ts:ClubPublicInfo`, and any place that reads `clubInfo.<field>` (PlayerScan.tsx, Poster.tsx). Never bypass the RPC — anon does NOT have direct table read grants.
+- **Public-safe contract:** `tables_json` rows are a slim projection — `name, gameType, ratePerHour, ratePerFrame?, rateCard?, toleranceMinutes?, rateCardBilling?` only. NEVER add internal IDs, session data, owner-private flags, or anything the player shouldn't see.
+
+### src/lib/playerHubApi.ts — syncTablesJson
+- **New fn:** `syncTablesJson(clubId, tables: GameTable[])` — fire-and-forget mirror. Filters `outOfService`, projects only public-safe fields, swallows errors. Mirrors `syncCoinConfig` pattern.
+- **Imported by:** `src/components/TableFormModal.tsx` (the ONLY call site today).
+- **Ripple:** If you change `PublicTableInfo` (rename a field, add a field): (a) update the projection inside `syncTablesJson`; (b) update the player-side renderer in `PlayerScan.tsx` (`PricingCard` / `PricingRow`); (c) any field added MUST stay public-safe.
+- **`getClubPublicInfo` extension:** Two new fields with safe fallbacks (`?? []` / `?? true`) — pre-migration club rows return `null` for the new columns, the page degrades gracefully (no pricing card shown). If you remove either fallback you will crash `/c/<slug>` for any club whose migration hasn't run yet.
+
+### src/components/TableFormModal.tsx — owner-side mirror
+- **New helper:** `mirrorTablesToSupabase()` — Dexie-read all tables → `getOwnerClub()` → `syncTablesJson(club.id, allTables)`. Skips silently when `settings.slug` is absent. Called fire-and-forget from `handleSave`, `handleDisable`, `handleEnable`.
+- **Ripple:** Any future code path that mutates `gameTables` (rename, batch reorder, mass enable/disable, import) MUST also call `mirrorTablesToSupabase()` (or its equivalent) after the Dexie write commits, or the Supabase mirror drifts. Known drift today: Import Everything (`src/lib/importEverything.ts`) replaces all tables but does NOT re-sync `tables_json`. Acceptable for v1; track if customer asks.
+- **Never block the Dexie write on the Supabase mirror.** Pattern matches `syncCoinConfig` — Dexie is authoritative.
+
+### src/pages/player/PlayerScan.tsx — PricingCard / PricingRow
+- Two new local components below `PlayerScan` form. `PricingCard` is collapsible (default closed), grouped by gameType. `PricingRow` renders either tier grid + tolerance line OR `₹X/hr` (+ `₹Y/frame` for snooker).
+- **Visibility guards:** Card is rendered ONLY when `clubInfo.acceptsPricingDisplay === true` AND `clubInfo.tablesJson.length > 0`. Do NOT add an empty-state fallback for players.
+- **Ripple:** If `PublicTableInfo` shape changes → update `PricingRow`. If `GameType` adds a new variant → add a `GAME_LABELS` entry (otherwise rendered as raw key, ugly but not broken).
+- **Pattern:** Public page, no Dexie, no auth. Keep it that way.
+
+### Settings → Player Hub flow dependency
+- Existing dependency: owner saves slug in `PlayerHubSettings` → `upsertClub` creates the Supabase club row → `settings.slug` mirrored to Dexie.
+- **NEW dependency:** Owner saves a table in `TableFormModal` → Dexie write → if `settings.slug` present, mirror `tables_json` to Supabase. If `settings.slug` is missing (no Player Hub setup yet), no mirror runs — first slug save does NOT retroactively trigger a tables mirror. Acceptable trade-off: the next table edit will mirror everything. Track if customer reports stale pricing on `/c/<slug>` right after first slug setup.
+
+---
+
 ## Import Everything — added 14 Jun 2026 (#79 Phase A)
 
 ### If you change the export/import file format

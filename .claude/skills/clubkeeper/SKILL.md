@@ -76,7 +76,9 @@ Read MULTIPLE files when the question spans domains.
 
 ## Current State Snapshot
 
-*Last updated: 15 Jun 2026 (Reset everything now clears all 9 stores — #81 fixed; Import Everything #79 closed)*
+*Last updated: 16 Jun 2026 (Pricing visibility Phase 0 shipped — #84 pending owner verification)*
+
+**Pricing visibility (Phase 0, 16 Jun 2026, #84):** `/c/<slug>` now shows a collapsible "View pricing" card with every active table's rates. Supabase `clubs.tables_json jsonb` (slim public-safe projection: name, gameType, ratePerHour, ratePerFrame?, rateCard?, toleranceMinutes?, rateCardBilling?) + `clubs.accepts_pricing_display boolean` columns. `get_club_public_info` RPC extended with both fields (drop+recreate). Owner-side mirror: `syncTablesJson` fire-and-forget called after every successful Dexie write in `TableFormModal` (handleSave, handleDisable, handleEnable), gated on `settings.slug` present. PlayerScan renders rateCard tables as tier grid (`30 min ₹70 · 60 min ₹100 · …`) + tolerance line; non-rateCard tables as `₹X/hr` (+ `₹Y/frame` for snooker). Hidden entirely when `tablesJson.length === 0` OR `acceptsPricingDisplay === false`. Pre-migration safe — `getClubPublicInfo` falls back to `[]` / `true` if the new columns aren't in the RPC response yet. No Dexie schema change. Migration `supabase/migrations/20260616_pricing_visibility.sql` ⚠ pending manual run.
 
 **Built and live on app.handbookhq.in (primary) / clubkeeper.vercel.app (backup):**
 - **13 private screens** (behind RequireAccess): Tables (`/tables`), StartSession (`/start/:tableId`), SessionDetail (`/session/:sessionId`), Settings (`/settings`), History (`/history`), Summary (`/summary`), Wallet (`/wallet`), WalletNewCustomer (`/wallet/new`), WalletTopup (`/wallet/topup/:customerId`), CustomerProfile (`/customer/:customerId`), Canteen (`/canteen`), QuickSale (`/quick-sale`), Piggy (`/piggy`)
@@ -173,6 +175,7 @@ Read MULTIPLE files when the question spans domains.
 1. **Run `supabase/migrations/20260602_cardless_trial.sql`** — cardless trial broken until done (new signups land on `/subscribe`, not `/tables`)
 2. **Run `supabase/migrations/20260610_player_hub.sql`** — creates `clubs` + `topup_intents` tables + `get_club_public_info` RPC. ⚠ Confirm if already run in production.
 3. **Run `supabase/migrations/20260610_clubcoins.sql`** — adds `coins_enabled` + `coin_tiers_json` to clubs + updates RPC. ⚠ Confirm if already run.
+3b. **Run `supabase/migrations/20260616_pricing_visibility.sql`** — adds `tables_json` + `accepts_pricing_display` to clubs + updates `get_club_public_info` RPC. Player Hub pricing card stays hidden until this runs AND owner re-saves a table (to populate `tables_json`).
 4. Vercel webhook config: Razorpay Dashboard → add `/api/razorpay-webhook` URL + `RAZORPAY_WEBHOOK_SECRET` → redeploy
 5. Razorpay LIVE mode switch (needs KYC first)
 6. GST invoicing + email notifications (next sprint)

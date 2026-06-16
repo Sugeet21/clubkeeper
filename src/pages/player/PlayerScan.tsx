@@ -3,8 +3,106 @@ import { useParams } from 'react-router-dom'
 import PlayerScanLayout from './PlayerScanLayout'
 import { UpiQrCard } from '../../components/UpiQrCard'
 import { getClubPublicInfo, submitTopupIntent, getTopupIntentStatus } from '../../lib/playerHubApi'
-import type { ClubPublicInfo } from '../../types/playerHub'
+import type { ClubPublicInfo, PublicTableInfo } from '../../types/playerHub'
 import { coinsEarnedForTopup } from '../../lib/coins'
+
+const GAME_LABELS: Record<string, string> = {
+  pool: 'Pool',
+  snooker: 'Snooker',
+  carrom: 'Carrom',
+  playstation: 'PlayStation',
+  other: 'Other',
+}
+
+function formatRupees(n: number): string {
+  return `₹${n.toLocaleString('en-IN')}`
+}
+
+function PricingCard({ tables }: { tables: PublicTableInfo[] }) {
+  const [open, setOpen] = useState(false)
+
+  // Group by gameType, preserving insertion order
+  const groups = new Map<string, PublicTableInfo[]>()
+  for (const t of tables) {
+    const arr = groups.get(t.gameType) ?? []
+    arr.push(t)
+    groups.set(t.gameType, arr)
+  }
+
+  return (
+    <div className="bg-bg-card border border-border rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-3 px-4 py-3.5 min-h-[44px] text-left"
+      >
+        <span className="text-[14px]">💰</span>
+        <span className="flex-1 text-[14px] font-semibold text-text">View pricing</span>
+        <svg
+          width="18" height="18" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2"
+          className={`text-text-faint shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        >
+          <path d="M9 6l6 6-6 6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 pt-1 border-t border-border space-y-4">
+          {Array.from(groups.entries()).map(([gameType, list]) => (
+            <div key={gameType}>
+              <p className="text-[11px] font-mono uppercase tracking-widest text-text-faint mb-2">
+                {GAME_LABELS[gameType] ?? gameType}
+              </p>
+              <div className="space-y-3">
+                {list.map((t, idx) => (
+                  <PricingRow key={`${t.name}-${idx}`} table={t} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PricingRow({ table }: { table: PublicTableInfo }) {
+  const hasCard = Array.isArray(table.rateCard) && table.rateCard.length > 0
+  return (
+    <div className="bg-bg border border-border rounded-xl px-3 py-2.5">
+      <p className="text-[14px] font-semibold text-text">{table.name}</p>
+      {hasCard ? (
+        <>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+            {table.rateCard!.map((tier, i) => (
+              <span key={i} className="text-[13px] text-text-dim font-mono">
+                {tier.minutes} min {formatRupees(tier.price)}
+                {i < table.rateCard!.length - 1 && (
+                  <span className="text-text-faint ml-3">·</span>
+                )}
+              </span>
+            ))}
+          </div>
+          {table.toleranceMinutes !== undefined && table.toleranceMinutes > 0 && (
+            <p className="text-[11px] text-text-faint mt-1.5">
+              {table.toleranceMinutes} min grace at every tier
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="text-[13px] text-text-dim font-mono mt-1">
+          {formatRupees(table.ratePerHour)}/hr
+          {table.ratePerFrame !== undefined && (
+            <span className="ml-2 text-text-faint">
+              · {formatRupees(table.ratePerFrame)}/frame
+            </span>
+          )}
+        </p>
+      )}
+    </div>
+  )
+}
 
 type PageState =
   | 'loading'
@@ -552,6 +650,12 @@ export default function PlayerScan() {
             `Pay ₹${amount ? amount.toLocaleString('en-IN') : '—'} via UPI`
           )}
         </button>
+
+        {/* Pricing visibility (Phase 0, #84). Hidden entirely when the club
+            hasn't enabled the display OR has no public tables_json yet. */}
+        {clubInfo?.acceptsPricingDisplay && clubInfo.tablesJson.length > 0 && (
+          <PricingCard tables={clubInfo.tablesJson} />
+        )}
       </div>
     </PlayerScanLayout>
   )

@@ -2,6 +2,29 @@
 
 ---
 
+## 16 Jun 2026 — Pricing visibility on Player Hub (Phase 0, #84)
+
+**Feature:** Players scanning `/c/<slug>` can now tap "View pricing" to see every active table's rates before they walk in or top up. Pure read feature. No new Dexie schema, no new Supabase tables.
+
+**Migration (run manually):** `supabase/migrations/20260616_pricing_visibility.sql`
+- `alter table public.clubs add column tables_json jsonb default '[]'::jsonb`
+- `alter table public.clubs add column accepts_pricing_display boolean default true`
+- Drops + recreates `get_club_public_info(p_slug text)` to return `(club_name, upi_id, accepts_topups, coins_enabled, coin_tiers_json, tables_json, accepts_pricing_display)`. All existing fields preserved. SECURITY DEFINER. Anon access via the existing RPC grant — no direct table grant needed.
+
+**Code:**
+- `src/types/playerHub.ts` — new `PublicTableInfo` interface (name, gameType, ratePerHour, ratePerFrame?, rateCard?, toleranceMinutes?, rateCardBilling?). `ClubPublicInfo` extended with `tablesJson` + `acceptsPricingDisplay`.
+- `src/lib/playerHubApi.ts` — `getClubPublicInfo` reads new RPC fields with safe fallbacks (`?? []` / `?? true`) so the page does not crash on a club row predating the migration. `syncTablesJson(clubId, tables)` fire-and-forget owner-side write — projects only public-safe fields, filters `outOfService`, swallows errors. Mirrors `syncCoinConfig` pattern (Decision D-PlayerHub-1).
+- `src/components/TableFormModal.tsx` — new `mirrorTablesToSupabase()` helper. Called after every Dexie write in `handleSave`, `handleDisable`, `handleEnable`. Skipped silently when `settings.slug` is absent (Player Hub not set up).
+- `src/pages/player/PlayerScan.tsx` — new `PricingCard` + `PricingRow` components. Collapsible (default closed), grouped by gameType. RateCard tables show tier grid (`30 min ₹70 · 60 min ₹100 · …`) + `N min grace at every tier`. Non-rateCard tables show `₹X/hr` (and `₹Y/frame` when present). Hidden entirely when `tablesJson` is empty OR `acceptsPricingDisplay === false` — no empty state shown to players. Dark theme tokens only (`bg-bg-card`, `border-border`, `text-text`, `text-text-dim`, `text-text-faint`). Touch target ≥44px.
+
+**Build clean** (961.83 kB, +2.96 kB).
+
+**Pending:** Run `20260616_pricing_visibility.sql` manually in the Supabase SQL editor. Until then, the RPC returns only the old 5 columns; PlayerScan still works (safe fallback hides the card), but no owner sync mirrors to Supabase even if owners are saving tables.
+
+Closes #84 — pending owner verification.
+
+---
+
 ## 15 Jun 2026 — Fix: Player confirmation screen shows correct welcome-bonus coin total (#87, Option 1)
 
 **Bug:** New-customer first top-up of ₹1000 — owner side credited 200 coins (150 tier + 50 welcome) correctly, but the player's phone showed '+150 ClubCoins credited' — welcome bonus missing from display only. Pattern P1.
