@@ -777,6 +777,20 @@ The auto-open `useEffect` is guarded by `autoOpenHandled` (run-once per mount) A
 **Symptom signature:** TBD — S4 bug (toggle desync) is the prototype. Supabase write succeeds, Dexie fails (or vice versa) → permanent mismatch.
 **Rule (from S4 fix):** For fields that must be consistent across both stores, always write Supabase FIRST. Only write Dexie if Supabase succeeds. Never fire-and-forget a Supabase write when the local Dexie write already happened.
 
+### Pattern P2 — Fire-and-forget mirrors must target by slug, not by indirected id (#84, 16 Jun 2026)
+
+**Symptom signature:** Owner-side write to Supabase via a fire-and-forget mirror silently never lands. Column stays at default. No console error. RLS + columns + schema are all correct. The sibling mirror (e.g. `syncCoinConfig`) works.
+
+**Root cause:** Mirror function routed the write as `getOwnerClub() → .eq('id', club.id).update(...)`. `getOwnerClub` is an unfiltered `.maybeSingle()` that depends on RLS narrowing — any transient null-return (auth refresh window, brief session drop, RLS deny on a row the user shouldn't see) makes the helper return null. The mirror exits on `if (!club) return`. The outer catch swallows even that signal. Net effect: write skipped, no log, no failure.
+
+**Rule:** Owner-side fire-and-forget mirrors MUST target the clubs row by `slug` (`.eq('slug', settings.slug)`), matching the proven `syncCoinConfig` pattern. RLS still scopes to the owner's row. No extra round-trip, no extra null-failure surface. Always add `.select('id')` after the update and log a warning when `data.length === 0` so a future silent mismatch surfaces in DevTools instead of staying invisible.
+
+**Anti-pattern:** Never use `getOwnerClub()` to fetch the id and then update by id. The detour costs one network round-trip AND adds a null-failure surface that the catch will hide.
+
+**How to apply:** For any new mirror, look at `syncCoinConfig` first, copy that shape exactly, just swap the columns. If you need a value other than `slug` as the matcher (e.g. owner_id), explicitly include `auth.getUser()` and let exceptions throw — never lean on `getOwnerClub` for a write path.
+
+---
+
 ### R3 — Module-level flag not reset on sign-out (_clubSyncDone)
 **Symptom signature:** Second user to sign in on the same tab (without full page reload) sees stale club data — wrong slug, wrong acceptsTopups, wrong coin config.
 **Root cause:** `_clubSyncDone` in `src/hooks/useLiveData.ts` is module-level. Sign-out + sign-in as a different user does NOT reset it because the module is never re-evaluated.

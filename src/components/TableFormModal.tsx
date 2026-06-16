@@ -4,7 +4,7 @@ import { addTable, updateTable, getActiveSessionForTable } from '../db/queries'
 import { db } from '../db/database'
 import { validateTableName, validateRateCard, TABLE_NAME_MAX } from '../lib/validation'
 import { useToastStore } from '../store/toastStore'
-import { getOwnerClub, syncTablesJson } from '../lib/playerHubApi'
+import { syncTablesJsonBySlug } from '../lib/playerHubApi'
 import type { GameTable, GameType, RateTier } from '../types'
 
 const GAME_TYPES: { value: GameType; label: string }[] = [
@@ -237,13 +237,18 @@ export function TableFormModal({ open, onClose, table, existingTables }: Props) 
   async function mirrorTablesToSupabase() {
     try {
       const settings = await db.settings.get(1)
-      if (!settings?.slug) return
-      const club = await getOwnerClub()
-      if (!club) return
+      if (!settings?.slug) {
+        console.warn('[mirrorTablesToSupabase] skipped: no slug in settings (Player Hub not set up)')
+        return
+      }
+      // Target the owner's club row by slug — same scoping syncCoinConfig uses.
+      // Going via getOwnerClub() + .eq('id') was the original bug: an unfiltered
+      // .maybeSingle() can silently return null on a transient auth state, and
+      // we'd swallow it without ever attempting the write.
       const allTables = await db.gameTables.toArray()
-      await syncTablesJson(club.id, allTables)
-    } catch {
-      // swallow — Dexie write already succeeded
+      await syncTablesJsonBySlug(settings.slug, allTables)
+    } catch (err) {
+      console.warn('[mirrorTablesToSupabase] failed:', err)
     }
   }
 

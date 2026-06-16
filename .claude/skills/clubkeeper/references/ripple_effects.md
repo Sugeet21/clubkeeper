@@ -1238,14 +1238,15 @@ There is a race window between `loading=false` (auth resolved) and `refreshProfi
 - **Ripple:** If you add any new column to `clubs` that needs to be readable by the public Player Hub page, extend `get_club_public_info` AND every accessor: `playerHubApi.ts:getClubPublicInfo`, `types/playerHub.ts:ClubPublicInfo`, and any place that reads `clubInfo.<field>` (PlayerScan.tsx, Poster.tsx). Never bypass the RPC — anon does NOT have direct table read grants.
 - **Public-safe contract:** `tables_json` rows are a slim projection — `name, gameType, ratePerHour, ratePerFrame?, rateCard?, toleranceMinutes?, rateCardBilling?` only. NEVER add internal IDs, session data, owner-private flags, or anything the player shouldn't see.
 
-### src/lib/playerHubApi.ts — syncTablesJson
-- **New fn:** `syncTablesJson(clubId, tables: GameTable[])` — fire-and-forget mirror. Filters `outOfService`, projects only public-safe fields, swallows errors. Mirrors `syncCoinConfig` pattern.
+### src/lib/playerHubApi.ts — syncTablesJsonBySlug
+- **New fn:** `syncTablesJsonBySlug(slug, tables: GameTable[])` — fire-and-forget mirror. Filters `outOfService`, projects only public-safe fields. Targets by slug (matching `syncCoinConfig` exactly), NOT by `getOwnerClub().id`. Calls `.select('id')` after the update and warns if `data.length === 0` so silent RLS / slug mismatches surface in DevTools.
 - **Imported by:** `src/components/TableFormModal.tsx` (the ONLY call site today).
-- **Ripple:** If you change `PublicTableInfo` (rename a field, add a field): (a) update the projection inside `syncTablesJson`; (b) update the player-side renderer in `PlayerScan.tsx` (`PricingCard` / `PricingRow`); (c) any field added MUST stay public-safe.
+- **Ripple:** If you change `PublicTableInfo` (rename a field, add a field): (a) update the projection inside `syncTablesJsonBySlug`; (b) update the player-side renderer in `PlayerScan.tsx` (`PricingCard` / `PricingRow`); (c) any field added MUST stay public-safe.
+- **Anti-pattern (Phase 0 follow-up bug):** Do NOT route owner-side mirror writes through `getOwnerClub() → .eq('id', club.id)`. `getOwnerClub` uses `.maybeSingle()` with no filter and can silently return null on a transient auth state — the mirror then early-exits and the catch swallows even that signal. Always target by slug (mirrors are owner-write, RLS already narrows). See Pattern P2 (Player-Hub).
 - **`getClubPublicInfo` extension:** Two new fields with safe fallbacks (`?? []` / `?? true`) — pre-migration club rows return `null` for the new columns, the page degrades gracefully (no pricing card shown). If you remove either fallback you will crash `/c/<slug>` for any club whose migration hasn't run yet.
 
 ### src/components/TableFormModal.tsx — owner-side mirror
-- **New helper:** `mirrorTablesToSupabase()` — Dexie-read all tables → `getOwnerClub()` → `syncTablesJson(club.id, allTables)`. Skips silently when `settings.slug` is absent. Called fire-and-forget from `handleSave`, `handleDisable`, `handleEnable`.
+- **New helper:** `mirrorTablesToSupabase()` — Dexie-read settings + all tables → `syncTablesJsonBySlug(settings.slug, allTables)`. No `getOwnerClub` round-trip. Skips with `console.warn` when `settings.slug` is absent. Called fire-and-forget from `handleSave`, `handleDisable`, `handleEnable`. Every early-exit branch logs to console so a future "swallowed silently" regression is visible in DevTools.
 - **Ripple:** Any future code path that mutates `gameTables` (rename, batch reorder, mass enable/disable, import) MUST also call `mirrorTablesToSupabase()` (or its equivalent) after the Dexie write commits, or the Supabase mirror drifts. Known drift today: Import Everything (`src/lib/importEverything.ts`) replaces all tables but does NOT re-sync `tables_json`. Acceptable for v1; track if customer asks.
 - **Never block the Dexie write on the Supabase mirror.** Pattern matches `syncCoinConfig` — Dexie is authoritative.
 

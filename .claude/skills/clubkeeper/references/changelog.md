@@ -2,6 +2,22 @@
 
 ---
 
+## 16 Jun 2026 — Fix: tables_json mirror never landed (Phase 0 follow-up, #84)
+
+**Bug:** Post-Phase-0 ship, `clubs.tables_json` stayed `[]` on every club row even after the owner edited and saved tables. Migration was applied, `accepts_pricing_display` and `coin_tiers_json` populated correctly, so RLS + columns were fine — `syncCoinConfig` (which targets by slug) worked; my new `syncTablesJson` did not.
+
+**Root cause:** The mirror call went `Dexie write → getOwnerClub() → .eq('id', club.id)`. `getOwnerClub` does `.from('clubs').select(...).maybeSingle()` with no filter and relies on RLS. Any transient null-return (auth refresh window, brief session loss, RLS deny) made `mirrorTablesToSupabase` exit early on `if (!club) return` — the catch swallowed even that signal. The `.eq('id', clubId)` path also adds an extra round-trip + one more silent failure surface compared to the proven `syncCoinConfig` pattern. New Pattern P2 (Player-Hub).
+
+**Fix:**
+- `src/lib/playerHubApi.ts` — renamed `syncTablesJson(clubId, tables)` → `syncTablesJsonBySlug(slug, tables)`. Targets by slug, matching `syncCoinConfig` exactly. Adds `.select('id')` and a `data.length === 0` warning so a future RLS / slug-mismatch silently matching 0 rows surfaces in DevTools instead of staying invisible.
+- `src/components/TableFormModal.tsx` — `mirrorTablesToSupabase` no longer calls `getOwnerClub`. Reads `settings.slug` from Dexie → calls `syncTablesJsonBySlug(slug, allTables)` directly. `console.warn` on every early-exit branch so the "swallowed and ignored" failure mode is gone.
+
+Build clean (962.13 kB, +0.30 kB).
+
+Closes #84 — pending owner verification (round 2).
+
+---
+
 ## 16 Jun 2026 — Pricing visibility on Player Hub (Phase 0, #84)
 
 **Feature:** Players scanning `/c/<slug>` can now tap "View pricing" to see every active table's rates before they walk in or top up. Pure read feature. No new Dexie schema, no new Supabase tables.

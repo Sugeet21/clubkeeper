@@ -243,8 +243,12 @@ export async function syncCoinConfig(
 //
 // PUBLIC-SAFE projection only. NEVER include internal IDs, session counts,
 // owner-private flags, or anything else the player shouldn't see.
-export async function syncTablesJson(
-  clubId: string,
+//
+// Targets by slug to match the working `syncCoinConfig` pattern exactly — no
+// extra round-trip through getOwnerClub(), no .maybeSingle() that can silently
+// return null on a transient auth state. RLS still narrows to the owner's row.
+export async function syncTablesJsonBySlug(
+  slug: string,
   tables: GameTable[],
 ): Promise<void> {
   const publicTables: PublicTableInfo[] = tables
@@ -262,12 +266,22 @@ export async function syncTablesJson(
       return row
     })
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('clubs')
     .update({
       tables_json: publicTables,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', clubId)
-  if (error) console.warn('[syncTablesJson] Supabase sync failed:', error.message)
+    .eq('slug', slug)
+    .select('id')
+  if (error) {
+    console.warn('[syncTablesJsonBySlug] Supabase sync failed:', error.message)
+    return
+  }
+  if (!data || data.length === 0) {
+    // RLS matched no row OR the slug doesn't exist on a club row owned by the
+    // current auth user. Surfaces silent mismatches that would otherwise stay
+    // invisible (the original Phase 0 bug).
+    console.warn(`[syncTablesJsonBySlug] update matched 0 rows for slug="${slug}" — check that the owner's club row has this slug.`)
+  }
 }
