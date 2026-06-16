@@ -1,592 +1,1068 @@
 # Ripple Effects — Change Impact Map
 
-**This is the most critical reference file. Consult it BEFORE making any code change.**
+This is the most critical reference file. Consult BEFORE making any code change.
 
-When changing one thing, this file lists everything else that might break. If a change isn't listed here and you can think of a ripple effect, ADD it.
+## How to use
 
-## How to use this file
+1. Find the feature section(s) the change touches (use Quick Index).
+2. Read "Files in scope" — candidates to update.
+3. Read "Invariants" — rules that MUST hold after the change.
+4. Read "Cross-feature ripples" — what else might break outside this feature.
+5. After the change, update the section AND bump its "Last updated" date.
 
-1. Sugeet asks for a change (e.g., "rename a field" or "add a status").
-2. BEFORE writing code, search this file for the entity being changed.
-3. Read the "Affects" list for that entity.
-4. Update ALL affected files in the same commit.
-5. After the change, add new ripples to this file if any were discovered.
+## Discipline rules
 
-If a change isn't documented here yet, pause and trace dependencies first.
+- If a change isn't documented here, pause and trace before coding.
+- Invariants live HERE only. Implementation patterns link to `bug_patterns.md`. Decisions link to `decisions_active.md`. Do NOT duplicate content across files — cross-link instead.
+- After every change, update the relevant section's "Last updated" date.
 
 ---
 
-## Database Schema Changes
+## Quick Index
 
-### If you change the `GameTable` interface (add/rename/remove field)
+If you're changing... → Read sections...
 
-**Affects:**
-- `src/types/index.ts` — interface definition (source of truth)
-- `src/db/database.ts` — Dexie schema if a new INDEX is needed (not just a field)
+| Change trigger | Section |
+|---|---|
+| `GameTable` interface, table CRUD, `TableFormModal` | [Tables](#tables) |
+| `Session` interface, `startSession`/`stopSession`, timer, billing dispatch | [Sessions](#sessions) |
+| Stop-session flow, pause-first, `pauseForPayment`/`confirmPaymentAndStop` | [Sessions](#sessions), [Payment Split & Payment Mode](#payment-split--payment-mode) |
+| `priceForElapsedProrated`/`priceForElapsedMinimum`, `rateCard`, `toleranceMinutes`, `rateCardBilling`, snapshots | [Rate Card & Tolerance Billing](#rate-card--tolerance-billing) |
+| `applyRounding`, rounding logic | [Sessions](#sessions) |
+| `getElapsedMs`, `calculateAmount`, `Pattern T4` aggregates | [Sessions](#sessions) |
+| `moveSessionToTable`, `TableMove`, compatibility checks | [Table Move](#table-move) |
+| `createBackEntry`, `BackEntryModal`, overlap detection | [Back Entries](#back-entries) |
+| `SessionItem`, `AddItemBottomSheet`, item add/edit/delete + stock sync | [Session Items (POS)](#session-items-pos) |
+| `CanteenItem`, stock decrement, `RestockSheet`, `lowStockThreshold`, `canteenMatch.ts` | [Canteen / Stock](#canteen--stock) |
+| `/quick-sale`, `createCanteenSale`, `CanteenSale` | [Quick Sale](#quick-sale) |
+| `PaymentSplitSheet`, `recordSessionPaymentBreakdown`, `paymentBreakdown`, Summary PAYMENT MODE | [Payment Split & Payment Mode](#payment-split--payment-mode) |
+| `getPiggyBalance`, `StockPurchase`, `recordStockPurchase`, `/piggy`, CASH FLOW strip | [Piggy (Cash Float)](#piggy-cash-float) |
+| `UpiQrCard`, `PaymentQR`, post-stop fixed-viewport screen | [UPI QR & Payment Screen](#upi-qr--payment-screen) |
+| `Customer`, `WalletTransaction`, `customerDisplay.ts`, `walkInCode.ts`, phone uniqueness | [Wallet & Customers](#wallet--customers) |
+| `notifyAtMs`, `useSessionAlarm`, `SessionAlarmModal`, `alarm.ts`, `notifyPresets.ts` | [Alarm / Notify](#alarm--notify) |
+| `Summary.tsx`, `summaryMath.ts`, summary sub-components, dashboard tiles | [Summary Dashboard](#summary-dashboard) |
+| Tables page (`Home.tsx`), `TableCard`, `FilterPills`, `TopBar` | [Tables Page (Home)](#tables-page-home) |
+| `Settings.tsx` collapsible sections, `ClubSettings`, UPI ID, rounding control | [Settings](#settings) |
+| `<Modal>`, `<Toggle>`, `<ConfirmModal>`, `<BottomNav>`, theme/spacing/colors/typography | [Shared UI & Theme](#shared-ui--theme) |
+| `authStore`, `useAccessGuard`, `RequireAccess`, `AuthCallback`, `subscriptionLoaded`, per-user IndexedDB, cardless trial routing | [Auth & Access Guard](#auth--access-guard) |
+| Subscribe page, plan IDs, Razorpay, webhook, `api/*.ts`, Landing/ROI/Pricing | [Subscription & Funnel](#subscription--funnel) |
+| New route (public or private), rename route, BottomNav, PUBLIC_PATHS | [Routing & Cross-cutting](#routing--cross-cutting) |
+| `/c/:slug`, `/poster/:slug`, PlayerScan, Poster, `playerHubApi.ts`, `supabasePublic.ts`, `slug.ts`, `TopupRealtimeBridge`, two-client rule | [Player Hub](#player-hub) |
+| Supabase project URL/anon key change, GitHub Actions, keep-alive ping | [Infra: Supabase Keep-Alive](#infra-supabase-keep-alive) |
+| `tables_json`, `accepts_pricing_display`, `syncTablesJsonBySlug`, `PricingCard` | [Pricing Visibility on Player Hub](#pricing-visibility-on-player-hub) |
+| `coins.ts`, `CoinRedemptionPill`, `CoinTiersEditor`, `recordTopupWithCoins`, `coins_credited` RPC | [ClubCoins](#clubcoins) |
+| `streak.ts`, `coinExpiry.ts`, `dormancy.ts`, `nudge.ts`, `ExpirySweepRunner`, `BringBackList`, engagement config | [Engagement](#engagement) |
+| `realtimeTopups.ts`, `topupInbox`, `PendingTopupsModal`, Supabase realtime publication | [Topup Inbox & Realtime](#topup-inbox--realtime) |
+| `validation.ts` rules and validators | [Validation](#validation) |
+| `getAllDataForExport`, `importEverythingFromFile`, `resetEverything`, `ClubKeeperBackupV16` | [Import / Export / Reset](#import--export--reset) |
+| Dexie version bump, `.upgrade()` callbacks, new store | [Schema & Migrations](#schema--migrations) |
+
+---
+
+## Schema & Migrations
+
+Owns: Dexie version blocks, `.upgrade()` callbacks, additive-only discipline.
+
+Files in scope:
+- `src/db/database.ts` — `this.version(N).stores({...})` blocks (keep ALL prior blocks unchanged)
+- `src/types/index.ts` — interface additions
+- `src/db/seed.ts` — defaults for any new field
+
+Invariants:
+- Never edit an existing `this.version(N)` block. Only add new ones.
+- Field-only additions don't require a new version block. New INDEX requires one.
+- Additive only for existing users — avoid `.upgrade()` that mutates rows unless required, and then test the upgrade path from every prior version.
+- The `ClubKeeperDB` class table declarations (e.g. `customers!: Table<...>`) must stay in sync with the latest version's store strings.
+- The v6 `.upgrade()` is a one-time backfill of legacy `type:'adjustment'` wallet rows. Do NOT remove (v5 users still need it). Runs inside Dexie's own managed tx — never wrap in an outer `db.transaction()`.
+- `ClubSettings.legacyAdjustmentsBackfilled?` is the v6 audit flag — read-only after migration.
+- v13 `.upgrade()` items-revenue gap: `paymentBreakdown.cash` understates pre-v13 sessions (used `session.amount` alone, not grand total). Tracked, deferred.
+- Renaming a table = existing users' data is gone. Use soft-delete + new-name migration instead.
+
+Cross-feature ripples:
+- → [Import / Export / Reset](#import--export--reset): adding a Dexie table requires updates in `CURRENT_SCHEMA_VERSION`, `getAllDataForExport`, `importEverythingFromFile`, AND `resetEverything` (Pattern: three-way drift causes silent data loss — see #78, #81).
+- → Any feature owning the interface being extended.
+
+See also: `bug_patterns.md` (Dexie patterns), full Dexie version history in `SKILL.md`.
+
+Last updated: 14 Jun 2026
+
+---
+
+## Sessions
+
+Owns: `Session` interface, session lifecycle (start/pause/resume/stop), timer math, billing dispatch, rounding, stop-session pause-first flow.
+
+Files in scope:
+- `src/types/index.ts` — `Session`, `PaymentBreakdown`, `TableMove`
+- `src/db/queries.ts` — `startSession`, `pauseSession`, `resumeSession`, `stopSession`, `editSessionStart`, `pauseForPayment`, `confirmPaymentAndStop`, `cancelPaymentAndResume`
+- `src/lib/time.ts` — `getElapsedMs`
+- `src/lib/money.ts` — `calculateAmount`, `applyRounding`
+- `src/lib/summaryMath.ts` — pure aggregation called from Summary render body
+- `src/pages/SessionDetail.tsx` — big timer, stop-confirm preview, bill split, edit start time, alarm pill, table-move button, payment-split flow
+- `src/pages/StartSession.tsx` — alarm chips, `notifyAfterMs`
+- `src/pages/Home.tsx` — `runningAmount` in render body, `todayTotals`
+- `src/pages/Summary.tsx`, `src/pages/History.tsx` — aggregation + CSV
+- `src/components/TableCard.tsx` — running amount chip, "Paying…" badge
+- CSV export columns in Summary and History
+
+Invariants:
+- `calculateAmount(session, elapsedMs, rounding?)` dispatch order MUST remain: (1) `per_frame` → `(framesPlayed ?? 0) × rateSnapshot`; (2) `rateCardSnapshot` non-empty → prorated or minimum based on `rateCardBillingSnapshot ?? 'prorated'`, rounding IGNORED; (3) legacy linear → rounding applied, then `hours × rateSnapshot`. **Pattern T8.**
+- Rate card snapshots are always captured together at `startSession` time (Pattern T7): `rateCardSnapshot`, `toleranceMinutesSnapshot`, `rateCardBillingSnapshot`.
+- Rounding is final-amount only — `applyRounding` is called only in `stopSession` and in the stop-confirm preview. Both call sites must use identical inputs or preview and stored value diverge.
+- Stop-session flow is PAUSE-FIRST: SessionDetail UI calls `pauseForPayment` → `PaymentSplitSheet` → `confirmPaymentAndStop`. NEVER call `stopSession()` directly from SessionDetail UI. `stopSession()` remains for back-entry and legacy programmatic stops.
+- Only ONE post-Stop screen exists (#77, 14 Jun 2026) — the POST-confirm screen driven by `confirmedBreakdown.upi`. Legacy pre-record full-amount QR (`paymentScreenOpen`) is deleted. `PaymentSplitSheet` opens directly after Pause.
+- `Session.paymentInProgress?: boolean` is set by `pauseForPayment`, cleared by both confirm and cancel.
+- "Paying…" badge on `TableCard` requires `session.paymentInProgress === true` on the paused branch (distinct from regular "Paused").
+- `Session` has NO `customerId` field. Wallet linkage = `WalletTransaction.referenceId = sessionId.toString()`.
+- **Pattern T4** for any aggregate including running sessions: DB-static sums in `useLiveQuery`; running-session calc in render body via `getElapsedMs`+`calculateAmount`; combine. NEVER place the running calc inside `useLiveQuery`.
+- 13 callers of `calculateAmount` — verify all after any signature change (`TableCard`, `SessionDetail`, `Home`, `Summary`, `History`, `stopSession`, `summaryMath`, plus CSV export columns).
+
+Cross-feature ripples:
+- → [Rate Card & Tolerance Billing](#rate-card--tolerance-billing) (snapshot fields, dispatch).
+- → [Payment Split & Payment Mode](#payment-split--payment-mode) (pause-first flow, `paymentBreakdown`).
+- → [Summary Dashboard](#summary-dashboard) (T4 aggregation, PAYMENT MODE tile excludes running).
+- → [Tables Page (Home)](#tables-page-home) (`runningAmount`, `todayTotal`).
+- → [Alarm / Notify](#alarm--notify) (`notifyAtMs`, snooze anchoring).
+- → [Back Entries](#back-entries) (uses `stopSession`-equivalent fields + snapshots).
+- → [Table Move](#table-move) (`session.tableId` is always current).
+
+See also: `bug_patterns.md` Pattern T1/T4/T6/T7/T8/M3/P4, `decisions_active.md` (rounding model, snapshot model).
+
+Last updated: 14 Jun 2026
+
+---
+
+## Rate Card & Tolerance Billing
+
+Owns: tiered pricing model, two billing algorithms, snapshots at session start.
+
+Files in scope:
+- `src/types/index.ts` — `RateTier`, `GameTable.rateCard?`, `GameTable.toleranceMinutes?`, `GameTable.rateCardBilling?`, `Session.rateCardSnapshot?`, `Session.toleranceMinutesSnapshot?`, `Session.rateCardBillingSnapshot?`
+- `src/lib/money.ts` — `priceForElapsedProrated()`, `priceForElapsedMinimum()` (renamed from `priceForElapsed`, 9 Jun 2026), `calculateAmount` dispatch
+- `src/db/queries.ts` — `startSession` snapshots all three fields together
+- `src/db/seed.ts` — seed tables with `rateCard` must include `rateCardBilling: 'prorated'`. Pool 1 seed: 6-tier example (30/60/90/120/150/180 → 70/100/170/200/270/300, tolerance 10, prorated). UI calls it "standard preset", never "Ball Bender".
+- `src/components/TableFormModal.tsx` — collapsible Tiered Pricing section, tier rows, tolerance input, "Use standard preset" button (3-tier default), Billing Behavior toggle
+- `src/lib/validation.ts` — `validateRateCard(tiers, toleranceMinutes, billingMode?)`
+- Dexie: v10 added `rateCard`/`toleranceMinutes` + snapshots; v11 added `rateCardBilling` + its snapshot. Both additive.
+
+Invariants:
+- `priceForElapsedProrated(elapsedMs, tiers, toleranceMinutes)`: em ≤ 0 or no tiers → 0; em < tier1.minutes → linear ramp 0 → tier1.price; em ≤ tiers[i].minutes + tolerance → plateau at tiers[i].price; between tiers → linear interpolation; past last tier + tolerance → extrapolate at `last.price / last.minutes` per minute.
+- `priceForElapsedMinimum(elapsedMs, tiers, toleranceMinutes)`: em ≤ 0 or no tiers → 0 (guard added 9 Jun 2026); `billable = ceil(em/60000)`; first tier where `billable ≤ tier.minutes + tolerance` wins; overflow past last tier → `last.price + ceil(billable − last.minutes − tolerance) × perMinRate`.
+- Rounding setting is IGNORED on rate-card sessions for BOTH modes (the tier+tolerance IS the rounding).
+- Existing sessions without snapshots get `undefined`, fall back to `'prorated'` via `?? 'prorated'` in `calculateAmount`.
+- Validation: 1–12 tiers, ascending unique minutes, prices 1–99999, tolerance 0–60.
+- Settings rounding control shows dim hint when any table has a rate card.
+
+Cross-feature ripples:
+- → [Sessions](#sessions) (`calculateAmount` dispatch, snapshot capture).
+- → [Table Move](#table-move) (compatibility check uses all six fields including rate card tiers, mode, tolerance — fix #72).
+- → [Tables](#tables) (TableFormModal Tiered Pricing UI, validation).
+
+See also: `bug_patterns.md` Pattern T7 (snapshot together), Pattern T8 (dispatch order).
+
+Last updated: 14 Jun 2026
+
+---
+
+## Tables
+
+Owns: `GameTable` interface, table CRUD, `TableFormModal`, `TableCard`, seed data.
+
+Files in scope:
+- `src/types/index.ts` — `GameTable` interface (source of truth)
+- `src/db/database.ts` — schema if new INDEX needed
 - `src/db/queries.ts` — `addTable`, `updateTable`, all readers
-- `src/db/seed.ts` — seed data must include new required fields
-- `src/pages/Settings.tsx` — table list display
-- `src/components/TableFormModal.tsx` — add/edit form
-- `src/components/TableCard.tsx` — Home card display
-- `src/pages/StartSession.tsx` — uses table data
-- `src/pages/SessionDetail.tsx` — uses rateSnapshot etc.
-- **Migration:** if removing a field, bump Dexie version, add upgrade function
-- **Export format:** `Export All Data` JSON includes tables — verify new shape
+- `src/db/seed.ts` — seed data must include all required fields
+- `src/pages/Settings.tsx` — table list display inside Tables collapsible section
+- `src/components/TableFormModal.tsx` — add/edit form (3 call sites: Settings Add, Settings Edit, Home FAB). Props: `{ open, onClose, table?, existingTables }`. ADD mode = no `table` prop. `existingTables` always receives the full current array (for duplicate-name check).
+- `src/components/TableCard.tsx` — Home card with 4 visual states (Free, Busy, Paused, Out of Service)
+- `src/pages/StartSession.tsx`, `src/pages/SessionDetail.tsx` — consume table fields
 
-### If you change `Session.isBackEntry` or `createBackEntry` (v12)
+Invariants:
+- `<TableCard>` visual regression: 4 states must be verified on every change.
+- `TableFormModal` is shared between ADD and EDIT — any prop addition updates all 3 call sites.
+- Removing a field requires a Dexie version bump + upgrade function.
+- Export format includes tables — new shape must be verified.
 
-**Affects:**
-- `src/types/index.ts` — field definition
-- `src/db/database.ts` — v12 version block (additive, no index)
-- `src/db/queries.ts` — `BackEntryOverlapError`, `BackEntryItemInput`, `BackEntryInput`, `createBackEntry`
-- `src/lib/validation.ts` — `validateBackEntry`
-- `src/components/BackEntryModal.tsx` — consumer (Phase 1 + Phase 2 rewrite)
-- `src/pages/History.tsx` — button + modal mount + `Logged` badge in `SessionRow`
-- **`InsufficientStockError` constructor:** `(available: number, itemName: string)` — NOT `(itemName, available)`. Match this exactly.
-- **`BackEntryOverlapError` constructor:** `(conflictingSession: Session)` — has `.conflictingSession` payload for inline error formatting.
-- **Pattern D7 invariant:** `createBackEntry` inlines ALL stock logic. Never call `decrementCanteenItemStock`, `addSessionItem`, or `addOrIncrementSessionItem` from inside the tx.
-- **`addedAt` rule:** sessionItems written as `addedAt: input.endedAt - order * 1000` to anchor inside session window — NOT `Date.now()`.
-- **Rate card snapshot:** if table has `rateCard`, capture all three snapshot fields together (Pattern T7). `per_frame` not supported — hide per-frame tables in the back entry table selector.
+Cross-feature ripples:
+- → [Schema & Migrations](#schema--migrations) (any field change).
+- → [Rate Card & Tolerance Billing](#rate-card--tolerance-billing) (TableFormModal Tiered Pricing).
+- → [Pricing Visibility on Player Hub](#pricing-visibility-on-player-hub) (TableFormModal mirrors `tables_json` after Dexie write).
+- → [Sessions](#sessions) (rate snapshots read from table at `startSession`).
 
-**Discovered when:** Back Entries Phase 1 + Phase 2, 9 Jun 2026.
+Last updated: 16 Jun 2026
 
 ---
 
-### If you change the `Session` interface
+## Table Move
 
-**Affects:**
-- `src/types/index.ts`
-- `src/db/queries.ts` — `startSession`, `pauseSession`, `resumeSession`, `stopSession`, `editSessionStart`, all readers
-- `src/lib/time.ts` — `getElapsedMs` reads startedAt/endedAt/pausedAt/pausedTotalMs/status
-- `src/lib/money.ts` — `calculateAmount` reads billingMode/rateSnapshot/framesPlayed
-- `src/pages/SessionDetail.tsx` — displays everything
-- `src/pages/Home.tsx` — needs active session for each table; mounts `<SessionAlarmModal>` when alarm fires
-- `src/pages/Summary.tsx` — today's sessions list
-- `src/pages/History.tsx` — date-range sessions list
-- `src/components/TableCard.tsx` — shows player/timer/status
-- `src/hooks/useSessionAlarm.ts` — reads `notifyAtMs`, `notifyAcknowledgedAt`, `status` fields
-- `src/components/SessionAlarmModal.tsx` — receives `Session` as prop; uses `getElapsedMs`
-- `src/pages/StartSession.tsx` — passes `notifyAfterMs` to `startSession()` which writes `notifyAtMs`
-- **CSV export** in Summary and History — column structure
-- **Migration:** bump Dexie version if changing indexes
+Owns: moving a running/paused session to another empty table of the same shape.
 
-### If you change `ClubSettings`
+Files in scope:
+- `src/types/index.ts` — `TableMove { fromTableId, toTableId, movedAt }`; `Session.tableMoves?: TableMove[]`
+- `src/db/database.ts` — v9 (additive, no index)
+- `src/db/queries.ts` — `moveSessionToTable(sessionId, toTableId)`; `IncompatibleTableError`, `TableOccupiedError`
+- `src/pages/SessionDetail.tsx` — `MoveTableModal`, `MoveTableList` (mirrors compatibility filter), `MoveIcon`, move button, Table Journey row
+- `src/pages/History.tsx` — `↻ N tables` subtitle in `SessionRow` when `tableMoves.length > 0`
+- `src/pages/Home.tsx` — NO change. `sessionMap` keys on `s.tableId`; live query re-fires automatically.
 
-**Affects:**
-- `src/types/index.ts`
+Invariants:
+- `session.tableId` always points to the CURRENT (latest) table after any moves. `tableMoves` records the journey. Existing queries that filter by `tableId` continue working.
+- Single `db.transaction('rw', db.sessions, db.gameTables)` in `moveSessionToTable`.
+- Validation: status running/paused; dest exists + not outOfService; gameType matches; rate matches per billing mode; dest not occupied.
+- **Compatibility (six fields — fix #72, 14 Jun 2026):** (1) gameType equal; (2) per_hour → ratePerHour equal; (3) per_frame → ratePerFrame equal; (4) deep-equal rate card tier array if either has one; (5) `(srcTable.rateCardBilling ?? 'prorated')` equal; (6) `(srcTable.toleranceMinutes ?? 10)` equal when either has rate card.
+- `MoveTableList` (UI filter) and `moveSessionToTable` (server check) MUST stay in sync — same six checks.
+- `IncompatibleTableError`/`TableOccupiedError` are caught for inline error display (Pattern F7). Never show a toast for these.
+- Subtitle rule: when `session.rateCardSnapshot?.length` is truthy, show "Same rate card" instead of "Same rate (₹X/hr)".
+- Scope exclusions: no cross-game-type moves, no per-segment billing, no undo, no swap of two running sessions.
+- "Move table" button hidden for completed sessions.
+
+Cross-feature ripples:
+- → [Sessions](#sessions) (writes `tableId` + `tableMoves`).
+- → [Rate Card & Tolerance Billing](#rate-card--tolerance-billing) (compatibility uses rate card fields).
+- → [Tables Page (Home)](#tables-page-home) (live re-fire, no code change).
+
+See also: `bug_patterns.md` Pattern F7 (inline error vs toast).
+
+Last updated: 14 Jun 2026
+
+---
+
+## Back Entries
+
+Owns: retroactively logging a completed session from a paper notebook.
+
+Files in scope:
+- `src/types/index.ts` — `Session.isBackEntry?: boolean`
+- `src/db/database.ts` — v12 (additive, no index)
+- `src/db/queries.ts` — `createBackEntry`, `BackEntryInput`, `BackEntryItemInput`, `BackEntryOverlapError` (`.conflictingSession: Session`), `InsufficientStockError(available, itemName)`
+- `src/lib/validation.ts` — `validateBackEntry` (reuses `validatePlayerName`, `validateNote`)
+- `src/components/BackEntryModal.tsx` — Phase 1 + Phase 2 UI; canteen chips with out-of-stock dimming, draft items list with +/− stepper + × remove, collapsible manual form, price-mismatch inline warning, extended preview (Duration / Table Amt / Items / Grand Total)
+- `src/pages/History.tsx` — entry button + modal mount + `Logged` badge on `session.isBackEntry`
+
+Invariants:
+- `createBackEntry` opens a single flat `db.transaction` covering sessions, gameTables, settings, canteenItems, sessionItems. **Pattern D7** — ALL stock logic inlined; never call `decrementCanteenItemStock`, `addSessionItem`, or `addOrIncrementSessionItem` from inside this tx.
+- Overlap check covers active AND completed sessions for the same table.
+- Rate card snapshots captured together (Pattern T7). `per_frame` tables EXCLUDED — hide in the back-entry table selector.
+- Stock aggregation: aggregate `(canteenItemId → totalQty)` across ALL draft items before checking sufficiency — prevents bypass via multiple small rows. `InsufficientStockError` thrown on insufficient stock; full tx rollback.
+- Items written with `addedAt: input.endedAt - order * 1000` (anchored inside session window) — NOT `Date.now()`.
+- `BackEntryOverlapError` constructor: `(conflictingSession: Session)` — has `.conflictingSession` payload.
+- `InsufficientStockError` constructor signature: `(available: number, itemName: string)` — order matters; match exactly.
+- Both errors caught inline (Pattern F7); no toast.
+- `onSaved(dateISO)` snaps History date range to saved date.
+
+Cross-feature ripples:
+- → [Sessions](#sessions) (writes a completed session; uses snapshot fields).
+- → [Canteen / Stock](#canteen--stock) (stock decrement inlined, Pattern D7).
+- → [Session Items (POS)](#session-items-pos) (item rows written with anchored `addedAt`).
+
+See also: `bug_patterns.md` Pattern D7, Pattern F7, Pattern T7.
+
+Last updated: 9 Jun 2026
+
+---
+
+## Session Items (POS)
+
+Owns: per-session add/edit/delete of snacks/drinks; merge-on-add; bill split; CSV columns.
+
+Files in scope:
+- `src/types/index.ts` — `SessionItem` interface
+- `src/db/database.ts` — v3 added `sessionItems: '++id, sessionId, addedAt'`
+- `src/db/queries.ts` — `addSessionItem`, `addOrIncrementSessionItem` (NEW, sessionItems-only tx — do NOT call from inside an outer tx, Pattern D7), `updateSessionItem`, `deleteSessionItem`, `restoreSessionItem` (returns `Promise<void>`); `InsufficientStockError` (exported)
+- `src/hooks/useLiveData.ts` — `useSessionItems`
+- `src/lib/money.ts` — `calculateItemsTotal`
+- `src/lib/canteenMatch.ts` — `normalizeName`, `findMatchingCanteenItem`, `findMatchingCanteenItemForRow`
+- `src/components/AddItemBottomSheet.tsx` — all add/edit/delete UI (4 add paths: canteen chip, quick-add chip, manual matched, manual freeform)
+- `src/pages/SessionDetail.tsx` — bill split section, grandTotal, sheet mount
+- `src/pages/Home.tsx`, `src/pages/Summary.tsx`, `src/pages/History.tsx` — `todayTotals`, `itemsTotalForDate`, `itemsBySessionId`, CSV columns
+
+Invariants:
+- Pattern D7: stock logic in `updateSessionItem`/`deleteSessionItem`/`restoreSessionItem` is INLINED via `findMatchingCanteenItemForRow` inside a single flat `db.transaction('rw', db.sessionItems, db.canteenItems, ...)`. Zero calls to `decrementCanteenItemStock` or `addOrIncrementSessionItem` from inside any outer tx. Both remain safe to call standalone.
+- `addOrIncrementSessionItem` merges into existing row by `(sessionId, normalizeName(name), exactPrice)`. Pre-existing distinct rows are NOT auto-merged — only NEW adds merge. qty cap 99.
+- Three canteen-matched add paths INLINE merge logic inside their outer tx. Freeform path calls `addOrIncrementSessionItem` standalone.
+- Stock can never go negative. qty-up edit or Undo restore that would do so throws `InsufficientStockError`, rolling back both writes.
+- Edit modal shows inline error via `setError` (Pattern F7). Undo callback uses toast (justified exception — no inline surface after dismiss).
+- `grandTotal` in SessionDetail = `currentSessionAmount + itemsTotal`.
+- History CSV has 3 columns: `Table Amount`, `Items`, `Total`.
+- toastStore extended with `actionLabel`/`onAction`/`durationMs` for Undo — existing callers (string `show()`) still work.
+- Known limitation: freeform rows (no canteen match) never touch stock in any path.
+
+Cross-feature ripples:
+- → [Canteen / Stock](#canteen--stock) (stock sync, `canteenMatch.ts`, Pattern D7).
+- → [Sessions](#sessions) (`grandTotal` flows into payment split, CSV).
+- → [Summary Dashboard](#summary-dashboard) / [Tables Page (Home)](#tables-page-home) (items totals in aggregates).
+
+See also: `bug_patterns.md` Pattern D7, Pattern F7.
+
+Last updated: 8 Jun 2026
+
+---
+
+## Canteen / Stock
+
+Owns: canteen item master list, stock decrement/restock, low-stock UI, item matching.
+
+Files in scope:
+- `src/types/index.ts` — `CanteenItem { id, name, defaultPrice, stockEnabled, currentStock, isActive, createdAt, sortOrder }`; `ClubSettings.lowStockThreshold?`
+- `src/db/database.ts` — v8 adds `canteenItems: '++id, name, isActive, sortOrder'`
+- `src/db/queries.ts` — `getCanteenItems(includeInactive)`, `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`, `decrementCanteenItemStock` (standalone-only — see Pattern D7), `getLowStockThreshold` (with `?? 5` fallback)
+- `src/db/seed.ts` — `DEFAULT_SETTINGS.lowStockThreshold` (default 5)
+- `src/lib/canteenMatch.ts` — `normalizeName` (trim+lowercase+collapse spaces), `findMatchingCanteenItem(name, price, items)`, `findCanteenItemByName(name, items)`. No Dexie imports.
+- `src/pages/Canteen.tsx` — list with StockPill, FAB, soft-delete confirm, opens `RestockSheet` from each item card, `StatsRow`
+- `src/components/CanteenItemFormModal.tsx` — add/edit form
+- `src/components/RestockSheet.tsx` — qty/cost/source/notes; mounted on each item card
+- `src/components/AddItemBottomSheet.tsx` — canteen chips, qty stepper stock-max clamp, inline stock decrement tx
+
+Invariants:
+- **Boolean filter quirk:** `getCanteenItems` uses `.filter(item => item.isActive === true)` NOT `.where('isActive').equals(1)`. Dexie boolean index quirk — `.equals(1)` never matches `true`. Use `.filter()` for boolean fields even if the field is in the index schema string.
+- **Pattern D7 (nested-tx rule):** `decrementCanteenItemStock` has its own internal `db.transaction`. Calling it inside an outer tx causes the inner to commit early; outer throws "Transaction has already completed or failed." → silent partial write (stock decrements, session item not added).
+  - In `AddItemBottomSheet.handleSubmit`, stock logic is INLINED inside a single flat outer tx.
+  - `decrementCanteenItemStock` remains safe to call standalone.
+- All three add paths (canteen chip, quick-add chip, manual matched) run through `findMatchingCanteenItem` and use the SAME inline atomic tx (`runCanteenAddTransaction`).
+- Quick Add chips filtered to canteen-matched recent items ONLY.
+- Manual form collapsed behind `+ Add other item` button.
+- Price mismatch on manual submit shows inline warning (Pattern F7), not toast. "Use ₹X" auto-confirms.
+- Locked decision: no auto-save freeform to canteen master list (would let staff typos pollute).
+- `RestockSheet`: Piggy chip DISABLED when `cost > piggyBalance`. If user had Piggy selected and cost rose past piggy, `effectiveSource` snaps to Other on confirm. `stockEnabled=false` caveat shown.
+- Stock can only grow via restock. `recordStockPurchase` single flat tx: insert StockPurchase + (if `stockEnabled=true`) `currentStock += qty`.
+
+Cross-feature ripples:
+- → [Session Items (POS)](#session-items-pos) (Pattern D7, stock sync on edit/delete/undo).
+- → [Back Entries](#back-entries) (Phase 2 items: aggregate stock check, Pattern D7).
+- → [Quick Sale](#quick-sale) (`createCanteenSale` aggregates qty per item; Pattern D7).
+- → [Piggy (Cash Float)](#piggy-cash-float) (`recordStockPurchase`, source=piggy enforcement).
+
+See also: `bug_patterns.md` Pattern D7 (nested tx), Pattern F7 (inline error vs toast), `decisions_active.md` (no auto-save freeform).
+
+Last updated: 8 Jun 2026
+
+---
+
+## Quick Sale
+
+Owns: walk-in canteen sale page (no session).
+
+Files in scope:
+- `src/types/index.ts` — `CanteenSale`, `CanteenSaleLineInput`
+- `src/db/database.ts` — v13 `canteenSales: 'id, createdAt, customerId'`
+- `src/db/queries.ts` — `createCanteenSale`, `CanteenSaleInvalidError`, `CanteenSaleStockError(itemName, available)`, `getCanteenSalesByDate`
+- `src/types/walletTransaction.ts` — `WalletReferenceType` extended with `'canteen_sale'`
+- `src/pages/QuickSale.tsx` — only writer (v1: no edit flow). Cart with `−`/`✕` controls, sticky Continue-to-Payment, reuses `PaymentSplitSheet`. Post-confirm UPI QR screen (fix #69, 14 Jun 2026) shows only the UPI split amount, not subtotal.
+- `src/components/TopBar.tsx` — `+ Quick Sale` pill on date subtitle row (conditional on `onQuickSalePress?: () => void`)
+- `src/pages/Summary.tsx` — `canteenSalesForDate` live query feeds canteen revenue tile + PAYMENT MODE + piggy cashIn
+
+Invariants:
+- **Pattern D7:** single flat `db.transaction('rw', db.canteenSales, db.canteenItems, db.customers, db.walletTransactions)`. Order inside: (1) aggregate qty per `canteenItemId` and decrement stock (throws `CanteenSaleStockError` if would go negative); (2) wallet debit + `WalletTransaction(referenceType:'canteen_sale', referenceId:saleId)` if `wallet > 0`; (3) insert `CanteenSale` LAST so any earlier throw rolls everything back.
+- Out-of-stock cards `opacity-60` + tap blocked + toast.
+- Out-of-scope (v1): free-text items (every line MUST match a `CanteenItem.id`), discount, edit/refund/void.
+- `customerId` only persisted on `CanteenSale` when `wallet > 0`.
+
+Cross-feature ripples:
+- → [Canteen / Stock](#canteen--stock) (qty aggregation + decrement).
+- → [Payment Split & Payment Mode](#payment-split--payment-mode) (reuses `PaymentSplitSheet` with `total = subtotal`).
+- → [UPI QR & Payment Screen](#upi-qr--payment-screen) (post-confirm QR screen, fix #69).
+- → [Wallet & Customers](#wallet--customers) (optional wallet debit).
+- → [Summary Dashboard](#summary-dashboard) (canteen revenue tile, PAYMENT MODE, piggy cashIn).
+- → [Tables Page (Home)](#tables-page-home) (TopBar pill from Home only).
+
+Last updated: 14 Jun 2026
+
+---
+
+## Payment Split & Payment Mode
+
+Owns: split-payment capture sheet, `paymentBreakdown` field, Summary PAYMENT MODE strip.
+
+Files in scope:
+- `src/types/index.ts` — `PaymentBreakdown { cash, upi, wallet }`, optional `Session.paymentBreakdown?`
+- `src/db/database.ts` — v13 `.upgrade()` backfills (NEVER touch); items-revenue gap deferred
+- `src/db/queries.ts` — `recordSessionPaymentBreakdown(sessionId, breakdown, customerId?)`, `PaymentBreakdownInvalidError`, `WalletInsufficientError`
+- `src/components/PaymentSplitSheet.tsx` — shared between SessionDetail and QuickSale
+- `src/pages/SessionDetail.tsx` — `handleConfirmStop` → `pauseForPayment`; `handleCancelPayment`; auto-resume `useEffect` (guards: `autoOpenHandled` + `paymentScreenOpen`); zero-total "Mark as paid" uses `confirmPaymentAndStop` directly
+- `src/pages/Summary.tsx` — `paymentMode` `useMemo` (deps: `[detailSessions, canteenSalesForDate]`); legacy filter `paymentBreakdown !== undefined`
+- `src/pages/summary/PaymentModeStrip.tsx` — three tiles (CASH/UPI/WALLET) + 6px split bar; `computePercents` largest-remainder rounding to exactly 100
+
+Invariants:
+- **Pattern M3 (single source of truth):** `canConfirm = matches && !submitting && totalIsValid` drives BOTH the status line AND Confirm `disabled` AND Confirm visual styling (NOT just `disabled:opacity-40`). Error slot REPLACES the status line; never stack.
+- `cash + upi + wallet === session.amount + Σ(sessionItems.price × quantity)` — `grandTotal` computed INSIDE the tx by reading `sessionItems`. `session.amount` alone is time only; using it caused a P0 (see decisions log).
+- `wallet > 0` requires `customerId`; sheet enforces in UI, queries enforce at runtime.
+- Runtime guard at top of `recordSessionPaymentBreakdown` throws on non-numeric `sessionId` (defence vs route-param leakage).
+- `paymentBreakdown` is set ONCE at "Record payment" confirm — NOT at `stopSession`. Between Stop and confirm, the field is `undefined`.
+- PAYMENT MODE tile + piggy `cashIn` filter on `paymentBreakdown !== undefined` to exclude the transient state and legacy rows.
+- ADDENDUM-4: auto-resume `useEffect` handles BOTH legacy (completed+no breakdown) AND new (paused+paymentInProgress) cases. Guards `autoOpenHandled` + `paymentScreenOpen` prevent re-fire after normal Stop. Pattern P4.
+- ADDENDUM-5: `finalGrandTotal === 0` → write `{0,0,0}` directly without opening sheet; button label flips to "Mark as paid"; both manual button AND auto-open path handle this.
+- "Skip for now" REMOVED (ADDENDUM-4) — payment capture is mandatory.
+- `total` prop = grand total. Caller responsible: sessions = `session.amount + Σ items`; QuickSale = `subtotal`.
+- Customer linking is sheet-local. No `Session.customerId`. Durable link = `WalletTransaction.referenceId`.
+- **Pattern T4** for PAYMENT MODE: running sessions EXCLUDED (no breakdown yet). Headline `totalRevenue` includes them via render-body `runningRevenueToday`. PAYMENT MODE math stays in `useMemo` (not `useLiveQuery`) since source data is DB-static.
+
+Cross-feature ripples:
+- → [Sessions](#sessions) (pause-first flow).
+- → [Quick Sale](#quick-sale) (sheet reuse).
+- → [Wallet & Customers](#wallet--customers) (`WalletTransaction` write on `wallet > 0`).
+- → [Piggy (Cash Float)](#piggy-cash-float) (cashIn aggregation from `paymentBreakdown.cash`).
+- → [Summary Dashboard](#summary-dashboard) (strip + percent rounding).
+
+See also: `bug_patterns.md` Pattern M3, Pattern P4, Pattern T4.
+
+Last updated: 14 Jun 2026
+
+---
+
+## Piggy (Cash Float)
+
+Owns: derived cash-float balance, stock-purchase ledger, `/piggy` page.
+
+Files in scope:
+- `src/types/index.ts` — `StockPurchase`, `ClubSettings.piggyOpeningBalance?`, `ClubSettings.piggyStartedAt?`
+- `src/db/database.ts` — v13 `stockPurchases: 'id, createdAt, canteenItemId, source'`; v13 `.upgrade()` initialises piggy (`piggyStartedAt = Date.now()`, opening 0) only if absent
+- `src/db/queries.ts` — `getPiggyBalance`, `updatePiggyOpeningBalance`, `recordStockPurchase`, `StockPurchaseInvalidError`, `listStockPurchases`, `listStockPurchasesForItem`
+- `src/components/RestockSheet.tsx` — only writer of `StockPurchase`
+- `src/pages/Canteen.tsx` — opens RestockSheet
+- `src/pages/Piggy.tsx` — balance display (clamped ≥ 0), opening + cashIn + restockOut breakdown, started-on date, "Edit opening balance" modal, cash-by-week (this/last/week-before), restocks split by source
+- `src/pages/Settings.tsx` — Piggy section between Subscription and Data & Backup
+- `src/pages/summary/CashFlowStrip.tsx` — PIGGY + STOCK BOUGHT TODAY tiles
+- `src/pages/Summary.tsx` — `piggy` live query feeds CashFlowStrip
+
+Invariants:
+- Piggy is a **derived value** — no ledger table, no `piggy_balance` column. Single source of truth = sessions + canteenSales + walletTransactions + stockPurchases + 2 settings fields.
+- Formula: `current = opening + cashIn − restockOut` where `cashIn = Σ session.paymentBreakdown.cash (completed, endedAt ≥ piggyStartedAt) + Σ canteenSale.paymentBreakdown.cash (createdAt ≥ piggyStartedAt) + Σ walletTransaction.amount (type='credit', paymentMode='cash', createdAt ≥ piggyStartedAt)`; `restockOut = Σ stockPurchase.cost (source='piggy', createdAt ≥ piggyStartedAt)`.
+- Wallet top-ups paid in cash ARE part of piggy (cash is in the till). NOT part of PAYMENT MODE tile (that's revenue only).
+- **Window invariant:** every cash-collected sum MUST intersect with `piggyStartedAt`. Cash-by-week in `Piggy.tsx`: `winStart = Math.max(weekStart, since)`. NEVER aggregate cash-in from before piggy was started.
+- `getPiggyBalance` tolerates negative `current` (UI clamps to 0 + warning) — escape hatch, not normal path.
+- `RestockSheet` Piggy chip enforcement is the ONLY guard against piggy going under ₹0.
+- "STOCK BOUGHT TODAY" sums ALL restocks (any source) on the viewed date + count.
+
+Cross-feature ripples:
+- → [Canteen / Stock](#canteen--stock) (`recordStockPurchase` increments stock; Piggy chip enforcement).
+- → [Payment Split & Payment Mode](#payment-split--payment-mode) (`paymentBreakdown.cash` feeds cashIn).
+- → [Wallet & Customers](#wallet--customers) (cash top-ups feed cashIn).
+- → [Summary Dashboard](#summary-dashboard) (CashFlowStrip tiles).
+- → [Settings](#settings) (Piggy section UI).
+
+See also: `decisions_active.md` (derived value, no ledger table).
+
+Last updated: 10 Jun 2026
+
+---
+
+## UPI QR & Payment Screen
+
+Owns: QR generation, post-stop fixed-viewport overlay, `<UpiQrCard>` sharing.
+
+Files in scope:
+- `src/components/PaymentQR.tsx` — generates `upi://pay?...` deeplink QR via `qrcode` pkg. Props: `upiId`, `payeeName`, `amount`, `transactionNote`, `size?` (INTERNAL render res, default 560, NOT displayed CSS size). Output element uses `width:100%; height:auto; display:block` (scales to parent — Pattern U7).
+- `src/components/UpiQrCard.tsx` — shared card wrapper. Props: `amount`, `upiId`, `payeeName`, `transactionNote`. No store access.
+- `src/pages/SessionDetail.tsx` — post-confirm payment screen, `fixed inset-0 z-50 flex-col` (z-50 covers bottom nav — Pattern U8). QR width `min(72vw, 280px)`. White card `aspect-square flex items-center justify-center p-3`. Middle `flex-1` zone. "Done" pinned in footer `shrink-0`. Padding uses `env(safe-area-inset-top/bottom)`. Captures `finalGrandTotal`+`finalRoundedMs` BEFORE `stopSession()`.
+- `src/pages/WalletTopup.tsx` — inline scrollable
+- `src/pages/QuickSale.tsx` — fixed-viewport, shows only UPI split amount (fix #69, 14 Jun 2026)
+
+Invariants:
+- `upiId` is OPTIONAL. If not set, payment screen shows plain amount card, no QR.
+- QR encodes `upi://pay?pa=<vpa>&pn=<clubName>&am=<amount>&tn=<tableName>&cu=INR`. Amount = grand total. Pass raw integer (no zero-pad/format).
+- For top-ups, amount is the **paid amount**, NEVER the credited total (bonus is owner-side ledger, never on UPI).
+- "Done — back to tables" navigates to `/tables` and clears payment screen state.
+- Payment screen is an overlay with NO bottom nav (`fixed inset-0` covers everything).
+- Three consumers — change one, verify all three.
+
+Cross-feature ripples:
+- → [Sessions](#sessions) (post-stop flow timing — capture before `stopSession()`).
+- → [Quick Sale](#quick-sale) (post-confirm UPI screen).
+- → [Wallet & Customers](#wallet--customers) (top-up QR).
+- → [Settings](#settings) (`upiId` field in Club Info).
+- → [Validation](#validation) (`validateUpiId`).
+
+See also: `bug_patterns.md` Pattern U7 (QR sizing), Pattern U8 (z-50 over bottom nav).
+
+Last updated: 14 Jun 2026
+
+---
+
+## Wallet & Customers
+
+Owns: customer master, wallet ledger, display helpers, walk-in codes, wallet pages.
+
+Files in scope:
+- `src/types/customer.ts` — `Customer` interface; phone format `+91XXXXXXXXXX` (12 chars)
+- `src/types/walletTransaction.ts` — `WalletTransaction`, `WalletReferenceType` (incl. `'session'`, `'canteen_sale'`, `'coin_expiry'`, `'welcome_bonus'`, `'streak_bonus'`, `'engagement_log'`)
+- `src/db/database.ts` — v5 adds `customers: 'id, phone, walkInCode, lastVisitAt'` + `walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]'`; v6 `.upgrade()` backfill of legacy adjustment rows; v15 adds `Customer.coinBalance?` + `WalletTransaction.balanceType?/coinDelta?/rupeeEquivalent?`; v16 adds `Customer.firstTopupAt?/lastStreakBonusAt?/expiryAppliedAt?`
+- `src/store/customerStore.ts` — `createCustomerWithPhone`, `updateCustomerPhone`, `topUp`, `applyManualAdjustment`, `getTransactionHistory`; `DuplicatePhoneError`
+- `src/lib/walkInCode.ts` — WALK-NNN generator
+- `src/lib/customerDisplay.ts` — `customerDisplayName`, `phoneTail`, `customerFullLabel`, `formattedPhone`
+- `src/lib/whatsapp.ts` — `buildWhatsAppReceiptUrl(customer)`
+- `src/components/wallet/CustomerListRow.tsx`, `TransactionRow.tsx`, `EditCustomerModal.tsx` (renamed from EditPhoneModal Phase 1.5)
+- `src/pages/Wallet.tsx`, `WalletNewCustomer.tsx`, `WalletTopup.tsx`, `CustomerProfile.tsx`
+- `src/components/TopBar.tsx` — wallet icon (right side)
+
+Invariants:
+- **Phone uniqueness is enforced in the store, NOT via a Dexie `&phone` unique index.** Multiple null phones (walk-ins) would violate unique index in some browsers. Pre-check + `DuplicatePhoneError` is the only enforcement — do NOT "fix" by adding `&phone` to the schema string.
+- Phone format always `+91XXXXXXXXXX`. Display sites do `phone.slice(3)` — any format change ripples to all display sites.
+- `ClubSettings.walkInCounter?` — treat undefined as 0; NOT in seed (intentional — undefined → 0 fallback; adding it to seed would reset existing counters on re-seed).
+- WALK-NNN walk-in code reads `settings.walkInCounter` in the SAME tx as `customers.add()`.
+- **Immutability rule:** no `updateTransaction()`. Corrections = new rows. Do NOT add an update path without a deliberate decision.
+- Session debit shape: `{ type:'debit', referenceType:'session', referenceId: sessionId.toString() }`.
+- `customerDisplay.ts` rule (Pattern F8): NEVER add inline `customer.name ?? ... ?? 'Customer'` chains. Always use the helper. Three-way distinction (named / unnamed-with-phone / anonymous) is canonical — do not collapse to two.
+- `phoneTail` is display-only — never for identity checks or sorting.
+- TopBar right side has 4 elements at 360px (online dot, canteen, wallet, gear). Do NOT add a 5th without removing one or redesigning.
+- Wallet routes are private — do NOT add to `PUBLIC_PATHS`. Wallet is NOT a BottomNav tab; accessed via TopBar icon.
+
+Cross-feature ripples:
+- → [Payment Split & Payment Mode](#payment-split--payment-mode) (wallet debit in sheet).
+- → [UPI QR & Payment Screen](#upi-qr--payment-screen) (top-up QR).
+- → [Piggy (Cash Float)](#piggy-cash-float) (cash top-ups feed cashIn).
+- → [ClubCoins](#clubcoins) (`coinBalance`, `balanceType`, `coinDelta`).
+- → [Engagement](#engagement) (welcome/streak/dormancy writes).
+- → [Tables Page (Home)](#tables-page-home) (TopBar layout).
+
+See also: `bug_patterns.md` Pattern F7 (DuplicatePhoneError inline), Pattern F8 (display helper).
+
+Last updated: 14 Jun 2026
+
+---
+
+## Alarm / Notify
+
+Owns: per-session notify-at timestamp, detection, audio loop, modal.
+
+Files in scope:
+- `src/types/index.ts` — `Session.notifyAtMs?`, `Session.notifyAcknowledgedAt?`; `ClubSettings.alarmSoundEnabled/alarmVibrationEnabled`
+- `src/db/database.ts` — v7 (optional fields, no index, no `.upgrade()`)
+- `src/db/queries.ts` — `snoozeNotify` (anchor-to-original — Pattern T6), `updateSessionNotify` (set/clear from now), `startSession` accepts `notifyAfterMs` and writes `notifyAtMs`
+- `src/lib/alarm.ts` — `startAlarmLoop` (gain 1.0, looped, 60-sec cap — load-bearing for battery), `playBeepOnce`, `triggerVibration`, `unlockAudio` (iOS unlock)
+- `src/lib/notifyPresets.ts` — 30 min / 1 hr / 1.5 hr / 2 hr / custom 1–600 min
+- `src/hooks/useSessionAlarm.ts` — detection on `status === 'running'`; wall-clock `now >= notifyAtMs`
+- `src/components/SessionAlarmModal.tsx` — fires when threshold met on `/tables`
+- `src/components/TableCard.tsx` — bell icon when `notifyAtMs != null && !notifyAcknowledgedAt`; pulsing on running
+- `src/pages/StartSession.tsx` — chips set FROM session start
+- `src/pages/SessionDetail.tsx` — edit pill sets FROM NOW; opens Modal
+- `src/pages/Settings.tsx` — Test alert button uses `playBeepOnce` (ONE beep, NOT the loop)
+- `src/App.tsx` — global unlock listener
+
+Invariants:
+- Wall-clock semantics: pause does NOT shift `notifyAtMs`. Deliberate — matches phone alarms.
+- Paused sessions are deferred (detection requires `running`); completed sessions excluded.
+- Snooze anchors to original `notifyAtMs` (Pattern T6) with `Date.now()` fallback if past.
+- 60-second auto-stop cap in `startAlarmLoop` is load-bearing — do not remove without explicit decision.
+- `NOTIFY_PRESETS` consumed by both StartSession AND SessionDetail edit sheet — change once, both update.
+
+Cross-feature ripples:
+- → [Sessions](#sessions) (field on `Session`, written at start, detection on status).
+- → [Tables](#tables) (`TableCard` bell icon).
+
+See also: `bug_patterns.md` Pattern T5 (audio unlock), Pattern T6 (snooze anchor).
+
+Last updated: 1 Jun 2026
+
+---
+
+## Summary Dashboard
+
+Owns: end-of-day dashboard at `/summary`, pure aggregation lib, strip sub-components.
+
+Files in scope:
+- `src/pages/Summary.tsx` — header w/ compact 44×44 calendar icon, sub-component mounts, render-body Pattern T4 aggregation
+- `src/lib/summaryMath.ts` — pure aggregation
+- `src/pages/summary/RevenueDeltas.tsx` — yesterday/last week/7d avg delta chips
+- `src/pages/summary/RevenueSplitBar.tsx` — tables vs canteen
+- `src/pages/summary/PaymentModeStrip.tsx` — CASH/UPI/WALLET tiles + bar
+- `src/pages/summary/CashFlowStrip.tsx` — PIGGY + STOCK BOUGHT TODAY tiles → `/piggy`
+- `src/pages/summary/HourlyHeatmap.tsx` — collapsible, default collapsed, peak hour labelled
+- `src/pages/summary/TopTablesList.tsx` — medal ranked
+- `src/pages/summary/LowStockStrip.tsx` — → `/canteen`
+- `src/pages/summary/TopCanteenItems.tsx`
+
+Invariants:
+- **Pattern T4 (mandatory for any aggregate including running sessions):**
+  1. `useLiveQuery` → sum `s.amount` for completed + items (DB-static).
+  2. Render body → sum `calculateAmount(getElapsedMs(s))` for `activeSessions`.
+  3. Combine: `total = completedFromQuery + itemsFromQuery + runningFromRender`.
+  Current correct consumers: `Home.tsx` (`todayTotal`), `Summary.tsx`.
+- PAYMENT MODE strip EXCLUDES running sessions (no `paymentBreakdown` yet). Headline `totalRevenue` includes them via render-body `runningRevenueToday`.
+- Largest-remainder rounding in `PaymentModeStrip.computePercents` — bar widths and tile percents read same return value.
+- Date picker pattern = Pattern U9 (opacity-0 full-size overlay over a label, NOT clip/sr-only). History.tsx date inputs have `cursor-pointer`.
+- CASH FLOW PIGGY tile shows `Math.max(0, current)` with "Piggy negative — check restock log" hint when `current < 0`.
+
+Cross-feature ripples:
+- → [Sessions](#sessions) (Pattern T4 dependency).
+- → [Payment Split & Payment Mode](#payment-split--payment-mode) (strip data).
+- → [Piggy (Cash Float)](#piggy-cash-float) (CashFlowStrip).
+- → [Canteen / Stock](#canteen--stock) (LowStockStrip).
+
+See also: `bug_patterns.md` Pattern T4 (origin: BUG-022), Pattern U9 (date picker).
+
+Last updated: 8 Jun 2026
+
+---
+
+## Tables Page (Home)
+
+Owns: `/tables` page, table grid, FilterPills, TopBar, today total.
+
+Files in scope:
+- `src/pages/Home.tsx` — table grid, `sessionMap`, `todayTotal` (Pattern T4), `runningAmount` in render body, FAB Add Table modal (inline since Phase 2C-1)
+- `src/components/TableCard.tsx` — 4 visual states (Free, Busy, Paused, Out of Service); "Paying…" badge for `paymentInProgress`; bell icon for armed alarms
+- `src/components/FilterPills.tsx` — props `pills`, `active`, `onChange`; all pills `min-h-[44px]`
+- `src/components/TopBar.tsx` — two stacked rows. Row 1: "Today" heading + icon group. Row 2: date subtitle + optional `+ Quick Sale` pill. Date `<p>` is `truncate min-w-0`; pill is `shrink-0`. Right side at 360px: online dot (6px) + canteen (w-9 h-9) + wallet (w-9 h-9) + gear (w-9 h-9). NO 5th icon.
+
+Invariants:
+- Touch targets: gear `w-11 h-11` (44px) minimum (BUG-006 fix); all FilterPills `min-h-[44px]` (BUG-005); icon buttons `w-9 h-9` (36px tap zone meets 44px on mobile).
+- Settings gear → `/settings`; canteen → `/canteen`; wallet → `/wallet`; QuickSale pill → `/quick-sale`.
+- Home is the only consumer of TopBar today; `onQuickSalePress` prop omitted = pill hidden.
+- FAB Add Table opens inline `TableFormModal` (NOT navigate to `/settings`) — BUG-004 fix.
+
+Cross-feature ripples:
+- → [Tables](#tables) (`TableCard` states, `TableFormModal` 3rd call site).
+- → [Sessions](#sessions) (Pattern T4 `todayTotal`, `runningAmount`, "Paying…" badge).
+- → [Alarm / Notify](#alarm--notify) (bell icon on card, `SessionAlarmModal` mount).
+- → [Quick Sale](#quick-sale) (TopBar pill).
+- → [Wallet & Customers](#wallet--customers) (TopBar wallet icon).
+- → [Canteen / Stock](#canteen--stock) (TopBar canteen icon).
+- → [Routing & Cross-cutting](#routing--cross-cutting) (any route rename ripples here).
+
+Last updated: 10 Jun 2026
+
+---
+
+## Settings
+
+Owns: `/settings` collapsible sections, ClubSettings consumption, plumbing of new settings.
+
+Files in scope:
+- `src/pages/Settings.tsx` — `openSection: string` state (one open at a time; `''` = closed). `SettingsSection` (inline, not exported). Animation via `grid-rows-[1fr/0fr] opacity-100/0`. Sections: `club-info` (default open), `tables`, `alerts`, `subscription`, `data`, `about`, `account`. Also: Piggy section between Subscription and Data & Backup; Player Hub section.
+- `src/types/index.ts` — `ClubSettings` interface
 - `src/db/queries.ts` — `getSettings`, `updateSettings`
-- `src/db/seed.ts` — default values
-- `src/pages/Settings.tsx` — settings UI. NOTE: Settings page now renders fields inside collapsible sections. Club Info section = clubName, currency, upiId, rounding. UPI ID save logic: saves `undefined` (not empty string) when cleared. Rounding warns on active sessions via modal.
-- **Anywhere a setting is consumed:** e.g., `rounding` is read by `stopSession` in queries.ts. Search the codebase for setting usage.
+- `src/db/seed.ts` — defaults
+- `sessionStorage['ck_settings_section']` — UI persistence key; cleared on tab close. Safe to read/write.
+
+Invariants:
+- When adding a new setting: (1) add to `ClubSettings`; (2) add default to `seed.ts`; (3) add UI toggle/input; (4) **plumb into the action that reads it** — most bugs land here (e.g. Prompt 7 rounding); (5) add test in `test_status.md`.
+- Section IDs: if you rename one, `sessionStorage` becomes stale (harmless — no section auto-opens that session).
+- Adding a new section: add an `id` here and a `<SettingsSection>` block.
+- UPI ID save: saves `undefined` (not empty string) when cleared.
+- Rounding control: warns on active sessions via modal (change only affects future stops). Shows dim hint when any table has a rate card.
+- Account section shows logged-in email.
+
+Cross-feature ripples:
+- → [Sessions](#sessions) (rounding setting consumed in `stopSession`).
+- → [UPI QR & Payment Screen](#upi-qr--payment-screen) (`upiId` in Club Info).
+- → [Tables](#tables) (Tables section list + Add button).
+- → [Auth & Access Guard](#auth--access-guard) (Subscription, Account sections).
+- → [Player Hub](#player-hub) (`PlayerHubSettings` slug, Accept topups toggle).
+- → [Piggy (Cash Float)](#piggy-cash-float) (Piggy section).
+- → [Import / Export / Reset](#import--export--reset) (Data & Backup section).
+
+See also: `decisions_active.md` (collapsible UX choice).
+
+Last updated: 14 Jun 2026
 
 ---
 
-## Component Changes
+## Shared UI & Theme
 
-### If you change `<FilterPills>` component
+Owns: `<Modal>`, `<Toggle>`, `<ConfirmModal>`, `<BottomNav>`, theme tokens, typography, spacing.
 
-**Affects:**
-- `src/pages/Home.tsx` — only consumer. Props: `pills`, `active`, `onChange`.
-- Pill height / padding changes affect the overall height of the filter row, which affects the visual spacing between TopBar and the table grid.
-- Touch target: all pills must keep `min-h-[44px]` (added BUG-005 fix, 24 May 2026).
-
-**Discovered when:** Phase 2B touch-target sweep.
-
----
-
-### If you change `<TopBar>` component
-
-**Affects:**
-- `src/pages/Home.tsx` — only consumer.
-- The settings gear inside TopBar navigates to `/settings` — if that route changes, update here.
-- The gear button must stay `w-11 h-11` (44px) minimum (added BUG-006 fix, 24 May 2026).
-
-**Discovered when:** Phase 2B touch-target sweep.
-
----
-
-### If you change `<TableCard>` props or behavior
-
-**Affects:**
-- `src/pages/Home.tsx` — only consumer currently
-- Visual regression: card has 4 visual states (Free, Busy, Paused, Out of Service) — verify all 4
-- Touch behavior: tap zones (whole card vs just CTA button)
-
-### If you change `<TableFormModal>`
-
-**Affects:**
-- `src/pages/Settings.tsx` — consumer #1: Add Table button (top right of Tables section) + Edit pencil for each table row
-- `src/pages/Home.tsx` — consumer #2 (added Phase 2C-1, 24 May 2026): FAB `+` button opens inline Add Table modal
-- Both ADD and EDIT modes share the same component; ADD mode is triggered with no `table` prop, EDIT mode passes the existing `GameTable` object
-- Validation logic in `src/lib/validation.ts` — `validateTableName` called inside
-- Props interface: `{ open, onClose, table?, existingTables }` — if you add a prop, update ALL call sites (currently 3: Settings Add, Settings Edit, Home FAB)
-- `existingTables` prop is used for duplicate-name checking — must always receive the full current tables array
-
-**Discovered when:** Phase 2C-1 — BUG-004 fix moved FAB from navigate('/settings') to inline modal.
-
----
-
-### If you change `<Modal>` component
-
-**Affects:**
-- Every modal in the app — `<Modal>` is used by: `SessionDetail.tsx` (stop confirm, edit start time), `Settings.tsx` (clear sessions, reset everything, cancel subscription, clean names), `TableFormModal.tsx` (wraps the whole form), `Home.tsx` (orphaned sessions)
-- Scroll-lock behaviour: `useEffect` with `[open]` dep sets `document.body.style.overflow = 'hidden'` on open, restores on close/unmount
-- Escape key: `useEffect` with `[open, onClose]` dep adds/removes `keydown` listener — if you change `onClose` reference stability, wrap it in `useCallback` at the call site to avoid re-registering on every render
-- Layout: scrim is `fixed inset-0 z-40`, sheet is `fixed bottom-0 left-0 right-0 z-50` — both are independent fixed layers. Do NOT nest them in a shared container or the scrim will intercept clicks on the sheet (confirmed bug, 24 May 2026)
-- PaymentBottomSheet (`src/components/subscribe/PaymentBottomSheet.tsx`) is NOT a `<Modal>` — it has its own translateY slide-up and is a sibling in Subscribe.tsx; changes to Modal do not affect it
-
-**Discovered when:** Phase 2C-1 — BUG-012 fix; the original single-container layout caused `absolute inset-0` scrim to intercept pointer events on the sheet in Playwright hit-testing.
-
-### If you change `<Toggle>` component
-
-**Affects:**
-- Anywhere it's used (search `<Toggle`)
-- Settings page (rounding mode, club name save behavior)
-- TableFormModal — used to be there, now removed per Prompt 7
-
-### If you change `<ConfirmModal>` component
-
-**Affects:**
-- Settings page: Clear All Sessions, Reset Everything, Disable Table actions
-- TableFormModal: Disable/Enable confirmation
-- SessionDetail: Stop session confirmation
-
-### If you change `<BottomNav>` (the tab bar)
-
-**Affects:**
-- All pages — bottom nav is rendered persistently in App.tsx
-- Routes: adding a new tab requires a new Route in App.tsx
-- Page padding-bottom: all pages need `pb-24+` to clear nav
-
----
-
-## Logic & Library Changes
-
-### If you change `getElapsedMs()` in time.ts
-
-**Affects:**
-- `<TableCard>` — Home timer display
-- `<SessionDetail>` — big timer
-- `calculateAmount` in money.ts — uses elapsed for running totals
-- Summary page — sums elapsed for running sessions
-- History page — duration display
-- **EXTREMELY high blast radius. Touch with extreme care.**
-
-### If you add a new aggregate total that includes running sessions (e.g. a dashboard widget, a revenue pill)
-
-**Rule (Pattern T4):** Never compute `calculateAmount(getElapsedMs(s))` inside a `useLiveQuery` callback. Live queries re-fire only on DB writes — the result is cached between writes. `useTick()` re-renders won't re-execute it.
-**Required pattern:**
-1. `useLiveQuery` → sum only `s.amount` for completed sessions + items (DB-static).
-2. Render body → sum `calculateAmount(getElapsedMs(s))` for `activeSessions` (already a live hook).
-3. Combine: `total = completedFromQuery + itemsFromQuery + runningFromRender`.
-**Current consumers using this pattern correctly:** `Home.tsx` (`todayTotal`), `Summary.tsx` (render-body aggregation).
-**Discovered when:** BUG-022 — "Today" pill on /tables was frozen; `useTick()` was present but the live calc was trapped inside `useLiveQuery`.
-
----
-
-### If you change `calculateAmount()` in money.ts
-
-**Current signature:** `calculateAmount(session: Session, elapsedMs: number, rounding?: 'none'|'15min'|'30min'): number`
-
-**CRITICAL — dispatch order must remain exactly:**
-1. `per_frame` → `(framesPlayed ?? 0) × rateSnapshot`, return immediately
-2. `rateCardSnapshot` present + non-empty → dispatch to `priceForElapsedProrated` or `priceForElapsedMinimum` based on `rateCardBillingSnapshot ?? 'prorated'`, return immediately — rounding param IGNORED
-3. Legacy linear: optional rounding applied to `elapsedMs`, then `Math.round(hours × rateSnapshot)`
-
-**Affects (13 callers — verify all after any signature change):**
-- `src/components/TableCard.tsx` — running session amount chip
-- `src/pages/SessionDetail.tsx` — big running total + stop-confirm preview + final amount capture
-- `src/pages/Home.tsx` — `runningAmount` in render body (Pattern T4 — must stay in render body, not inside `useLiveQuery`)
-- `src/pages/Summary.tsx` — revenue aggregation in render body (Pattern T4)
-- `src/pages/History.tsx` — per-session amount display + CSV export
-- `src/db/queries.ts` (`stopSession`) — final amount written to DB
-- `src/lib/summaryMath.ts` — pure aggregation, called from Summary render body
-- CSV export amount column (History + Summary)
-
-**Pattern T8 invariant:** if `rateCardSnapshot` is present, BOTH modes return before reaching the rounding branch. Never move the rounding logic above the rate card branch.
-
-### If you change `priceForElapsedProrated()` in money.ts (added 9 Jun 2026)
-
-**Signature:** `priceForElapsedProrated(elapsedMs: number, tiers: RateTier[], toleranceMinutes: number): number`
-
-**Algorithm summary:**
-- `em ≤ 0` or no tiers → return 0
-- `em < tier1.minutes` → linear ramp from ₹0 → tier1.price proportional to em/tier1.minutes
-- `em ≤ tiers[i].minutes + toleranceMinutes` → plateau, return tiers[i].price
-- between tiers (after plateau, before next tier) → linear interpolation
-- past last tier + tolerance → extrapolate at `last.price / last.minutes` per minute
-
-**Affects:** `calculateAmount()` (only entry point). Used when `rateCardBillingSnapshot === 'prorated'` or missing.
-
-### If you change `priceForElapsedMinimum()` in money.ts (renamed from `priceForElapsed`, 9 Jun 2026)
-
-**Signature:** `priceForElapsedMinimum(elapsedMs: number, tiers: RateTier[], toleranceMinutes: number): number`
-
-**Algorithm summary:**
-- `em ≤ 0` or no tiers → return 0 (guard added 9 Jun 2026 — previously would return tier1.price at 0ms)
-- `billable = ceil(elapsedMs / 60000)` minutes
-- Walk tiers ascending: first tier where `billable ≤ tier.minutes + toleranceMinutes` wins
-- Overflow past last tier: `last.price + Math.ceil((billable - last.minutes - toleranceMinutes)) × perMinRate`
-
-**Affects:** `calculateAmount()` (only entry point). Used when `rateCardBillingSnapshot === 'minimum'`.
-
-### If you change `GameTable.rateCard`, `toleranceMinutes`, or `rateCardBilling` fields (added v10/v11, 9 Jun 2026)
-
-**Affects:**
-- `src/types/index.ts` — `GameTable` interface
-- `src/db/queries.ts` — `startSession()` must snapshot all three together (Pattern T7): `rateCardSnapshot`, `toleranceMinutesSnapshot`, `rateCardBillingSnapshot`
-- `src/db/seed.ts` — seed tables that have `rateCard` must include `rateCardBilling: 'prorated'`
-- `src/components/TableFormModal.tsx` — Tiered Pricing collapsible: tier input rows, tolerance field, Billing Behavior toggle (Pro-rated / Minimum charge)
-- `src/lib/validation.ts` — `validateRateCard(tiers, toleranceMinutes, billingMode?)` — third param validates billing mode string
-- **Table Move compatibility check** in `moveSessionToTable()` — now checks all six fields including rate card tiers, billing mode, and tolerance (fix #72, 14 Jun 2026). `MoveTableList` in `SessionDetail.tsx` mirrors these checks. Keep the two in sync.
-
-### If you change `Session.rateCardSnapshot`, `toleranceMinutesSnapshot`, or `rateCardBillingSnapshot` (added v10/v11, 9 Jun 2026)
-
-**Affects:**
-- `src/types/index.ts` — `Session` interface
-- `src/db/queries.ts` — `startSession()` reads all three from table at session start (Pattern T7)
-- `src/lib/money.ts` — `calculateAmount()` reads all three from session; see dispatch order above
-- `src/pages/SessionDetail.tsx` — stop-confirm preview calls `calculateAmount` which reads these fields
-- **Dexie version:** v10 added `rateCardSnapshot`+`toleranceMinutesSnapshot`; v11 added `rateCardBillingSnapshot`. Both additive — existing sessions without these fields get `undefined`, which falls back to `'prorated'` mode via `?? 'prorated'` in `calculateAmount`.
-
-### If you change `<Modal>` layout (Pattern M4)
-
-**CRITICAL:** `<Modal>` now uses a 3-region flex layout (`max-h-[92vh] flex flex-col`). The optional `footer?: ReactNode` prop pins content outside the scroll container.
-
-**Consumers of `<Modal>` (all receive the scroll fix automatically; no code change needed unless they need a pinned footer):**
-- `src/components/TableFormModal.tsx` — passes `footer={footerContent}` (action buttons pinned)
-- `src/pages/SessionDetail.tsx` — stop confirm, edit start time, edit notify (no pinned footer needed)
-- `src/pages/Settings.tsx` — clear sessions, reset, cancel subscription, clean names (no pinned footer needed)
-- `src/pages/Home.tsx` — orphaned sessions modal (no pinned footer needed)
-- `src/pages/Canteen.tsx` — soft-delete confirm (no pinned footer needed)
-
-**If you add a new modal that needs pinned action buttons:** pass `footer={<YourButtons />}` to `<Modal>`. Do NOT move buttons back into `children` — they will scroll off-screen on small devices.
-
-### If you change the stop-session flow (pause-first, updated 14 Jun 2026, #73+#74+#77)
-
-The stop flow is PAUSE-FIRST. "End Session" → `pauseForPayment` → PaymentSplitSheet → `confirmPaymentAndStop` (atomic). Cancel → `cancelPaymentAndResume`.
-
-**Affects (all must stay in sync):**
-- `src/types/index.ts` — `Session.paymentInProgress?: boolean` field (set by `pauseForPayment`, cleared by `confirmPaymentAndStop` and `cancelPaymentAndResume`)
-- `src/db/queries.ts` — `pauseForPayment`, `confirmPaymentAndStop`, `cancelPaymentAndResume` (the three atomic functions). Also affects `getPiggyBalance` filter — completed sessions always have `paymentBreakdown` now, but keep the `!== undefined` filter for legacy rows
-- `src/pages/SessionDetail.tsx` — `handleConfirmStop` calls `pauseForPayment` (not `stopSession`); new `handleCancelPayment`; PaymentSplitSheet `onCancel` conditionally calls `handleCancelPayment`; zero-total "Mark as paid" uses `confirmPaymentAndStop`; auto-resume `useEffect` handles both legacy (completed+no breakdown) and new (paused+paymentInProgress) cases
-- `src/components/TableCard.tsx` — "Paying…" badge for `session.paymentInProgress === true` on the paused card branch (distinct from regular "Paused" badge)
-- `src/components/PaymentSplitSheet.tsx` — `onCancel` prop is now conditionally used for "cancel payment and resume" (SessionDetail) vs just "close sheet" (QuickSale). Callers must understand the difference
-- `src/pages/Summary.tsx` — PAYMENT MODE filter: `paymentBreakdown !== undefined` still required for legacy rows
-- `bug_patterns.md` — Pattern P4 updated: auto-resume `useEffect` now handles Case 1 (paused+paymentInProgress) AND Case 2 (legacy completed+no-breakdown)
-
-**Rule:** NEVER call `stopSession()` directly from the SessionDetail UI. Always go through `pauseForPayment` → `confirmPaymentAndStop`. `stopSession()` is only for back-entry flow and legacy programmatic stops.
-**As of #77 (14 Jun 2026):** Only ONE screen exists between End Session and Done — the POST-confirm screen driven by `confirmedBreakdown.upi`. The legacy pre-record full-amount QR screen (`paymentScreenOpen`) is deleted. `PaymentSplitSheet` now lives in the main render tree, gated by `splitSheetOpen`. End Session sheet → `pauseForPayment` → `PaymentSplitSheet` opens directly (no QR shown until after Confirm).
-
-### If you change `applyRounding()` or rounding logic
-
-**Affects:**
-- `stopSession()` ONLY — rounding is final-amount only
-- Display: rounded duration shown in history/summary if `roundedDurationMs` is set
-
-### If you change validation rules (`validation.ts`)
-
-**Affects:**
-- `<TableFormModal>` — table name validation
-- `<StartSession>` — player name + note validation
-- `getRecentPlayerNames()` query — filters by validation
-- **Backwards compatibility:** if rules become STRICTER, existing data may now fail validation. Provide a cleanup tool in Settings.
-
-### If you change `queries.ts` function signatures
-
-**Affects:** every caller. Use TypeScript to track them — `npm run build` will fail if anything is missed. RELY on the type checker, don't trust memory.
-
----
-
-## Routing Changes
-
-### If you add a new route
-
-**Affects:**
-- `src/App.tsx` — add `<Route>`
-- Bottom nav — if user-accessible, add a tab; else, just deep-linked
-- PWA manifest — if it should be a "shortcut", update vite.config.ts
-
-### If you rename a route path
-
-**Affects:**
-- Every `<Link to="/old">` or `navigate('/old')` call
-- Bottom nav links
-- Browser history of existing users — old URLs may be bookmarked
-
-### If you change the Subscribe page (`src/pages/Subscribe.tsx` or `src/components/subscribe/`)
-
-**New flow (cardless trial — 2 Jun 2026):** New signups land on `/tables` directly. Subscribe page is reached via three paths, each with a distinct headline:
-1. `trial_expired` (forced) — `RequireAccess` or `AuthCallback` redirects with `location.state = { reason: 'trial_expired' }` → "Your free trial has ended"
-2. `subscribe_early` (voluntary) — owner taps "Manage →" on the `SubscriptionStatusBanner` trial strip → `location.state = { reason: 'subscribe_early' }` → "Subscribe early to lock in ₹599/month" with days-left count
-3. `welcome` (default) — fresh signup (legacy `status='none'`) or direct navigate without state → existing PlanSelection welcome copy
-
-Subscribe.tsx `headline` is a `useMemo` discriminated union (`expired | early | welcome`). Auth guard only bounces active-trialing users when `locationReason` is unset — intentional arrivals via state stay on page.
-
-**Affects:**
-- `src/components/subscribe/PlanSelection.tsx` — `ALL_PLANS` array has hardcoded prices. Pricing changes: update here AND in `StickyCheckout.tsx`. `selectedPlan` prop is `PlanId | null`. **Phase 3 Commit 2:** No longer reads `VISIBLE_PLAN_IDS` from module scope — receives `visiblePlanIds: readonly PlanId[]` as a prop from `Subscribe.tsx`. All plan visibility gating (V1-LAUNCH filter + live_10 email gate) lives in `Subscribe.tsx` only. `PlanId` type = `'starter' | 'standard' | 'pro' | 'test'`.
-- `src/components/subscribe/StickyCheckout.tsx` — receives `selectedPlan: PlanId | null`; renders `null` (hides entirely) when no plan is selected. Receives `currentPrice` as number. Safe to change pricing in Subscribe.tsx only.
-- `src/components/subscribe/PaymentBottomSheet.tsx` — accepts: `payError: string | null`, `onMaybeLater: () => void`, `onRetry: () => void`. All three must stay in sync with `handlePayNow()`/`handleMaybeLater()`/`handleRetryPayment()` in `Subscribe.tsx`. Sheet has ESC key listener (BUG-016), 4 escape paths, "Maybe later" + "Retry" buttons.
-- `src/components/subscribe/ConfirmationScreen.tsx` — rendered when `screen === 'confirmed'`. Navigate uses `replace: true` — do NOT remove or user can back into Subscribe
-- `src/pages/AuthCallback.tsx` — routes: `active`/`past_due` → `/tables`; `trialing`+active trial → `/tables`; `trialing`+expired trial → `/subscribe` with state; `none`/`cancelled`/`expired` → `/subscribe`.
-- `src/hooks/useAccessGuard.ts` — `'trialing'` with active trial → `canAccess: true`; expired trial → `reason: 'trial_expired'`; `active`/`past_due` → `canAccess: true`; `none`/`cancelled`/`expired` → `reason: 'no_subscription'`.
-- `src/components/RequireAccess.tsx` — `trial_expired` navigated imperatively (with state) via `useEffect`; `no_subscription` uses `<Navigate to="/subscribe">` without state.
-- `src/components/SubscriptionStatusBanner.tsx` — trialing branch is split in two: `!razorpaySubscriptionId` → "Free trial" strip with "Manage →" to `/subscribe` with `state: { reason: 'subscribe_early' }`; `razorpaySubscriptionId` present → "Subscribed ✓" strip with "View →" that sets `sessionStorage('ck_settings_section', 'subscription')` + navigates to `/settings`. The `past_due` "Fix Now →" and cancelling "Resume →" buttons still go to `/settings`.
-- `api/create-subscription.ts` — called by `handlePayNow()` via fetch POST `{ userId, tier, cycle }` with 15s AbortController timeout. **Phase 3 Commit 2 (BUG-026 fix):** Server reads `trial_ends_at` from Supabase BEFORE calling Razorpay. Three scenarios: `new` / `mid_trial` / `expired`. `trial_ends_at` only overwritten when scenario requires it. Response now includes `startAt: number` and `scenario: string`.
-- `src/lib/razorpayPlans.ts` — plan IDs consumed by `api/create-subscription.ts`. If plan IDs change, update ONLY this file. Also update `api/_shared/plans.ts` (server-side mirror). `'test'` tier = LIVE-only ₹10 plan; absent from TEST_PLANS.
-- `Subscribe.tsx` **visiblePlanIds gating (Phase 3 Commit 2):** `BASE_VISIBLE_PLAN_IDS = ['standard']`. Adds `'test'` tier iff `isLiveMode === true` AND `user.email ∈ SUGEET_TEST_EMAILS`. This is the ONLY place to add/remove plan visibility. Pass `visiblePlanIds` prop to `<PlanSelection>`.
-- Annual prices: `MONTHLY_PRICES` and `ANNUAL_PRICES` in `Subscribe.tsx`. ROI calculator in `Landing.tsx` also hardcodes `₹599` — keep in sync
-
-**PaymentBottomSheet escape paths (as of BUG-016 fix, 24 May 2026):**
-- X button (`onClose`) — closes sheet, plan stays selected
-- ESC key (`useEffect` in PaymentBottomSheet) — calls `onClose`
-- Backdrop click (overlay div in Subscribe.tsx) — calls `setSheetOpen(false)`
-- "Maybe later" button (`onMaybeLater`) — closes sheet AND sets `selectedPlan = null` (hides StickyCheckout bar)
-All 4 paths are guarded by `!paying` — cannot escape mid-payment.
-
-**handlePayNow error handling (as of BUG-017 fix, 24 May 2026):**
-- 15-second AbortController timeout → user-friendly timeout message
-- HTTP 404 → special message pointing to `vercel dev` for local dev
-- Non-ok HTTP → try to parse error body, fall back to generic message
-- JSON parse failure on success body → user-friendly message
-- payError displayed prominently with "Retry" button (calls handleRetryPayment)
-- "Maybe later" always visible below error as exit path
-
-### If you change Razorpay plan IDs
-
-**Affects:**
-- `src/lib/razorpayPlans.ts` — ONLY file to edit for plan IDs. It's the single source of truth for the frontend.
-- `api/_shared/plans.ts` — MUST be updated in sync with `razorpayPlans.ts`. It is the server-side mirror (uses `process.env` instead of `import.meta.env`). The `'test'` tier (`test_monthly: 'plan_Sx0LfhJGzccBHQ'`) is in LIVE_PLANS only — absent from TEST_PLANS. `PlanMap` is `Partial<Record<...>>` to allow omitting tiers per mode.
-- `api/create-subscription.ts` — reads from `api/_shared/plans.ts`. `getPlanId()` now throws a descriptive error if a plan is LIVE-only but server is in TEST mode (e.g. someone accidentally sends `tier=test` in TEST mode). Adding a new tier: update `VALID_TIERS` set + both plan maps.
-- Razorpay Dashboard — the plan must exist there with the exact ID before using it in the app
-- `src/components/subscribe/PlanCard.tsx` — `id` union must include the new tier. Also add any special badge logic here (e.g. the 🔴 LIVE TEST badge for `id === 'test'`).
-- `src/components/subscribe/PlanSelection.tsx` — `ALL_PLANS` array must include the new tier's display data (name, prices, features). Visibility controlled by `visiblePlanIds` prop from Subscribe.tsx — not here.
-- `src/pages/Subscribe.tsx` — `MONTHLY_PRICES` and `ANNUAL_PRICES` maps must include the new tier. If it's a gated plan, add gate logic to `visiblePlanIds` computation.
-- `src/components/landing/PricingSection.tsx` — hardcoded HTML, safe. Does NOT import plan data — `live_10` / `test` tier cannot leak here. Verify when adding a new publicly-visible plan that PricingSection also shows it (currently it's hardcoded Standard only).
-
-### If you change the webhook handler (`api/razorpay-webhook.ts`)
-
-**Affects:**
-- `RAZORPAY_WEBHOOK_SECRET` env var must be set in Vercel (Production + Preview). If missing, all webhooks return 500.
-- Supabase `subscriptions` table — webhook writes `status`, `current_period_start`, `current_period_end`, `cancel_at_period_end`, `updated_at`. Column names must match DB schema.
-- `src/store/authStore.ts` `refreshProfile()` — maps DB columns to TS types. If webhook writes a new column, add it to `refreshProfile()` mapping too.
-- `src/hooks/useAccessGuard.ts` — reads `status` values. If webhook writes a new status value, add it to the guard.
-- Razorpay Dashboard → Settings → Webhooks — event list must include all events the handler processes. Missing an event = silent data gap.
-
-**useAccessGuard reason values (as of cardless trial, 2 Jun 2026):**
-- `loading` / `db_loading` / `not_authenticated` — infrastructure states, show spinner or redirect /signup
-- `trial_expired` — trialing user whose `trialEndsAt` is in the past → RequireAccess navigates to `/subscribe` with `state: { reason: 'trial_expired' }`
-- `no_subscription` — status is `none`, `cancelled`, or `expired` → `<Navigate to="/subscribe" replace>`
-- `subscription_ended` — (retired reason name, now merged into `no_subscription`)
-
-**Webhook event → status mapping (as of Prompt 13):**
-- `subscription.authenticated` → `trialing`
-- `subscription.activated` → `active` + period dates
-- `subscription.charged` → `active` + period dates
-- `subscription.halted` → `past_due`
-- `subscription.cancelled` → `cancelled`
-- `subscription.completed` → `expired`
-
-### If you change the Landing page (`src/pages/Landing.tsx` or `src/components/landing/`)
-
-**Affects:**
-- `src/components/landing/HeroSection.tsx` — live timer uses `useTick` + `useRef`; if useTick changes, timer breaks
-- `src/components/landing/ROICalculator.tsx` — formula is `forgetCount × ratePerHour × 30`; ROI divisor hardcoded to `599` (Standard plan price). If pricing changes, update this
-- `src/components/landing/PricingSection.tsx` — plan prices (₹299/₹599/₹999) are hardcoded; keep in sync with Razorpay plan config when payments go live
-- All CTA buttons → `navigate('/signup')`; if signup route changes, update all landing CTAs
-- `PUBLIC_PATHS` in `App.tsx` — `/` must stay in this array so BottomNav stays hidden
-- `src/components/landing/Eyebrow.tsx` — shared by all landing sections; changing it affects all eyebrows at once
-
----
-
-## Theme/Style Changes
-
-### If you change a color in `tailwind.config.js`
-
-**Affects:**
-- Anywhere the token is used. Search the codebase for the color name (e.g., `accent`, `busy`).
-- Card backgrounds use color/8% or /12% — change them too
-- Status badges and dots
-- Update `references/design_system.md` to match
-
-### If you change typography (font sizes, families)
-
-**Affects:**
+Files in scope:
+- `src/components/Modal.tsx` — 3-region flex layout `max-h-[92vh] flex flex-col`; title `shrink-0`, content `flex-1 overflow-y-auto overscroll-contain`, footer `shrink-0` with `safe-area-inset-bottom`. Optional `footer?: ReactNode` prop pins content outside scroll container.
+- `src/components/Toggle.tsx`, `ConfirmModal.tsx`, `BottomNav.tsx`
+- `tailwind.config.js` — color tokens
 - `src/index.css` — font imports
-- Tailwind config — font families
-- Every page using specific sizes (text-[26px] for timer etc.)
-- **Mobile readability:** timers must stay big enough to read across a club
+- `references/design_system.md` — keep in sync
 
-### If you change spacing (padding/margin tokens)
+Invariants:
+- **Pattern M4 ((Modal layout):** all consumers automatically inherit the scroll fix. If a modal needs pinned action buttons, pass `footer={<Buttons />}` — do NOT move buttons into `children` (they scroll off-screen on small devices).
+- Modal scrim is `fixed inset-0 z-40`; sheet is `fixed bottom-0 left-0 right-0 z-50`. Independent fixed layers — do NOT nest in a shared container (scrim intercepts clicks, BUG-012).
+- Modal `useEffect` with `[open]` dep sets `document.body.style.overflow = 'hidden'`; restores on close/unmount.
+- Modal Escape key listener uses `[open, onClose]` dep — wrap `onClose` in `useCallback` at the call site if needed.
+- `PaymentBottomSheet` is NOT a `<Modal>` (own translateY slide-up).
+- Modal consumers: TableFormModal (passes `footer`), SessionDetail (stop confirm, edit start, edit notify), Settings (clear, reset, cancel sub, clean names), Home (orphaned sessions), Canteen (soft-delete confirm).
+- `<BottomNav>` rendered persistently in App.tsx; all pages need `pb-24+`. Adding a tab = new Route in App.tsx.
+- Tailwind v3.4 only — never v4.
+- Dark theme only; palette locked.
+- Mobile-first 360px target. Timer text-sizes must stay readable across a club.
+- Standard horizontal padding `px-5`; card padding `p-4`.
 
-**Affects:**
-- All pages — `px-5` is standard horizontal padding
-- Cards — `p-4`
-- Bottom padding — `pb-24` to clear nav
+Cross-feature ripples:
+- → Many. Most modals are used by Sessions, Settings, Tables, Canteen. Verify each on `<Modal>` change.
+- → [Subscription & Funnel](#subscription--funnel) (`PaymentBottomSheet` has its own escape paths — see that section).
 
----
+See also: `bug_patterns.md` Pattern M4 (scroll), `references/design_system.md`.
 
-## Settings & Configuration Changes
-
-### If you add a new setting to ClubSettings
-
-**Required:**
-1. Add to `ClubSettings` interface in `src/types/index.ts`
-2. Add default to `seed.ts`
-3. Add UI in Settings page to toggle/change it
-4. **Plumb the setting into the action that uses it** — this is where bugs happen (see Prompt 7 rounding bug)
-5. Add test in `test_status.md` for the new setting's effect
-
-### If you change which features are "premium" (when adding paid tiers)
-
-**Affects:**
-- Wherever feature is gated — add subscription check
-- Settings UI showing which tier user is on
-- Razorpay plan IDs
+Last updated: 9 Jun 2026
 
 ---
 
-## Per-user IndexedDB — added 27 May 2026
+## Auth & Access Guard
 
-### If you change the auth init or sign-out flow
+Owns: auth store, access guard reasons, RequireAccess, AuthCallback, per-user IndexedDB lifecycle, cardless trial routing.
 
-**Affects:**
-- `src/store/authStore.ts` — must call `initDbForUser(userId)` + `seedIfEmpty()` after confirming user, then set `dbReady: true`. Must call `closeDb()` + set `dbReady: false` on sign-out.
-- `src/db/database.ts` — exports `initDbForUser`, `closeDb`, `isDbReadyForUser`, `getDbName`. The `_db` holder is swapped by these helpers only. No one else should mutate it.
-- `src/hooks/useAccessGuard.ts` — reads `dbReady` from authStore; returns `{ canAccess: false, reason: 'db_loading' }` while `dbReady === false` and user is authenticated.
-- `src/components/RequireAccess.tsx` — treats `'db_loading'` same as `'loading'` (spinner), so no Dexie query runs against the placeholder DB.
+Files in scope:
+- `src/store/authStore.ts` — `initialize`, `onAuthStateChange`, `refreshProfile`, `signOut`; state `session, user, profile, subscription, loading, dbReady, subscriptionLoaded, _lastFetchedAt`
+- `src/hooks/useAccessGuard.ts` — returns typed `GuardResult`; reasons: `loading`, `db_loading`, `subscription_loading`, `not_authenticated`, `trial_expired`, `no_subscription`
+- `src/components/RequireAccess.tsx` — spinner for any loading reason; redirects for `not_authenticated`, `trial_expired` (imperative + state), `no_subscription` (`<Navigate replace>`)
+- `src/pages/AuthCallback.tsx` — routes by status: active/past_due → `/tables`; trialing-active → `/tables`; trialing-expired → `/subscribe` with state; none/cancelled/expired → `/subscribe`
+- `src/App.tsx` — `AuthInitializer` calls `initialize()`. **AuthInitializer SKIPS `initialize()` on `/c/` and `/poster/` routes (#83 fix)** — Player Hub public pages must never trigger owner auth. `ExpirySweepRunner` has the same gate.
+- `src/db/database.ts` — exports `initDbForUser`, `closeDb`, `isDbReadyForUser`, `getDbName`. DB name: `ClubKeeperDB_<userId>`.
+- Supabase trigger `handle_new_user()` (migration `20260602_cardless_trial.sql` — ⚠ pending manual run): creates `status='trialing'` + `trial_ends_at = now()+7d`.
 
-**Rules:**
-- `initDbForUser` is idempotent — safe to call on every `INITIAL_SESSION` re-fire (Pattern A1).
-- `closeDb()` resets `_db` to a `ClubKeeperDB__pending` placeholder — never null.
-- Never call `initDbForUser` or `closeDb` from anywhere except `authStore`. Only one actor controls the DB lifecycle.
-- Public routes (Landing, Signup, AuthCallback) do NOT query Dexie — no `dbReady` check needed there.
+Invariants:
+- **Per-user DB lifecycle:** ONLY `authStore` calls `initDbForUser`/`closeDb`. `_db` swap is owned by these helpers. `initDbForUser` is idempotent — safe to call on every `INITIAL_SESSION` re-fire (Pattern A1). `closeDb()` resets `_db` to a `ClubKeeperDB__pending` placeholder — never null. Public routes (Landing/Signup/AuthCallback/`/c/`/`/poster/`) do NOT query Dexie — no `dbReady` check needed.
+- **`subscriptionLoaded` flag (7 Jun 2026):** `false` until `refreshProfile()` resolves, `false` again on sign-out. `useAccessGuard` returns `subscription_loading` while `!subscriptionLoaded`; RequireAccess shows spinner. Prevents `subscription===null` being misread as `no_subscription`.
+- **Rule:** Any new field in `authStore` that `useAccessGuard` reads MUST get a paired `*Loaded: boolean` flag — truthiness checks aren't safe (`undefined` vs `null` look identical).
+- **Rule:** Any new `reason` in `useAccessGuard` MUST be handled explicitly in `RequireAccess` (spinner or redirect). Default to spinner for loading. Never redirect on a loading reason.
+- **refreshProfile dedup (BUG-002):** no-op if called within 3000ms of last fetch unless `force=true`. ALWAYS use `force=true` after a real server mutation (post-payment in Subscribe.tsx, post-cancel in Settings.tsx). Document any new forced caller. Supabase fires `INITIAL_SESSION` synchronously on `onAuthStateChange` registration — source of double-fetch.
+- **`api/cancel-subscription.ts` two-mode (BUG-025):** `cancelAtCycleEnd=1` (period end) fails for `authenticated` pre-charge state. Handler tries `1` first, falls back to `0` on "no billing cycle" 400. Test BOTH paths on any cancel-logic change.
+- Sign-out: `authStore.signOut()` does `window.location.href = '/'` hard nav + resets `loading` + `subscriptionLoaded` (13 Jun 2026 fix).
+- AuthCallback routes carry state when redirecting to `/subscribe`.
+- `useAccessGuard` reason `trialing` with active trial → `canAccess: true`; expired → `trial_expired`; active/past_due → access; none/cancelled/expired → `no_subscription`.
 
-**Discovered when:** LIMIT-001 band-aid, 27 May 2026.
+Cross-feature ripples:
+- → [Subscription & Funnel](#subscription--funnel) (Subscribe page headline branches read state.reason; refreshProfile callers).
+- → [Player Hub](#player-hub) (#83 — public pages skip auth init).
+- → [Routing & Cross-cutting](#routing--cross-cutting) (new private route ripples through subscriptionLoaded gate).
+- → [Engagement](#engagement) (`ExpirySweepRunner` gated on `dbReady + session + subscriptionLoaded`).
 
----
+Subscription schema column map (snake_case DB → camelCase TS): `trial_ends_at→trialEndsAt`, `current_period_start→currentPeriodStart`, `current_period_end→currentPeriodEnd`, `razorpay_customer_id→razorpayCustomerId`, `razorpay_subscription_id→razorpaySubscriptionId`, `cancel_at_period_end→cancelAtPeriodEnd`.
 
-## Authentication Changes (Prompt 9 — NOW LIVE)
+See also: `bug_patterns.md` Pattern A1 (init idempotency), A6/A7/A8 (Bridge guards), `decisions_active.md` (per-user DB, cardless trial).
 
-### If you change the auth flow (authStore, RequireAccess, AuthCallback)
-
-**Affects:**
-- `src/store/authStore.ts` — central auth state (session, user, profile, subscription, loading, dbReady, _lastFetchedAt)
-- `src/hooks/useAccessGuard.ts` — reads loading/session/subscription/dbReady, returns typed guard result
-- `src/components/RequireAccess.tsx` — uses useAccessGuard, redirects to /signup or /subscribe
-- `src/pages/AuthCallback.tsx` — reads loading + subscription to route after OAuth
-- `src/App.tsx` — AuthInitializer calls initialize(); AppLayout hides BottomNav on public paths. **AuthInitializer skips `initialize()` on `/c/` and `/poster/` routes (#83 fix)** — Player Hub public pages must never trigger owner auth or supabase-js auth lock contention. `ExpirySweepRunner` has the same gate.
-- All private routes: /tables, /start/:id, /session/:id, /summary, /history, /settings
-
-**Rules:**
-- `loading: true` until `initialize()` resolves — RequireAccess shows spinner, not redirect
-- `signOut()` must clear session + profile + subscription in store (currently done manually)
-- PUBLIC_PATHS in App.tsx must stay in sync with actual public Route paths
-- **refreshProfile dedup rule (added BUG-002 fix, 24 May 2026):** `refreshProfile()` is a no-op if called within 3000ms of the last fetch, UNLESS called with `force=true`. Always use `force=true` after a real server mutation (post-payment, post-cancel). Never add new `refreshProfile()` calls without checking whether they'll fire within 3s of initialize(). Supabase fires `INITIAL_SESSION` synchronously on `onAuthStateChange` registration — this is the source of double-fetch.
-- **consumers of refreshProfile():** `authStore.ts:initialize()` (auto, no force), `authStore.ts:onAuthStateChange` (auto, no force — deduplicated), `Subscribe.tsx` post-payment handler (force=true), `Settings.tsx` post-cancel-subscription (force=true). If you add a new forced call, document it here.
-- **`api/cancel-subscription.ts` two-mode behavior (BUG-025):** `cancelAtCycleEnd=1` (at period end) requires an active billing cycle — fails for `authenticated` (pre-charge trial) state. `cancelAtCycleEnd=0` (immediate) works for pre-charge. Handler tries `1` first, falls back to `0` on "no billing cycle" 400. If you change cancellation logic, test BOTH paths: active subscription cancel (should keep access until period end) AND trial cancel (should revoke immediately).
-
-### If you change the subscription schema (Supabase table or TypeScript types)
-
-**Affects:**
-- `src/types/index.ts` — SubscriptionStatus, PlanTier, Subscription interface
-- `src/store/authStore.ts` — `refreshProfile()` maps DB columns → TS fields
-- `src/hooks/useAccessGuard.ts` — reads status, trialEndsAt, etc. to compute canAccess
-- `src/pages/Subscribe.tsx` — displays plans and triggers Razorpay (future)
-- Supabase DB: `public.subscriptions` table + RLS policies
-- Webhook handlers (future) — must write correct status values
-
-**Column name map (snake_case DB → camelCase TS):**
-- `trial_ends_at` → `trialEndsAt`
-- `current_period_start` → `currentPeriodStart`
-- `current_period_end` → `currentPeriodEnd`
-- `razorpay_customer_id` → `razorpayCustomerId`
-- `razorpay_subscription_id` → `razorpaySubscriptionId`
-- `cancel_at_period_end` → `cancelAtPeriodEnd`
-
-### If you add a new public route
-
-**Affects:**
-- `src/App.tsx` — add to `<Routes>` outside `<RequireAccess>`
-- `PUBLIC_PATHS` array in App.tsx — add path so BottomNav stays hidden
-
-### If you rename a route (e.g. /tables → something else)
-
-**Affects:**
-- `src/App.tsx` — Route path
-- `src/components/BottomNav.tsx` — tab `to` prop
-- `src/pages/SessionDetail.tsx` — all `navigate('/tables')` calls
-- `src/pages/Settings.tsx` — all `navigate('/tables')` calls
-- `src/pages/AuthCallback.tsx` — `navigate('/tables')` after successful auth
-- `src/pages/Landing.tsx` — "Go to App" button
-
-### When cloud sync is added
-
-**Affects:**
-- Every queries.ts function — needs sync layer
-- Conflict resolution — last-write-wins or manual
-- Offline → online transition — replay queued changes
-- Data export — now includes server-side data
-
-**Massive change. Plan carefully. Do not let an AI session "just add it".**
+Last updated: 13 Jun 2026
 
 ---
 
-## Payment Changes (Future)
+## Subscription & Funnel
 
-### When Razorpay is integrated
+Owns: Subscribe page, plan IDs, Razorpay integration, webhook, `api/*.ts` rules, Landing/ROI/Pricing.
 
-**Affects:**
-- Signup flow — collect subscription preference
-- Backend serverless function — handle webhooks securely (Razorpay key SECRET, not public)
-- Feature gating — restrict features by subscription state
-- Renewal handling — what happens on failed auto-debit?
-- Refund handling — Razorpay dashboard or in-app?
-- Invoice generation — GST compliance for Indian businesses
+Files in scope:
+- `src/pages/Subscribe.tsx` — `headline` `useMemo` discriminated union (`expired | early | welcome`), `visiblePlanIds` computation, handlers, `MONTHLY_PRICES`/`ANNUAL_PRICES`
+- `src/components/subscribe/PlanSelection.tsx` — `ALL_PLANS` array; receives `visiblePlanIds: readonly PlanId[]` prop; always receives `hideWelcome={true}` and never renders its own welcome header. `PlanId = 'starter' | 'standard' | 'pro' | 'test'`
+- `src/components/subscribe/StickyCheckout.tsx` — receives `selectedPlan: PlanId | null`; renders `null` when no plan
+- `src/components/subscribe/PaymentBottomSheet.tsx` — props `payError`, `onMaybeLater`, `onRetry`; ESC listener; 4 escape paths (X / ESC / backdrop / Maybe later), all guarded `!paying`
+- `src/components/subscribe/ConfirmationScreen.tsx` — `screen === 'confirmed'`; navigate `replace: true`
+- `src/components/SubscriptionStatusBanner.tsx` — trialing split: `!razorpaySubscriptionId` → "Free trial · Manage →" with `state.reason='subscribe_early'`; `razorpaySubscriptionId` present → "Subscribed ✓ · View →" sets `sessionStorage('ck_settings_section','subscription')` then `/settings`. past_due "Fix Now →" and cancelling "Resume →" → `/settings`.
+- `src/lib/razorpayPlans.ts` — frontend plan-ID source of truth
+- `api/_shared/plans.ts` — server-side mirror (uses `process.env`). `'test'` tier in LIVE_PLANS only — absent from TEST_PLANS. `PlanMap = Partial<Record<...>>`.
+- `api/create-subscription.ts` — reads from `_shared/plans.ts`. `getPlanId()` throws on LIVE-only in TEST. Phase 3 Commit 2 (BUG-026): reads `trial_ends_at` from Supabase BEFORE Razorpay; three scenarios `new | mid_trial | expired`; response includes `startAt`, `scenario`.
+- `api/razorpay-webhook.ts` — needs `RAZORPAY_WEBHOOK_SECRET` env in Vercel; writes `subscriptions` table (`status`, `current_period_start`, `current_period_end`, `cancel_at_period_end`, `updated_at`)
+- `src/pages/Landing.tsx`, `src/components/landing/HeroSection.tsx`, `ROICalculator.tsx`, `PricingSection.tsx`, `Eyebrow.tsx`
+
+Invariants:
+- `BASE_VISIBLE_PLAN_IDS = ['standard']` in `Subscribe.tsx`. Adds `'test'` iff `isLiveMode === true` AND `user.email ∈ SUGEET_TEST_EMAILS`. This is the ONLY gating site.
+- V1-LAUNCH filter: Subscribe + Landing `/pricing` show ONLY Standard Monthly (₹599). Starter/Pro hidden via filter + hidden cards in `PricingSection.tsx`. All 6 Razorpay plan IDs and `PLANS` array untouched.
+- Plan ID changes: edit `src/lib/razorpayPlans.ts` AND `api/_shared/plans.ts` in the same commit. Dashboard plan must exist before app uses it. Update `PlanCard.tsx` id union and `PlanSelection ALL_PLANS`.
+- ROI calculator: `forgetCount × ratePerHour × 30`; ROI divisor hardcoded to `599`. `Landing.tsx` hardcodes `₹599`. Keep in sync.
+- All landing CTAs → `navigate('/signup')`.
+- `PUBLIC_PATHS` in App.tsx must include `/` so BottomNav stays hidden.
+- **Webhook event → status map:** `authenticated→trialing`, `activated→active+periods`, `charged→active+periods`, `halted→past_due`, `cancelled→cancelled`, `completed→expired`.
+- Webhook column-name changes also ripple to `authStore.refreshProfile()` mapping AND `useAccessGuard` status reads.
+- `handlePayNow`: 15-second AbortController timeout, HTTP 404 → `vercel dev` hint, payError + Retry button, "Maybe later" always available.
+
+**`api/*.ts` rules (Vercel Node16, STRICTER than Vite):**
+1. All relative imports MUST have `.js` extension. Wrong: `'../src/lib/razorpayPlans'` → Right: `'../src/lib/razorpayPlans.js'`.
+2. Razorpay SDK return types are incomplete — cast to avoid void overload: `await (razorpay.subscriptions.create(...) as unknown as Promise<{ id: string; short_url: string }>)`. Or use `Awaited<ReturnType<typeof razorpay.subscriptions.create>>`.
+3. NEVER import from `razorpay/dist/types/...` deep paths.
+4. Run `npm run build` locally before pushing any `api/` change — Vite dev server won't catch these; `tsc` will.
+5. Ripple: changing `src/lib/razorpayPlans.ts` → update `.js` import in every `api/*.ts` that imports it (currently `api/create-subscription.ts`).
+
+Cross-feature ripples:
+- → [Auth & Access Guard](#auth--access-guard) (Subscribe headline branches read `location.state.reason`; refreshProfile force=true).
+- → [Routing & Cross-cutting](#routing--cross-cutting) (PUBLIC_PATHS).
+- → [Settings](#settings) (subscription section state, Cancel button).
+- → [Shared UI & Theme](#shared-ui--theme) (`PaymentBottomSheet` is NOT `<Modal>` — its own escape paths).
+
+Pending payment integration ripples: feature gating by subscription state, renewal handling, refund flow, GST invoicing.
+
+See also: `bug_patterns.md` Pattern S5 (Razorpay key rotation), Pattern S2 (BUG-016/017 escape paths).
+
+Last updated: 14 Jun 2026
 
 ---
 
-## Vercel Serverless API Files (api/*.ts)
+## Routing & Cross-cutting
 
-These files run on Vercel's Node16 module resolution, which is STRICTER than the frontend Vite build. Rules that apply ONLY to `api/*.ts` files:
+Owns: route registration, public/private split, BottomNav, route renames.
 
-1. **All relative imports MUST have `.js` extension**
-   - Wrong: `import { PLANS } from '../src/lib/razorpayPlans'`
-   - Right:  `import { PLANS } from '../src/lib/razorpayPlans.js'`
+Files in scope:
+- `src/App.tsx` — `<Routes>`, `PUBLIC_PATHS`, `AuthInitializer`, `AppLayout`, `ExpirySweepRunner`, `TopupRealtimeBridge`
+- `src/components/BottomNav.tsx`
+- Every `<Link to>` / `navigate()` call site
 
-2. **Never import from `razorpay/dist/types/...` deep paths.** Use `'razorpay'` only. If the SDK return type is missing a field, use `Awaited<ReturnType<typeof razorpay.subscriptions.create>>` to infer it directly.
+Invariants:
+- Public routes go OUTSIDE `<RequireAccess>`. Add path to `PUBLIC_PATHS` so BottomNav stays hidden.
+- Renaming `/tables` ripples to: `BottomNav`, `SessionDetail` navigate calls, `Settings` navigate calls, `AuthCallback`, `Landing` "Go to App" button.
+- New private route that runs Dexie queries on mount: gated automatically by `<RequireAccess>` + the `subscriptionLoaded` flag. Verify no Dexie call fires before `dbReady`.
+- `AppLayout` hides BottomNav on public paths via `isPublicRoute(pathname)`. New public route → add prefix to `isPublicRoute`.
+- PWA manifest "shortcuts" require `vite.config.ts` update.
+- Most-common-mistake list (kept here as cross-cutting reminder):
+  1. Add Session field, forget `startSession()` — undefined on new rows.
+  2. Change query, miss a caller — TS catches if signature changes.
+  3. Update component, forget one of 4 visual states.
+  4. Rename field, no migration — existing IndexedDB shows empty.
+  5. Stricter validation w/o cleanup tool — pre-existing data blocked.
+  6. Add a setting that does nothing — UI exists but action doesn't read it.
+  7. Change timer math — cascades 6+ places.
 
-3. **After ANY change to `api/*.ts` files, run `npm run build` locally before pushing.** Vercel catches TypeScript errors that the local Vite dev server misses.
+Cross-feature ripples:
+- → All feature sections (route additions/renames).
 
-**Ripple: If you change `src/lib/razorpayPlans.ts`** → update the `.js` import in every `api/*.ts` file that imports it (currently only `api/create-subscription.ts`).
-
-**Discovered when:** Prompt 13 build on Vercel failed because `'razorpay/dist/types/subscriptions'` doesn't exist as a public module path, and Node ESM requires `.js` extensions on relative imports.
+Last updated: 14 Jun 2026
 
 ---
 
-## Most Common Mistakes to Watch For
+## Player Hub
 
-1. **Adding a new Session field but forgetting to update `startSession()`** → field is undefined on new rows, crashes everywhere
-2. **Changing a query function and forgetting one caller** → silent failure or stale UI
-3. **Updating a component without updating all 4 visual states** (Free/Busy/Paused/Disabled)
-4. **Renaming a field but not migrating existing IndexedDB data** → existing users see empty values
-5. **Changing validation rules without cleaning up bad data** → forms reject pre-existing data, blocking users
-6. **Adding a setting that does nothing** → toggle exists but action doesn't read it
-7. **Changing the timer math** → cascades to 6+ places, must verify each
+Owns: public Player Hub pages (`/c/:slug`, `/poster/:slug`), owner setup, two-client rule, realtime bridge.
 
-## Process When Making Big Changes
+Files in scope:
+- `src/pages/player/PlayerScan.tsx` — public scan form (name/mobile/amount → UPI deep-link + QR → 8s delay → "I've paid" → poll every 3s, 10-min expire)
+- `src/pages/player/PlayerScanLayout.tsx` — layout-only
+- `src/pages/Poster.tsx` — A4 QR poster, auto-`window.print()` on load
+- `src/lib/playerHubApi.ts` — owner + public RPC wrappers
+- `src/lib/supabasePublic.ts` (NEW — #83) — anon-only client `persistSession:false, autoRefreshToken:false, detectSessionInUrl:false`
+- `src/lib/supabase.ts` — owner client
+- `src/lib/slug.ts` — `generateSlug`, `validateSlug`, `isSlugAvailable`
+- `src/types/playerHub.ts` — `ClubPublicInfo`, `TopupInsertEvent`
+- `src/pages/PlayerHubSettings.tsx` — owner UI for slug + "Accept topups" toggle (Supabase-first since 13 Jun fix)
+- `src/components/TopupRealtimeBridge.tsx` (NEW — #83 follow-up) — mounted in App.tsx
+- `src/lib/realtimeTopups.ts` — channel `topup_intents_{clubId}` + 5s/30s polling fallback
+- Migrations: `20260610_player_hub.sql`, `20260610_clubcoins.sql`, `20260615_enable_realtime.sql`, `20260615_topup_intents_coins_credited.sql`
+- Supabase `clubs` + `topup_intents` tables
 
-For changes touching 3+ files:
+Invariants:
+- **Two-client rule (#83 fix):** Owner functions use `supabase`. Public anon RPCs (`getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`) use `supabasePublic`. NEVER call a public RPC on the owner client — it queues behind the owner's auth lock and hangs `/c/<slug>` when the owner is logged in in another tab. New public RPCs MUST use `supabasePublic` AND be wrapped in `withTimeout(..., 8000, label)`.
+- `supabasePublic.ts`: imported by `playerHubApi.ts` ONLY. NO auth code. NEVER import from owner-side modules. NEVER use for realtime subscriptions (those are owner-side).
+- AuthInitializer + ExpirySweepRunner SKIP `/c/` and `/poster/` paths.
+- `PlayerScan` / `Poster` are PUBLIC — no auth, no Dexie. Keep it that way.
+- **TopupRealtimeBridge** keeps the channel open for the entire authenticated session — guards: `dbReady && session && subscriptionLoaded && !isPlayerHubPath(pathname)` (Pattern A6/A7/A8). Per-user `activeUserIdRef` (same pattern as `_clubSyncDoneForUser` for P3/#53) so a second user signing in on same tab gets a fresh subscription. **DO NOT include `location.pathname` in effect deps** — pathname read via `pathnameRef` inside callback to suppress toast on `/wallet`.
+- Single callback per `subscribeToTopupIntents` — re-calling tears down and rebuilds. For multiple consumers, use a fan-out store, not a second `.on('postgres_changes')` (Supabase delivers duplicates).
+- **Realtime publication (#85):** Tables in `supabase_realtime` publication: `topup_intents`, `clubs`. New `.on('postgres_changes', {table:'X'})` listener REQUIRES a migration adding `X` to the publication. Without it, listener subscribes silently but receives nothing. If handler reads `payload.old.<field>` beyond PK, set `replica identity full`. Pattern S6.
+- **Server-authoritative coin total (#87, Pattern P1):** `topup_intents.coins_credited int null`. `get_topup_intent_status` returns `(status, reject_reason, coins_credited)`. Owner write site: `PendingTopupsModal.handleConfirm` captures `{coinsEarned, welcomeCoinsEarned}` from `recordTopupWithCoins` and writes `coins_credited = coinsEarned + welcomeCoinsEarned` in the same UPDATE that flips status. Null in idempotency 'already credited' branch and Wallet.tsx failed-sync retry. Player-side PlayerScan reads `result.coinsCredited` → `confirmedCoins`; render uses `confirmedCoins ?? coinsEarnedForTopup(amount, tiers)`. Player NEVER recomputes — adding a new owner-side coin grant requires updating BOTH `recordTopupWithCoins` return value AND `PendingTopupsModal.handleConfirm` `coinsCredited` write.
+- `useLiveData._clubSyncDone` module-level flag never resets on sign-out (open bug) — second user on same tab skips club sync. Track for fix.
+- `PlayerHubSettings.tsx` heaviest import graph in app: slug.ts, playerHubApi.ts, coins.ts, realtimeTopups.ts, CoinTiersEditor, EngagementConfigCard, BringBackList, NudgeTemplateEditor.
 
-1. **List affected files** explicitly before coding (use this document)
-2. **Make changes in one branch**, not directly on main
-3. **Run `npm run build`** — catches TypeScript errors
-4. **Manually test 3 scenarios:**
-   - Happy path (new behavior)
-   - Old data path (existing users)
-   - Edge case (empty data, max data, error state)
-5. **Update this file** with any new ripples discovered
-6. **Then commit + push** to deploy
+Cross-feature ripples:
+- → [Pricing Visibility on Player Hub](#pricing-visibility-on-player-hub) (RPC extension, public-safe contract).
+- → [ClubCoins](#clubcoins) (coin tiers config, server-authoritative read).
+- → [Topup Inbox & Realtime](#topup-inbox--realtime) (channel + polling + store).
+- → [Auth & Access Guard](#auth--access-guard) (#83 — public path skip; Bridge guards).
+- → [Wallet & Customers](#wallet--customers) (`recordTopupWithCoins`, badge count).
+- → [Engagement](#engagement) (welcome bonus, dormancy + nudge config).
+- → [Routing & Cross-cutting](#routing--cross-cutting) (`/c/`, `/poster/` registration).
+
+See also: `bug_patterns.md` Pattern A6/A7/A8 (Bridge guards), Pattern P1 (player doesn't recompute), Pattern P2 (Player-Hub: target mirrors by slug not id), Pattern S6 (realtime publication).
+
+Last updated: 16 Jun 2026
+
+---
+
+## Pricing Visibility on Player Hub
+
+Owns: public pricing card on `/c/:slug`, owner-side `tables_json` mirror.
+
+Files in scope:
+- Supabase: `clubs.tables_json jsonb default '[]'`, `clubs.accepts_pricing_display boolean default true`. Migration `20260616_pricing_visibility.sql` (⚠ pending). RPC `get_club_public_info(p_slug)` extended (drop+recreate — can't extend OUT params via CREATE OR REPLACE).
+- `src/lib/playerHubApi.ts` — `syncTablesJsonBySlug(slug, tables: GameTable[])` (fire-and-forget; filters `outOfService`; projects only public-safe fields; targets by slug NOT id; `.select('id')` after update + console.warn on empty); `getClubPublicInfo` extension with safe fallbacks (`?? []`, `?? true`)
+- `src/types/playerHub.ts` — `ClubPublicInfo.tablesJson`, `.acceptsPricingDisplay`
+- `src/components/TableFormModal.tsx` — `mirrorTablesToSupabase()` helper; called fire-and-forget from `handleSave`, `handleDisable`, `handleEnable`; skips with `console.warn` when `settings.slug` absent
+- `src/pages/player/PlayerScan.tsx` — local `PricingCard` (collapsible, default closed, grouped by gameType) + `PricingRow` (tier grid + tolerance, or `₹X/hr` + `₹Y/frame` for snooper)
+
+Invariants:
+- **Public-safe contract:** `tables_json` rows contain ONLY `name, gameType, ratePerHour, ratePerFrame?, rateCard?, toleranceMinutes?, rateCardBilling?`. NEVER add internal IDs, session data, owner-private flags, or anything a player shouldn't see.
+- Card rendered ONLY when `clubInfo.acceptsPricingDisplay === true` AND `clubInfo.tablesJson.length > 0`. NO empty-state fallback for players.
+- Public page: no Dexie, no auth.
+- **Anti-pattern (Pattern P2):** Do NOT route owner-side mirror writes through `getOwnerClub() → .eq('id', club.id)`. `getOwnerClub` uses `.maybeSingle()` with no filter and can silently return null on transient auth states — mirror early-exits, catch swallows the signal. ALWAYS target by slug.
+- NEVER bypass the RPC — anon does NOT have direct table read grants.
+- Pre-migration safe — fallbacks (`?? []`, `?? true`) keep `/c/<slug>` working. If you remove either fallback, you crash the page for clubs whose migration hasn't run.
+- NEVER block the Dexie write on the Supabase mirror. Pattern matches `syncCoinConfig` — Dexie is authoritative.
+
+Cross-feature ripples:
+- → [Tables](#tables) (TableFormModal mirror after every Dexie write).
+- → [Player Hub](#player-hub) (RPC extension, public-safe contract).
+- → [Rate Card & Tolerance Billing](#rate-card--tolerance-billing) (`PricingRow` renders tiers).
+- → [Import / Export / Reset](#import--export--reset) (Known drift: Import Everything replaces all tables but does NOT re-sync `tables_json`. Acceptable for v1; track.)
+- **First-slug-setup gap:** Owner saving slug for the first time does NOT retroactively trigger tables mirror. Next table edit will mirror everything. Track if customer reports stale pricing.
+
+See also: `bug_patterns.md` Pattern P2 (Player-Hub mirror target by slug), Pattern W1 (workflow/deploy migration).
+
+Last updated: 16 Jun 2026
+
+---
+
+## ClubCoins
+
+Owns: coin tiers, redemption, server-authoritative crediting.
+
+Files in scope:
+- `src/lib/coins.ts` — `coinsEarnedForTopup`, `resolveCoinConfig`, `coinsToRupees`, `coinsToMinutes`, `maxRedeemableCoins`, `formatCoins`, `DEFAULT_COIN_CONFIG` (4 tiers, minutesPerCoin=2, rupeesPerCoin=0.5, expiryDays=60, minRedemption=10)
+- `src/types/index.ts` — `CoinTier`; `ClubSettings` coin fields (`coinsEnabled, coinTiers, minutesPerCoin, rupeesPerCoin, coinExpiryDays, coinMinRedemption, acceptsTopups?, coinRedemptionModes?`)
+- `src/types/customer.ts` — `Customer.coinBalance?`
+- `src/types/walletTransaction.ts` — `WalletTransaction.balanceType?/coinDelta?/rupeeEquivalent?`
+- `src/db/database.ts` — v15 (additive), v16 adds engagement (`firstTopupAt` etc.)
+- `src/db/queries.ts` — `recordTopupWithCoins` (atomic wallet+coins+welcome-bonus); `getCoinConfig`
+- `src/components/CoinTiersEditor.tsx` — in PlayerHubSettings
+- `src/components/CoinRedemptionPill.tsx` — wired in `SessionDetail.tsx:697` (post-stop payment flow)
+- `src/pages/player/PlayerScan.tsx` — "Earn N coins" preview (lower-bound)
+- `src/lib/playerHubApi.ts` — `syncCoinConfig()` (fire-and-forget mirror)
+
+Invariants:
+- **`recordTopupWithCoins` is the ONLY correct path** for crediting wallet + coins atomically. NEVER split into two DB calls.
+- Welcome bonus is one-shot, gated by `firstTopupAt` guard inside the tx. Rename of `firstTopupAt` ripples to this guard.
+- `DEFAULT_COIN_CONFIG` is fallback for unconfigured clubs.
+- Player-side `coinsEarnedForTopup` preview is a LOWER BOUND ("earn at least N + welcome bonus if first") — player doesn't have engagement config or `firstTopupAt` access (Pattern P1).
+- Server-authoritative total flows through `topup_intents.coins_credited` (see [Player Hub](#player-hub)).
+
+Cross-feature ripples:
+- → [Player Hub](#player-hub) (`coins_credited` server-authoritative read; coin config in `clubs`).
+- → [Wallet & Customers](#wallet--customers) (`coinBalance`, `balanceType`, `coinDelta` fields).
+- → [Engagement](#engagement) (coin expiry FIFO, welcome/streak bonus writes).
+- → [Sessions](#sessions) (`CoinRedemptionPill` at line 697).
+
+See also: `bug_patterns.md` Pattern P1.
+
+Last updated: 11 Jun 2026
+
+---
+
+## Engagement
+
+Owns: streak, coin expiry, dormancy, nudge — all OFF by default.
+
+Files in scope:
+- `src/lib/streak.ts` — `checkAndAwardStreak()`. Called in `SessionDetail.tsx:750,801` (payment confirm path)
+- `src/lib/coinExpiry.ts` — FIFO lot accounting; `applyExpirySweep()` runs every 4h via `ExpirySweepRunner` in `App.tsx`. Reads `WalletTransaction` rows for lot reconstruction; writes `coin_expiry` rows.
+- `src/lib/dormancy.ts` — `getDormantCustomers(thresholdDays, limit)`; filters `customers` by `lastVisitAt`
+- `src/lib/nudge.ts` — `renderNudgeTemplate`, `buildWhatsAppLink`, `logNudgeSent` (writes `WalletTransaction` with `referenceType:'engagement_log'`)
+- `src/components/BringBackList.tsx` — pure UI + API calls; imports dormancy + nudge + customerDisplay
+- `src/components/NudgeTemplateEditor.tsx` — template vars (`{name}, {coins}, {clubName}`, etc.) sync with `renderNudgeTemplate`
+- `src/components/EngagementConfigCard.tsx` — writes ClubSettings engagement fields
+- `src/types/index.ts` — engagement fields: `welcomeBonusEnabled, welcomeBonusCoins, streakEnabled, streakRequiredDays, streakWindowDays, streakBonusCoins, dormancyEnabled, dormantThresholdDays, nudgeTemplate`; `Customer.firstTopupAt?/lastStreakBonusAt?/expiryAppliedAt?`
+- `src/db/database.ts` — v16 (additive)
+
+Invariants:
+- All engagement features OFF by default (master switches in ClubSettings).
+- `ExpirySweepRunner` gated on `dbReady + session + subscriptionLoaded` — keep consistent with other gated operations.
+- `streak.ts` reads `walletTransactions` for distinct session days — if session debit `referenceType` changes, update filter.
+- `coinExpiry.ts` reads `balanceType/coinDelta/referenceType` for lot reconstruction — schema changes ripple here.
+- `logNudgeSent` writes `referenceType:'engagement_log'` — removing from union = TS error.
+
+Cross-feature ripples:
+- → [ClubCoins](#clubcoins) (welcome/streak bonus go through `recordTopupWithCoins`; FIFO uses coin fields).
+- → [Wallet & Customers](#wallet--customers) (writes; dormancy filter on Customer schema).
+- → [Sessions](#sessions) (streak called in payment confirm path — verify call sites if stop flow changes).
+- → [Auth & Access Guard](#auth--access-guard) (`ExpirySweepRunner` gate).
+- → [Player Hub](#player-hub) (EngagementConfigCard in PlayerHubSettings).
+
+Last updated: 11 Jun 2026
+
+---
+
+## Topup Inbox & Realtime
+
+Owns: pending topup count store, modal, realtime + polling fallback.
+
+Files in scope:
+- `src/store/topupInbox.ts` — zustand store; `pendingCount`, increment/decrement/setPendingCount, `closeModal`
+- `src/lib/realtimeTopups.ts` — `subscribeToTopupIntents(clubId, onInsert?)`, polling fallback (5s/30s), `getPendingTopups`
+- `src/components/PendingTopupsModal.tsx` — per-row confirm/reject state machine; imports `recordTopupWithCoins`, `getCoinConfig`, `confirmTopupIntent`, `rejectTopupIntent`; consumes `topupInbox` + `toastStore`
+- `src/components/TopupRealtimeBridge.tsx` — single mount point in `App.tsx`; see [Player Hub](#player-hub) for guards
+- TopBar — pending badge count (reads `usePendingTopupCount`)
+
+Invariants:
+- `pendingCount` rename ripples to TopBar badge + realtimeTopups. Pure in-memory store — no DB reads.
+- Confirm path: Supabase fires FIRST, then Dexie. Not atomic across both.
+- One callback per `subscribeToTopupIntents` — re-calling tears down and rebuilds.
+
+Cross-feature ripples:
+- → [Player Hub](#player-hub) (Bridge guards, two-client rule, publication migration).
+- → [ClubCoins](#clubcoins) (`recordTopupWithCoins`, `coins_credited` UPDATE).
+- → [Wallet & Customers](#wallet--customers) (wallet credit on confirm).
+
+See also: `bug_patterns.md` Pattern S6 (realtime publication).
+
+Last updated: 13 Jun 2026
+
+---
+
+## Validation
+
+Owns: input validators.
+
+Files in scope:
+- `src/lib/validation.ts` — `validateTableName`, `validatePlayerName`, `validateNote`, `validateUpiId`, `validateRateCard(tiers, toleranceMinutes, billingMode?)`, `validateBackEntry`
+
+Invariants:
+- Backwards compatibility: stricter rules may make existing data fail validation — provide a cleanup tool in Settings (most-common-mistake #5).
+- `validateBackEntry` reuses `validatePlayerName` + `validateNote`.
+
+Cross-feature ripples:
+- → [Tables](#tables) (`TableFormModal` table name validation; duplicate name uses `existingTables` prop).
+- → [Sessions](#sessions) (`StartSession` player name + note; `getRecentPlayerNames` query filters by validation).
+- → [Back Entries](#back-entries).
+- → [Rate Card & Tolerance Billing](#rate-card--tolerance-billing).
+- → [UPI QR & Payment Screen](#upi-qr--payment-screen) (UPI ID validation + Settings error messages).
+
+Last updated: 9 Jun 2026
+
+---
+
+## Import / Export / Reset
+
+Owns: backup file format, atomic import, atomic reset.
+
+Files in scope:
+- `src/db/queries.ts` — `getAllDataForExport()`, `ClubKeeperBackupV16` interface (single source of truth — exported), `CURRENT_SCHEMA_VERSION` constant, `resetEverything()`, `ActiveSessionsPresentError`
+- `src/lib/importEverything.ts` — `importEverythingFromFile(file)`, `ImportResult` discriminated union, `ImportFailureReason` (`parse_error | not_clubkeeper_file | legacy_incomplete_format | schema_too_new | active_sessions_present | empty_file | transaction_failed`), `BackupShape` validator + `requiredArrayKeys`
+- `src/pages/Settings.tsx` — Data & Backup section: export + import action rows; `importErrorMessage()` switch (must cover every reason); destructive confirm Modal; full-viewport success overlay; `<ImportCountRow>` sub-component
+- `src/lib/__devTools__/importExportRoundTrip.ts` (DEV-only, tree-shaken) — `runImportExportRoundTrip()` exposed on `window`; 11 measures (9 store counts + walletBalanceTotal + piggyCurrent)
+- `src/main.tsx` — DEV-only `window.__importEverythingFromFile` + `window.runImportExportRoundTrip` dynamic imports
+- `references/data_model.md` — "Data Export Format (v16)" section
+
+Invariants:
+- **Three-way single source of truth:** the 9-store list MUST stay 1:1 across `getAllDataForExport()`, `importEverythingFromFile()` (tx list + clear Promise.all + bulkAdd), AND `resetEverything()` (tx list + clear Promise.all). Drift = silent data loss. #78 export missed 6/9; #81 reset missed 6/9.
+- Every Dexie store appears in BOTH builder AND import clear+bulkAdd loop AND `ClubKeeperBackupV16`.
+- When you bump Dexie version in `database.ts`, also bump `CURRENT_SCHEMA_VERSION` in `queries.ts` in the SAME commit.
+- IDs preserved verbatim across export → import. NEVER auto-generate fresh IDs (FK links break).
+- Import is atomic: single `db.transaction('rw', [all 9 stores], ...)` — `.clear()` then `.bulkAdd()`. Any throw = full rollback.
+- Reset is atomic: same single flat tx. `seedIfEmpty()` runs AFTER the tx commits so its inserts aren't rolled back by tx-internal throws.
+- Active-session pre-check (`status !== 'completed'`) blocks both import AND reset (`ActiveSessionsPresentError`). Importing/resetting on top of a running session would corrupt timer math (Pattern T1).
+- Subscription / auth / Supabase state NEVER touched — Dexie-only.
+- After import success: `window.location.assign('/tables')` — intentional hard nav. Resets module-level flags like `_clubSyncDone`. Do NOT change to SPA `navigate()`.
+- File input uses `className="hidden"` — programmatic `.click()` works for `type="file"`. Do NOT migrate to Pattern U9 (date-picker quirk only).
+- Adding a new `ImportFailureReason` → update `importErrorMessage()` switch in `Settings.tsx`.
+- Adding a new count field → add to `ImportSuccess`, populate in reducer, render new `<ImportCountRow>`.
+- Round-trip self-test: if you add a new Dexie store, ADD it to the snapshot in `importExportRoundTrip.ts` or the test passes while silently missing the new store.
+- `legacy_incomplete_format` catches pre-#78 3-table backups with a useful error instead of silent re-loss.
+
+Cross-feature ripples:
+- → [Schema & Migrations](#schema--migrations) (any new store ripples to all three sites + `CURRENT_SCHEMA_VERSION`).
+- → [Pricing Visibility on Player Hub](#pricing-visibility-on-player-hub) (Known drift: import replaces tables but doesn't re-sync `tables_json`).
+- → [Settings](#settings) (Data & Backup UI).
+
+See also: `bug_patterns.md` Pattern T1 (active-session pre-check), `references/data_model.md` "Data Export Format (v16)".
+
+Last updated: 15 Jun 2026
+
+---
+
+## Infra: Supabase Keep-Alive
+
+Daily GitHub Action that pings Supabase REST so the free-tier project doesn't auto-pause after 7 days of inactivity. A paused project = dead live topup/pricing QR at `app.handbookhq.in/c/<slug>`.
+
+Files in scope:
+- `.github/workflows/supabase-keepalive.yml` — cron `0 6 * * *` (06:00 UTC / ~11:30 IST) + `workflow_dispatch`. Single curl against `/rest/v1/clubs?select=id&limit=1` with the anon key from repo secret `SUPABASE_ANON_KEY`. Fails (non-zero exit) on curl error so a broken ping pages via GitHub email.
+
+Invariants:
+- Use the **anon key** only — never the service_role key. Anon is RLS-gated and already shipped in the public client bundle.
+- The Supabase project URL is hardcoded in the YAML (`vkczmgzujpidbwtzulel.supabase.co`). If the project is ever migrated → update this URL too.
+- Repo secret name MUST stay `SUPABASE_ANON_KEY`. Renaming requires updating both the secret in GitHub Settings AND the `${{ secrets.* }}` reference in the YAML.
+- The endpoint hit (`clubs`) must exist. If `clubs` is ever renamed/dropped (unlikely — it's the root tenant table), pick another small public-readable table.
+
+Cross-feature ripples:
+- → If anon key is rotated in Supabase: rotate `VITE_SUPABASE_ANON_KEY` in `.env.local`, Vercel env vars, AND the GitHub repo secret. Three places, all required.
+- → If the Supabase project is replaced entirely (URL changes): update YAML, `.env.local`, Vercel env, AND `src/lib/supabase.ts` / `src/lib/supabasePublic.ts` env consumers.
+
+Last updated: 16 Jun 2026
 
 ---
 
@@ -594,745 +1070,10 @@ For changes touching 3+ files:
 
 When you discover a new ripple effect:
 
-```
-### If you change [thing]
-
-**Affects:**
-- file path 1 — why
-- file path 2 — why
-- consideration X
-
-**Discovered when:** [bug/situation that revealed it]
-```
-
-The more this file grows, the safer changes become. Sugeet, especially when you don't know code well, this file is your safety net.
-
----
-
-## Session Items (POS) — added 26 May 2026
-
-### If you change the `SessionItem` interface (add/rename/remove field)
-
-**Affects:**
-- `src/types/index.ts` — interface definition
-- `src/db/database.ts` — bump Dexie version if changing indexes; v3 added `sessionItems: '++id, sessionId, addedAt'`
-- `src/db/queries.ts` — `addSessionItem`, `updateSessionItem`, `deleteSessionItem`, `restoreSessionItem`
-- `src/hooks/useLiveData.ts` — `useSessionItems`
-- `src/lib/money.ts` — `calculateItemsTotal`
-- `src/components/AddItemBottomSheet.tsx` — full add/edit/delete UI
-- `src/pages/SessionDetail.tsx` — bill split section, grandTotal, sheet mount
-- `src/pages/Home.tsx` — Today amount (`todayTotals` live query includes items)
-- `src/pages/Summary.tsx` — `itemsTotalForDate` live query; `totalRevenue = sessionsRevenue + itemsTotalForDate`
-- `src/pages/History.tsx` — `itemsBySessionId` live query; day totals + CSV export columns
-
-**Ripple notes:**
-- `grandTotal` in SessionDetail = `currentSessionAmount + itemsTotal` — shown in bill split and stop-confirm modal
-- History CSV now has 3 new columns: `Table Amount`, `Items`, `Total` (replacing old single `Amount` column)
-- toastStore was extended to support `actionLabel`/`onAction`/`durationMs` for Undo — existing callers (string `show()`) still work unchanged
-- ToastContainer was updated to render the Undo action button
-
-**Discovered when:** Session Items (POS) feature, 26–27 May 2026
-
----
-
-## UPI QR / Payment Screen — added 27 May 2026
-
-### If you change the UPI QR or post-stop payment screen
-
-**Affects:**
-- `src/components/PaymentQR.tsx` — generates UPI deeplink QR via `qrcode` package. Props: `upiId`, `payeeName`, `amount`, `transactionNote`, `size?`. `size` is INTERNAL render resolution (default 560, 2× of 280 cap), NOT displayed CSS size. Output element uses `width:100%; height:auto; display:block` so it scales to parent (see Pattern U7). If UPI URI format changes, update here.
-- `src/pages/SessionDetail.tsx` — renders payment screen as `fixed inset-0 z-50 flex-col` layout (z-50 REQUIRED to cover bottom nav — see bug_patterns Pattern U8). QR width is `min(72vw, 280px)`. White card is `aspect-square flex items-center justify-center p-3` for equal borders (see Pattern U7). Middle `flex-1` zone. "Done" pinned in footer `shrink-0`. Overlay padding uses `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)` for notch/home-indicator safety. Captures `finalGrandTotal` and `finalRoundedMs` BEFORE calling `stopSession()` to avoid post-stop value drift.
-- `src/pages/Settings.tsx` — `upiId` field inside "Club Info" collapsible section. Validated with `validateUpiId()`. Saves `undefined` (not empty string) to Dexie when cleared.
-- `src/lib/validation.ts` — `validateUpiId()`. If UPI format spec changes, update here AND in Settings error messages.
-- `src/types/index.ts` — `ClubSettings.upiId?: string` (optional)
-- `src/db/database.ts` — v4 bump documents the field (no index needed)
-
-**Key behaviour:**
-- `upiId` is OPTIONAL. If not set, payment screen shows plain amount card, no QR.
-- The QR encodes: `upi://pay?pa=<vpa>&pn=<clubName>&am=<grandTotal>&tn=<tableName>&cu=INR`
-- Amount in QR = grand total (table time + items). Never zero-pad or format; pass raw integer.
-- "Done — back to tables" navigates to `/tables` and clears payment screen state.
-- Payment screen has NO bottom nav — it is a `fixed inset-0` overlay that covers everything.
-
-**Discovered when:** Build Prompt 2, 27 May 2026; viewport fix Build Prompt 3, 27 May 2026
-
----
-
-### If you change collapsible Settings sections
-
-**Affects:**
-- `src/pages/Settings.tsx` — `openSection: string` state. Only one section open at a time. Toggling an open section sets `openSection = ''` (closed). `SettingsSection` component (inline, not exported). Animation via `grid-rows-[1fr/0fr] opacity-100/0`.
-- `sessionStorage['ck_settings_section']` — UI persistence key. Cleared on tab/browser close (not localStorage, not Dexie). Safe to read/write without concern for data integrity.
-- If a section ID changes (e.g., `'club-info'`), the saved `sessionStorage` value becomes stale — harmless (falls back to no-section-open, then defaults to 'club-info' won't auto-open on that session).
-- Section order: `club-info`, `tables`, `alerts`, `subscription`, `data`, `about`, `account`. Adding a new section: add an `id` here and a `<SettingsSection>` block.
-
-**Discovered when:** Build Prompt 3, 27 May 2026
-
----
-
-## Stop Session confirm modal — added 27 May 2026
-
-### If you change the stop-session flow (rounding preview, confirm modal, final amount)
-
-**Affects:**
-- `src/pages/SessionDetail.tsx` — calls `applyRounding` + `calculateAmount` with live `rawElapsedMs` to preview rounded time and grand total BEFORE user confirms. Captures snapshot into `finalRoundedMs` + `finalGrandTotal` state at confirm time so payment screen values don't drift after Dexie writes.
-- `src/db/queries.ts` → `stopSession()` — actual rounding happens here; must use same logic as preview or values will differ.
-- `src/lib/money.ts` → `applyRounding()` + `calculateAmount()` — both called in preview AND in stopSession. If either changes, the preview and the stored value will diverge. Always update both callsites.
-
-**Rule:** Never change `applyRounding` or `calculateAmount` without verifying the stop-confirm preview still matches the final stored amount.
-
-**Discovered when:** Build Prompt 2 stop-session improvements, 27 May 2026
-
----
-
-## Wallet / Prepaid Credit — added 30 May 2026
-
-### If you bump the Dexie schema version (adding tables or indexes)
-
-**Affects:**
-- `src/db/database.ts` — add a new `this.version(N).stores({...})` block. Keep ALL prior version blocks. Never edit an existing version block.
-- Must be additive only for existing users — no `.upgrade()` that mutates existing rows unless absolutely required (and then test the upgrade path from every prior version).
-- If you rename a table, existing users' data in the old table is gone — soft-delete + new-name migration required instead.
-- The `ClubKeeperDB` class table declarations (e.g. `customers!: Table<Customer, string>`) must stay in sync with the latest version's store strings.
-
-**Discovered when:** Wallet Phase 1, 30 May 2026
-
----
-
-### If you change the `Customer` interface
-
-**Affects:**
-- `src/types/customer.ts` — interface definition
-- `src/db/database.ts` — bump Dexie version if a new INDEX is needed; field-only additions don't need a bump
-- `src/store/customerStore.ts` — all create/update/query operations
-- `src/lib/walkInCode.ts` — creates Customer objects; must include all required fields
-- `src/components/wallet/CustomerListRow.tsx` — renders customer data
-- `src/pages/Wallet.tsx`, `WalletTopup.tsx`, `CustomerProfile.tsx` — all read Customer fields
-- `src/lib/whatsapp.ts` — reads `phone`, `name`
-- **Phone format:** always stored as `+91XXXXXXXXXX` (12 chars). Validate exactly 10 digits after the +91 prefix. Any change to format must update all display sites that do `phone.slice(3)`.
-
----
-
-### If you change the `WalletTransaction` interface
-
-**Affects:**
-- `src/types/walletTransaction.ts` — interface + union types
-- `src/db/database.ts` — bump version if index changes
-- `src/store/customerStore.ts` — `topUp()`, `applyManualAdjustment()`, `getTransactionHistory()`
-- `src/components/wallet/TransactionRow.tsx` — renders every field
-- `src/pages/CustomerProfile.tsx` — queries and lists transactions
-- **Immutability rule:** there is intentionally no `updateTransaction()`. Corrections = new rows. Do NOT add an update path without a deliberate decision.
-- **Phase 2 hook:** session debit = `{ type: 'debit', referenceType: 'session', referenceId: sessionId.toString() }`. If Session.id type changes (number → string or vice versa), update the referenceId conversion.
-
----
-
-### If you change `walkInCode.ts` (walk-in counter logic)
-
-**Affects:**
-- `src/db/database.ts` — reads `settings.walkInCounter`; must remain in the same Dexie transaction as the `customers.add()` call
-- `src/types/index.ts` — `ClubSettings.walkInCounter?: number` — treat undefined as 0 at read time
-- `src/db/seed.ts` — default settings seed does NOT include `walkInCounter` (intentional — undefined → 0 is the fallback). Do not add it to seed or existing users will get counter reset on re-seed.
-- Format is `WALK-NNN` zero-padded to 3 digits. If you change the format, existing walk-in codes in the DB remain in the old format — handle display gracefully (don't assume all codes match the new pattern).
-
----
-
-### If you change `TopBar.tsx`
-
-**Affects (updated 7 Jun 2026):**
-- `src/pages/Home.tsx` — only consumer. Now accepts optional `onWalletPress?: () => void` prop. Home does not pass this prop — TopBar's default handler `() => navigate('/wallet')` fires.
-- Right side now has 4 elements: online dot (6px), canteen button (w-9 h-9) → `/canteen`, wallet button (w-9 h-9) → `/wallet`, gear button (w-9 h-9) → `/settings`. At 360px this is full — do NOT add a fifth element without removing one or redesigning the row.
-- The canteen button navigates to `/canteen`. If that route changes, update the `onClick` in `TopBar.tsx`.
-- The wallet button navigates to `/wallet`. If that route changes, update the default handler in `TopBar.tsx`.
-- The gear button navigates to `/settings`. Unchanged.
-- Touch targets: all icon buttons are `w-9 h-9` (36px) — they meet 44px when including the implicit tap zone on mobile. Do not shrink further.
-
----
-
-### If you add a new wallet route
-
-**Affects:**
-- `src/App.tsx` — add `<Route>` inside the existing `<RequireAccess>` block (wallet routes are private, same as /tables)
-- `PUBLIC_PATHS` in App.tsx — do NOT add wallet paths here (would break BottomNav visibility logic on /tables)
-- BottomNav — wallet is NOT a tab; it is accessed via the TopBar wallet icon. Do not add a wallet tab to BottomNav in Phase 1.
-- `useAccessGuard` — already gates all `<RequireAccess>` children; no per-route change needed
-
----
-
-### If you change `customerDisplay.ts` (display name helper)
-
-**Affects (5+ render sites — change the helper, all update automatically):**
-- `src/components/wallet/CustomerListRow.tsx` — uses `customerFullLabel` + `formattedPhone`
-- `src/pages/CustomerProfile.tsx` — uses `customerDisplayName` + `formattedPhone`
-- `src/pages/WalletTopup.tsx` — uses `customerDisplayName` (header + success screen)
-- `src/lib/whatsapp.ts` — uses `customerDisplayName` for WhatsApp greeting
-- `src/components/wallet/EditCustomerModal.tsx` — uses `customerDisplayName` for modal subtitle
-
-**Rules:**
-- Never add a new inline `customer.name ?? ... ?? 'Customer'` chain in any component. Always import from this helper (Pattern F8).
-- The three-way distinction (named / unnamed-with-phone / anonymous) is the canonical contract. Do not collapse it back to two cases.
-- `phoneTail` is a display-only helper — never use it for identity checks or sorting.
-
-**Discovered when:** Wallet Phase 1.5 — "Walk-in" label appeared for customers who had a phone but no name.
-
----
-
-### If you change `customerStore.ts` phone uniqueness check
-
-**Rule (load-bearing):** Phone uniqueness is enforced in the store, NOT via a Dexie `&phone` unique index. Multiple `null` phone values (walk-ins) would violate a unique index in some browsers. The pre-check + `DuplicatePhoneError` pattern is the only enforcement. Do NOT "fix" this by adding `&phone` to the Dexie schema string.
-
-**Affects if removed or weakened:**
-- `createCustomerWithPhone()` — pre-check before `db.customers.add()`
-- `updateCustomerPhone()` — pre-check before `db.customers.update()`
-- `src/pages/WalletNewCustomer.tsx` — catches `DuplicatePhoneError`, inline error + "View profile →" link (Pattern F7)
-- `src/components/wallet/EditCustomerModal.tsx` — same catch pattern (renamed from EditPhoneModal in Phase 1.5)
-
-**Discovered when:** Wallet Phase 1 design decision, 30 May 2026
-
----
-
-### If you change `UpiQrCard.tsx` or `PaymentQR.tsx`
-
-**Affects (three consumers — change one, verify all three):**
-- `src/pages/SessionDetail.tsx` — post-stop payment screen. Fixed-viewport `fixed inset-0 z-50` layout. `<UpiQrCard>` sits in a `flex-1` centered middle zone. Changing card dimensions affects the fixed-layout fit.
-- `src/pages/WalletTopup.tsx` — inline topup QR. Scrollable page. `<UpiQrCard>` sits between payment-mode buttons and summary card. Changing card dimensions affects scroll length.
-- `src/pages/QuickSale.tsx` — post-confirm UPI QR screen (added 14 Jun 2026, fix #69). Fixed-viewport `fixed inset-0 z-50` layout, same shape as SessionDetail. Shows only the UPI split amount, not the full subtotal.
-- `src/components/PaymentQR.tsx` — the actual QR generator (unchanged). Props: `upiId`, `payeeName`, `amount`, `transactionNote`. Renders at 560px internally for retina, CSS-scaled to parent (Pattern U7).
-- `UpiQrCard` props: `amount`, `upiId`, `payeeName`, `transactionNote`. No store access inside.
-- QR encodes `upi://pay?pa=<vpa>&pn=<name>&am=<amount>&cu=INR`. Amount is always the **paid amount** — never the credited total (bonus is owner-side ledger, never sent over UPI).
-
-**Discovered when:** Wallet Phase 1 polish, 30 May 2026 — extracted from inline duplication in SessionDetail and WalletTopup.
-
----
-
-### If you change the Dexie version or `.upgrade()` callbacks
-
-**Affects:**
-- Every prior version block must remain unchanged in `database.ts`. Never edit an existing `this.version(N)` block — only add new ones.
-- The v6 `.upgrade()` callback is a one-time backfill of legacy `type:'adjustment'` wallet transaction rows. Do NOT remove it — users on v5 still need it to run.
-- `src/types/index.ts` — `ClubSettings.legacyAdjustmentsBackfilled?: boolean` is the audit flag written by the v6 migration. Read-only after migration. Do not use it to gate any user-visible feature.
-- The v6 upgrade runs inside Dexie's own managed transaction — do NOT wrap it in an additional `db.transaction()` call.
-
-**Discovered when:** Wallet Phase 1 polish correction, 30 May 2026 — needed to fix existing rows with `type:'adjustment'` that were missing sign/₹ in TransactionRow.
-
----
-
-## Table Move feature — added 8 Jun 2026
-
-### If you change `moveSessionToTable()` in queries.ts
-
-**Affects:**
-- `src/types/index.ts` — `TableMove` interface + `Session.tableMoves?: TableMove[]`
-- `src/db/database.ts` — v9 schema block (field-only, no index). Keep all prior version blocks.
-- `src/pages/SessionDetail.tsx` — `MoveTableModal`, `MoveTableList`, `MoveIcon`, move button, Table Journey row
-- `src/pages/History.tsx` — `↻ N tables` subtitle in `SessionRow`
-- `src/pages/Home.tsx` — NO change needed. `sessionMap` keys on `s.tableId`; Dexie live query re-fires automatically after a move writes the new `tableId`.
-
-**Invariant:** `session.tableId` always points to the CURRENT (latest) table. `tableMoves` records the full journey. Existing queries that filter by `tableId` continue working unchanged — they always see the current table.
-
-**Error classes exported from queries.ts:** `IncompatibleTableError`, `TableOccupiedError` — catch by type in UI for inline error display (Pattern F7). Never show a toast for these.
-
-**Compatibility rule (all six must match — fix #72, 14 Jun 2026):**
-1. `srcTable.gameType === destTable.gameType`
-2. Session `billingMode === 'per_hour'` → `srcTable.ratePerHour === destTable.ratePerHour`
-3. Session `billingMode === 'per_frame'` → `srcTable.ratePerFrame === destTable.ratePerFrame`
-4. If either table has `rateCard`: deep-equal tier array (length + every `minutes`/`price`)
-5. `(srcTable.rateCardBilling ?? 'prorated') === (destTable.rateCardBilling ?? 'prorated')`
-6. `(srcTable.toleranceMinutes ?? 10) === (destTable.toleranceMinutes ?? 10)` (only when either has a rate card)
-
-**IMPORTANT:** `MoveTableList` in `SessionDetail.tsx` mirrors these same six checks client-side so incompatible tables never appear in the list. If you update the compatibility logic in `moveSessionToTable`, update the filter in `MoveTableList` to match. The two must stay in sync.
-
-**Subtitle rule:** When `session.rateCardSnapshot?.length` is truthy, show "Same rate card" instead of "Same rate (₹X/hr)" in the candidate list.
-
-**Discovered when:** Table Move Phase 1, 8 Jun 2026. Rate-card checks added fix #72, 14 Jun 2026.
-
----
-
-## Authentication ripples — subscriptionLoaded flag (7 Jun 2026)
-
-- `authStore.subscriptionLoaded` must be set to `true` AFTER `refreshProfile()` resolves, in BOTH `initialize()` and `onAuthStateChange` handler.
-- On sign-out, `subscriptionLoaded` must be reset to `false` alongside `profile` / `subscription`.
-- `useAccessGuard` has a `'subscription_loading'` reason — `RequireAccess` treats it as a spinner, NOT a redirect. Do not add redirect logic for any transient loading reason.
-- **If you add any new field to `authStore` that `useAccessGuard` reads, add a corresponding `*Loaded: boolean` flag immediately.** Truthiness checks (`if (!subscription)`) are NOT safe for "is this loaded?" — `undefined` (not loaded) and `null` (loaded, empty) look identical.
-
----
-
-## Canteen — added 7 Jun 2026
-
-### If you change the `CanteenItem` interface
-
-**Affects:**
-- `src/types/index.ts` — interface definition
-- `src/db/database.ts` — bump Dexie version (currently v8) if adding a new INDEX; field-only additions don't need a bump. Keep all prior version blocks.
-- `src/db/queries.ts` — `getCanteenItems`, `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`, `decrementCanteenItemStock`
-- `src/db/seed.ts` — `DEFAULT_SETTINGS.lowStockThreshold` (default 5)
-- `src/pages/Canteen.tsx` — list display + StockPill + CanteenItemFormModal
-- `src/components/CanteenItemFormModal.tsx` — add/edit form (name, price, stockEnabled, currentStock)
-- `src/components/AddItemBottomSheet.tsx` — canteen chips, qty stepper stock-max clamping, inline stock decrement transaction
-
-### If you change `getCanteenItems()` in queries.ts
-
-**CRITICAL:** This function uses `.filter(item => item.isActive === true)` NOT `.where('isActive').equals(1)`. IndexedDB stores JS booleans as booleans — `.equals(1)` will never match `true`. Always use `.filter()` for boolean fields in Dexie, even if the field is in the index schema string.
-
-### If you change the stock decrement logic in AddItemBottomSheet
-
-**CRITICAL — nested transaction rule:**
-`decrementCanteenItemStock` in `queries.ts` has its own internal `db.transaction('rw', db.canteenItems, ...)`. Calling it inside an outer `db.transaction('rw', db.canteenItems, db.sessionItems, ...)` causes the inner transaction to commit immediately before the outer can run `sessionItems.add()`. Result: stock decrements but session item is NOT added (silent partial write). The inner tx closes; the outer tx throws "Transaction has already completed or failed."
-
-**Rule:** In `AddItemBottomSheet.handleSubmit`, the stock logic is INLINED directly inside a single flat outer transaction. Do NOT call `decrementCanteenItemStock` from within any outer transaction. `decrementCanteenItemStock` may still be called standalone (outside any transaction) — it is NOT deprecated.
-
-**Files affected if you change this flow:**
-- `src/components/AddItemBottomSheet.tsx` — the inline tx block
-- `src/db/queries.ts` — `decrementCanteenItemStock` (keep as standalone utility)
-
-**Discovered when:** Canteen Phase 1, 7 Jun 2026 — stock decremented but session item was never written.
-
-### If you change `ClubSettings.lowStockThreshold`
-
-**Affects:**
-- `src/types/index.ts` — optional field on `ClubSettings`
-- `src/db/seed.ts` — default value (5)
-- `src/db/queries.ts` — `getLowStockThreshold()` reads it with `?? 5` fallback
-- `src/pages/Canteen.tsx` — `StockPill` and `StatsRow` use threshold
-- `src/components/AddItemBottomSheet.tsx` — low-stock crossing toast after commit
-
-### If you change item-matching logic in AddItemBottomSheet (8 Jun 2026)
-
-**Affects:**
-- `src/lib/canteenMatch.ts` — `normalizeName`, `findMatchingCanteenItem`, `findCanteenItemByName`
-- `src/components/AddItemBottomSheet.tsx` — Quick Add filter, canteen chip handler, quick-add chip handler, manual submit handler, price-mismatch warning UI, collapsible manual form
-
-**Rule:** ALL three add paths (canteen chip, quick-add chip, manual form) must run through `findMatchingCanteenItem` and use the SAME inline atomic transaction (`runCanteenAddTransaction`) when a canteen match is found. Quick Add chips are filtered to canteen-matched recent items only — non-canteen recent items do NOT appear as chips. Manual form collapses behind "+ Add other item" button. Price mismatch on manual submit shows inline warning (Pattern F7), not toast.
-
-**Why:** Before this change, Quick Add and manual form bypassed canteen stock decrement, causing the same logical item to behave differently depending on add path. Locked decision: no auto-save freeform to canteen (would let staff typos pollute master list).
-
-### If you change session-item add behavior in AddItemBottomSheet (8 Jun 2026)
-
-**Affects:**
-- `src/db/queries.ts` — `addOrIncrementSessionItem` (NEW, sessionItems-only tx — do NOT call from inside an outer tx, Pattern D7)
-- `src/components/AddItemBottomSheet.tsx` — all four add paths (canteen chip, quick-add chip, manual matched, manual freeform) now merge into an existing row when `(sessionId, normalizeName(name), exactPrice)` already exists
-
-**Rule:**
-- The three canteen-matched paths INLINE the merge logic inside their existing `db.transaction('rw', db.canteenItems, db.sessionItems, ...)`. They do NOT call `addOrIncrementSessionItem` (Pattern D7 — nested tx would partial-write).
-- The freeform path calls `addOrIncrementSessionItem` directly (no outer tx, no canteenItems write).
-- Pre-existing distinct rows in the DB are NOT auto-merged. Only NEW adds merge into existing rows.
-- qty is capped at 99 on merge.
-
-**Known limitation:** Editing qty down via the existing edit modal does NOT restore canteen stock. Tracked for a future fix.
-
-**Why:** Multiple identical-tap rows were unreadable during settlement disputes. Merging by (sessionId, name, price) gives staff one row with a quantity count.
-
-### If you change updateSessionItem / deleteSessionItem / restoreSessionItem (8 Jun 2026)
-
-**Affects:**
-- `src/db/queries.ts` — all three functions now open `db.transaction('rw', db.sessionItems, db.canteenItems, ...)` and INLINE canteen stock sync via `findMatchingCanteenItemForRow`. New `InsufficientStockError` class exported from queries.ts.
-- `src/components/AddItemBottomSheet.tsx` — `handleSubmit` edit path catches `InsufficientStockError` and shows inline error (Pattern F7, `setError`). `handleDeleteItem` Undo callback catches it and shows a toast (justified exception — no inline surface after toast dismisses).
-- `src/lib/canteenMatch.ts` — `normalizeName` reused inside `findMatchingCanteenItemForRow`.
-
-**Rule:**
-- All three operations sync canteen stock atomically when the sessionItem matches an active, `stockEnabled` canteen item. Freeform rows (no match) never touch stock.
-- Stock can never go negative. qty-up edit or Undo restore that would do so throws `InsufficientStockError`, rolling back both sessionItem and canteenItem writes in the same tx.
-- Pattern D7: all stock logic INLINED in the outer transaction. No calls to `decrementCanteenItemStock` or `addOrIncrementSessionItem` from inside these functions.
-- `restoreSessionItem` now returns `Promise<void>` (was `Promise<number>`). Return value was unused at the call site.
-
-**Why:** Closes the three-way stock leak — edits, deletes, and undos now keep canteen stock accurate.
-
-### If you add a new route behind RequireAccess that runs Dexie queries on mount
-
-**CRITICAL — subscriptionLoaded gate (7 Jun 2026):**
-There is a race window between `loading=false` (auth resolved) and `refreshProfile()` completing (subscription row fetched). During this window `subscription===null` which `useAccessGuard` previously misread as `no_subscription`, redirecting to `/subscribe`, which bounced active users back to `/tables` — overwriting the intended route.
-
-**Fix:** `authStore` has a `subscriptionLoaded: boolean` flag (false until `refreshProfile()` resolves, false again on sign-out). `useAccessGuard` returns `{ canAccess: false, reason: 'subscription_loading' }` while `!subscriptionLoaded`. `RequireAccess` shows spinner for this reason — no redirect.
-
-**Rule:** Any new `reason` added to `useAccessGuard` must be handled explicitly in `RequireAccess` (spinner or redirect). Default to spinner for transient loading states. Never redirect on a loading reason.
-
-**Files to update when adding a new loading gate:**
-- `src/hooks/useAccessGuard.ts` — add reason to `GuardResult` union + new if-block
-- `src/components/RequireAccess.tsx` — add reason to spinner condition
-- `src/store/authStore.ts` — add flag + set it in `initialize()`, `onAuthStateChange`, and sign-out
-
----
-
-## Alarm Audio — added 1 Jun 2026
-
-### If you change `src/lib/alarm.ts`
-
-**Affects:**
-- `src/components/SessionAlarmModal.tsx` — imports `startAlarmLoop` + `triggerVibration`. If `startAlarmLoop` signature changes (e.g. takes options), update the modal call site.
-- `src/pages/Settings.tsx` — Test alert button imports `playBeepOnce` + `triggerVibration` + `unlockAudio`. Keep Test as ONE beep (`playBeepOnce`), not the full loop.
-- `src/App.tsx` — global unlock listener calls `unlockAudio()`. If unlock semantics change, update the listener.
-- The 60-second auto-stop cap in `startAlarmLoop` is load-bearing for battery safety — do not remove without explicit decision.
-
-**Discovered when:** Alarm volume + loop + iOS audio unlock fix, 1 Jun 2026 (Pattern T5).
-
-### If you change `notifyAtMs` semantics
-
-**Affects:**
-- `src/db/queries.ts` — `snoozeNotify` (anchor-to-original logic, Pattern T6), `updateSessionNotify` (set/clear on running session from now)
-- `src/hooks/useSessionAlarm.ts` — detection uses wall-clock `now >= notifyAtMs`. Do NOT compensate for `pausedTotalMs` (deliberate: wall-clock semantics match how phone alarms work)
-- `src/pages/StartSession.tsx` — sets alarm at session creation; duration is FROM session start
-- `src/pages/SessionDetail.tsx` — sets/edits on running session via alarm pill; duration is FROM NOW
-- `src/components/TableCard.tsx` — bell icon shown when `notifyAtMs != null && !notifyAcknowledgedAt`
-- `src/components/SessionAlarmModal.tsx` — fires when threshold met on `/tables`
-
-### If you change `NOTIFY_PRESETS` in `src/lib/notifyPresets.ts`
-
-**Affects:** `src/pages/StartSession.tsx` alarm chips AND `src/pages/SessionDetail.tsx` edit bottom sheet. Both import from this file — change once, both screens update.
-
-**Discovered when:** Alarm Phase 2, 1 Jun 2026.
-
----
-
-## Split payments + Quick Sale + Piggy (v13) — added 10 Jun 2026
-
-### If you change `Session.paymentBreakdown` or `recordSessionPaymentBreakdown`
-
-**Affects:**
-- `src/types/index.ts` — `PaymentBreakdown` interface + optional field on `Session`
-- `src/db/database.ts` — v13 `.upgrade()` writes the field for completed sessions. Never touch this upgrade block.
-- `src/db/queries.ts` — `recordSessionPaymentBreakdown`, `PaymentBreakdownInvalidError`, `WalletInsufficientError`
-- `src/components/PaymentSplitSheet.tsx` — sheet UI consumed by SessionDetail + QuickSale
-- `src/pages/SessionDetail.tsx` — captures breakdown after `stopSession`; auto-resume effect for completed-without-breakdown
-- `src/pages/summary/PaymentModeStrip.tsx` — reads `paymentBreakdown` for stopped sessions on viewed date
-- `src/pages/Summary.tsx` — PAYMENT MODE aggregation in render body; piggy `cashIn` math
-
-**CRITICAL invariants:**
-- `cash + upi + wallet === session.amount + Σ(sessionItems.price × quantity)` (computed inside the tx — `session.amount` alone is the time portion ONLY, not the grand total).
-- `wallet > 0` requires `customerId`; sheet enforces in UI, queries layer enforces at runtime.
-- `paymentBreakdown` is set ONCE at "Record payment" confirm, NOT at stopSession. Between Stop and confirm, the field is `undefined`.
-- Phase 4 PAYMENT MODE tile + Phase 5 piggy `cashIn` both filter on `paymentBreakdown !== undefined` to exclude this transient state.
-- ADDENDUM-4: re-mounting a completed session with no `paymentBreakdown` auto-resumes the payment flow via a `useEffect` guarded by `autoOpenHandled` + `paymentScreenOpen`. Do NOT remove the second guard — without it the auto-open re-fires immediately after a normal Stop and robs the user of the QR view.
-- ADDENDUM-5: zero-amount sessions write `{0, 0, 0}` directly without opening the sheet. Both the manual button AND the auto-open path handle this.
-- `Session` has NO `customerId` field. Wallet customer is captured in sheet state only; the durable link is `WalletTransaction.referenceId = sessionId.toString()`.
-
-**Discovered when:** Phase 2 build (8 Jun 2026 — wait, this whole feature shipped 10 Jun 2026; reference Phase 2 in the prompt sequence). The `session.amount` vs `grandTotal` mismatch shipped first as a P0 bug: the DB-layer check used `session.amount` alone, rejecting valid breakdowns whenever items were present and table time was small. Fix: compute `grandTotal` inside the tx by reading `sessionItems` for the session. See bug_patterns.md Pattern M3.
-
----
-
-### If you change `CanteenSale` or `createCanteenSale`
-
-**Affects:**
-- `src/types/index.ts` — `CanteenSale` interface
-- `src/db/database.ts` — v13 stores `canteenSales: 'id, createdAt, customerId'`
-- `src/db/queries.ts` — `createCanteenSale`, `CanteenSaleInvalidError`, `CanteenSaleStockError`, `CanteenSaleLineInput`, `getCanteenSalesByDate`
-- `src/pages/QuickSale.tsx` — only writer (v1: no edit flow)
-- `src/pages/Summary.tsx` — `canteenSalesForDate` live query feeds the canteen revenue tile + PAYMENT MODE + piggy `cashIn`
-- `src/types/walletTransaction.ts` — `WalletReferenceType` includes `'canteen_sale'`
-
-**Pattern D7 invariant:** `createCanteenSale` opens ONE flat `db.transaction('rw', db.canteenSales, db.canteenItems, db.customers, db.walletTransactions)`. Inside:
-1. Stock decrement per `canteenItemId` (aggregated qty across duplicate lines first), throws `CanteenSaleStockError(itemName, available)` if would go negative.
-2. Wallet debit + WalletTransaction(`referenceType:'canteen_sale'`) if `wallet > 0`.
-3. CanteenSale insert LAST (so any earlier throw rolls everything back).
-
-**Out-of-scope (v1):** free-text items (every line MUST match a CanteenItem.id); discount; edit/refund/void of a sale.
-
----
-
-### If you change `StockPurchase` or `recordStockPurchase`
-
-**Affects:**
-- `src/types/index.ts` — `StockPurchase` interface
-- `src/db/database.ts` — v13 stores `stockPurchases: 'id, createdAt, canteenItemId, source'`
-- `src/db/queries.ts` — `recordStockPurchase`, `StockPurchaseInvalidError`, `listStockPurchases`, `listStockPurchasesForItem`, `getPiggyBalance`
-- `src/components/RestockSheet.tsx` — only writer
-- `src/pages/Canteen.tsx` — opens RestockSheet from each item card
-- `src/pages/Piggy.tsx` — lists restocks split by source; reads `getPiggyBalance`
-- `src/pages/Summary.tsx` — CASH FLOW strip reads piggy + sums `stockPurchasesForDate`
-- `src/pages/summary/CashFlowStrip.tsx` — tile UI
-
-**Atomicity:** single flat `db.transaction('rw', db.stockPurchases, db.canteenItems)`. Insert StockPurchase + (when `stockEnabled=true`) `currentStock += quantityAdded`. Stock can only grow via restock.
-
-**Piggy radio rule:** RestockSheet disables the Piggy chip when `cost > piggyBalance`. If the user had Piggy selected when cost rose past piggy, `effectiveSource` snaps to Other before write. Never write a StockPurchase with `source='piggy'` if it would put piggy under ₹0 — the UI is the only enforcement point. The piggy formula tolerates a negative `current` (UI clamps to 0 + warning) but that's a data-weirdness escape hatch, not a normal path.
-
----
-
-### If you change `getPiggyBalance` or piggy settings
-
-**Affects:**
-- `src/db/queries.ts` — `getPiggyBalance`, `updatePiggyOpeningBalance`
-- `src/types/index.ts` — `ClubSettings.piggyOpeningBalance?` + `piggyStartedAt?`
-- `src/pages/Piggy.tsx` — current balance + cash-by-week sections
-- `src/pages/Settings.tsx` — Piggy section (current balance display)
-- `src/pages/summary/CashFlowStrip.tsx` — PIGGY tile
-- `src/pages/Summary.tsx` — `piggy` live query
-
-**Aggregation window invariant:** every "cash collected" sum MUST intersect with `piggyStartedAt`. Same for cash-by-week sums inside Piggy.tsx — `winStart = Math.max(weekStart, since)`. NEVER aggregate cash-in from before piggy was started; that's how historic data leaks in and breaks the owner's mental model.
-
-**Piggy is a derived value.** There is no ledger table. Single source of truth = the four underlying tables (sessions / canteenSales / walletTransactions / stockPurchases) + the two settings fields. Do NOT add a piggy_balance column or a piggy_ledger table without an explicit decision.
-
----
-
-### If you change `PaymentSplitSheet`
-
-**Two consumers — verify both:**
-- `src/pages/SessionDetail.tsx` — `total = finalGrandTotal` (table-time + items); `onConfirm` calls `recordSessionPaymentBreakdown`
-- `src/pages/QuickSale.tsx` — `total = subtotal` (`Σ price*qty` from the cart); `onConfirm` calls `createCanteenSale`
-
-**Single-source-of-truth invariant (Pattern M3):** `canConfirm = matches && !submitting && totalIsValid`. This boolean drives BOTH the status line (green ✓ vs orange short vs red over) AND the Confirm button's `disabled` prop AND its visual styling (NOT just `disabled:opacity-40` — explicit className branching). The error slot REPLACES the status line when present; the two never stack. Do NOT split this boolean into separate `enabled` / `displayMatch` / `buttonStyle` variables that can drift.
-
-**`total` prop must be the actual amount being collected.** For sessions: `session.amount + Σ(sessionItems.price * quantity)`. For QuickSale: cart subtotal. Never pass `session.amount` alone (see Pattern M3).
-
-**Customer linking is sheet-local.** No `Session.customerId` field exists. The wallet portion's durability comes from `WalletTransaction.referenceId`.
-
----
-
-### If you change the TopBar layout
-
-**Affects (10 Jun 2026 update):**
-- Now renders TWO stacked rows inside the outer container. Row 1: "Today" heading + icon group (`flex items-start justify-between`). Row 2: date subtitle + optional `+ Quick Sale` pill (`flex items-center justify-between mt-1 py-1 gap-2`). The pill is conditional on `onQuickSalePress?: () => void` prop. Date `<p>` is `truncate min-w-0`; pill is `shrink-0` so it never compresses.
-- `src/pages/Home.tsx` passes `onQuickSalePress={() => navigate('/quick-sale')}`. Other consumers (none currently — TopBar is single-use) omit the prop and the pill is absent.
-- Icon group at the right (canteen / wallet / settings) is unchanged. Do not add a fifth icon at 360px width per existing rule.
-
----
-
-### If you change PAYMENT MODE aggregation in Summary
-
-**Affects:**
-- `src/pages/Summary.tsx` — `paymentMode` useMemo. Deps: `[detailSessions, canteenSalesForDate]`.
-- `src/pages/summary/PaymentModeStrip.tsx` — tile + bar UI
-
-**Pattern T4 invariant:** Running sessions are EXCLUDED from this tile (no `paymentBreakdown` yet). They are still added to the HEADLINE `totalRevenue` via the render-body `runningRevenueToday` reducer. Do NOT move the PAYMENT MODE math into `useLiveQuery` — it would drift behind ticks; the source data IS db-static (`paymentBreakdown` only changes on confirm), so it's correct in the render body either way, but keep the `useMemo` to avoid the per-tick reducer cost.
-
-**Largest-remainder percent rounding:** `PaymentModeStrip.computePercents` ensures tiles sum to exactly 100. If you change the rounding strategy, the bar widths and tile percents must stay consistent (both read from the same return value).
-
----
-
-## Player Hub + ClubCoins + Engagement ripples (10–11 Jun 2026)
-
-### src/lib/playerHubApi.ts
-- **Imports:** `src/lib/supabase.ts` (owner client, used by owner-authenticated functions), `src/lib/supabasePublic.ts` (anon client, used ONLY by the three public RPC wrappers — `getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`)
-- **Imported by:** `src/pages/PlayerHubSettings.tsx`, `src/pages/Settings.tsx` (updateClubNameRemote), `src/pages/Wallet.tsx` (getOwnerClub), `src/hooks/useLiveData.ts` (getOwnerClub), `src/pages/player/PlayerScan.tsx` (3 public fns), `src/pages/Poster.tsx` (getClubPublicInfo)
-- **Ripple:** If you change the Supabase `clubs` table columns → update all `select()`/`update()` calls in this file. If you change `upsertClub()` signature → update `PlayerHubSettings.tsx` caller. If you add a new function → also export from this file's index.
-- **Two-client rule (#83 fix):** Owner functions use `supabase`. Public anon RPCs use `supabasePublic`. NEVER call a public RPC on the owner client — it queues behind the owner client's auth lock and hangs `/c/<slug>` when the owner is logged in in another tab. New public RPCs must use `supabasePublic` AND be wrapped in `withTimeout(..., 8000, label)` so transient supabase-js queue hangs surface as errors instead of infinite spinners.
-
-### src/lib/supabasePublic.ts (NEW — #83 fix)
-- **Imports:** `@supabase/supabase-js`
-- **Imported by:** `src/lib/playerHubApi.ts` ONLY
-- **Ripple:** Anon-only client with `persistSession: false`, `autoRefreshToken: false`, `detectSessionInUrl: false`. Do NOT add auth code here. Do NOT import this client from any owner-side module. Do NOT use it for realtime subscriptions (those are owner-side — keep them on `supabase`).
-
-### src/lib/realtimeTopups.ts
-- **Imports:** `src/lib/supabase.ts`, `src/store/topupInbox.ts`, `src/lib/playerHubApi.ts`
-- **Imported by:** `src/components/TopupRealtimeBridge.tsx` (the ONLY mount site — app shell). Wallet.tsx no longer subscribes; it just reads `pendingCount` from `useTopupInbox` like TopBar does.
-- **Ripple:** If you change `clubs.id` lookup → update `subscribeToTopupIntents` channel name. If you change `topup_intents` table name/columns → update INSERT/UPDATE listeners here AND in `playerHubApi.ts`. Fallback polling calls `getPendingTopups` — any change to that function signature ripples here.
-- **`subscribeToTopupIntents(clubId, onInsert?)` signature:** Optional callback receives `TopupInsertEvent { intentId, playerName, playerMobile, amount }` on every pending INSERT. Only one callback per active subscription — re-calling the function tears down the channel and rebuilds. If you ever need multiple consumers, switch to a fan-out store rather than adding a second `.on('postgres_changes', …)` listener (Supabase will deliver duplicates on the same filter pair).
-
-### Supabase realtime publication (#85 — remote-DB-only config)
-- **Tables in `supabase_realtime` publication:** `public.topup_intents`, `public.clubs`. Set via `supabase/migrations/20260615_enable_realtime.sql`.
-- **Ripple:** Adding a new `supabase.channel(...).on('postgres_changes', { table: 'X' })` listener anywhere in the codebase REQUIRES a migration adding `X` to the publication. Without it the listener subscribes silently but never receives events. See Pattern S6. If the handler reads `payload.old.<field>` for anything beyond the PK, also set `replica identity full` on the table.
-
-### topup_intents.coins_credited + get_topup_intent_status (#87 — server-authoritative coin total)
-- **Schema:** `public.topup_intents.coins_credited int null`. `get_topup_intent_status(uuid) returns table(status text, reject_reason text, coins_credited int)`. Set via `supabase/migrations/20260615_topup_intents_coins_credited.sql`.
-- **Owner-side write site:** `src/components/PendingTopupsModal.tsx` `handleConfirm` — captures `{coinsEarned, welcomeCoinsEarned}` from `recordTopupWithCoins` and writes `coins_credited = coinsEarned + welcomeCoinsEarned` in the same Supabase UPDATE that flips status to `confirmed`. Null in the idempotency 'already credited' branch and in the Wallet.tsx failed-sync retry path — player falls back to local tier-only display for those edge cases (acceptable, player already saw original confirmation).
-- **Player-side read site:** `src/pages/player/PlayerScan.tsx` polling effect captures `result.coinsCredited` into `confirmedCoins` state; the `confirmed` render uses `confirmedCoins ?? coinsEarnedForTopup(amount, clubInfo.coinTiers)`. Form-screen preview chip stays a lower-bound ('earn at least N + welcome bonus if first') because the player doesn't have access to engagement config or `Customer.firstTopupAt`.
-- **Ripple:** If you add ANY new owner-side coin grant inside `recordTopupWithCoins` (streak bonus, surge multiplier, etc.), the return value must reflect the new total AND `PendingTopupsModal.handleConfirm` must include it in `coinsCredited`. Don't compute partial totals on the player side — Pattern P1.
-- **Ripple to `getTopupIntentStatus` callers:** PlayerScan is the only caller today. If a new public consumer is added, it must use `coinsCredited` directly — never recompute locally.
-
-### src/components/TopupRealtimeBridge.tsx (NEW — #83 follow-up)
-- **Imports:** `react-router-dom` (useLocation, useNavigate), `src/store/authStore.ts`, `src/store/toastStore.ts`, `src/lib/realtimeTopups.ts`, `src/lib/playerHubApi.ts` (getOwnerClub)
-- **Imported by:** `src/App.tsx` ONLY (mounted alongside AuthInitializer / ExpirySweepRunner inside BrowserRouter)
-- **Ripple:** Keeps the topup_intents realtime channel open for the entire authenticated session — not just while `/wallet` is mounted. Guards: `dbReady && session && subscriptionLoaded && !isPlayerHubPath(pathname)` (Pattern A7 + A6 + A8). Uses per-user `activeUserIdRef` (same fix-pattern as `_clubSyncDoneForUser` for P3 / #53) so a second user signing in on the same tab gets a fresh subscription. **Do NOT include `location.pathname` in the effect deps** — it'd tear down and rebuild the channel on every navigation. Pathname is read via `pathnameRef` inside the INSERT callback to suppress the "Review" toast when the owner is already on `/wallet`. If a new public-only route is added that should suppress the bridge, add its prefix to the file's `isPlayerHubPath()` helper.
-
-### src/store/topupInbox.ts
-- **Imports:** `zustand`
-- **Imported by:** `src/lib/realtimeTopups.ts` (setPendingCount, increment, decrement), TopBar (usePendingTopupCount), `src/components/PendingTopupsModal.tsx` (closeModal)
-- **Ripple:** If you rename `pendingCount` → update TopBar badge and realtimeTopups. This is a side-effect store — no DB reads, just in-memory state.
-
-### src/lib/slug.ts
-- **Imports:** `src/lib/supabase.ts`
-- **Imported by:** `src/pages/PlayerHubSettings.tsx`
-- **Ripple:** If `clubs.slug` column is renamed → update `isSlugAvailable` query here.
-
-### src/pages/player/PlayerScan.tsx
-- **Imports:** `src/lib/playerHubApi.ts`, `src/components/UpiQrCard.tsx`, `src/lib/coins.ts`, `src/pages/player/PlayerScanLayout.tsx`, `src/types/playerHub.ts`
-- **Imported by:** `src/App.tsx` (route `/c/:clubSlug`)
-- **Ripple:** If you change `getClubPublicInfo` return shape → update all field accesses in this file. If `ClubPublicInfo.coinsEnabled` is removed → remove coin preview block. This is a PUBLIC page — no auth, no Dexie. Keep it that way.
-
-### src/pages/player/PlayerScanLayout.tsx
-- **Imports:** React only
-- **Imported by:** `src/pages/player/PlayerScan.tsx`
-- **Ripple:** Layout-only. Safe to style without logic ripples.
-
-### src/pages/Poster.tsx
-- **Imports:** `src/lib/playerHubApi.ts`, `src/components/UpiQrCard.tsx`, `src/pages/player/PlayerScanLayout.tsx`
-- **Imported by:** `src/App.tsx` (route `/poster/:slug`)
-- **Ripple:** Calls `getClubPublicInfo(slug)` — same as PlayerScan. If slug lookup changes → update both.
-
-### src/components/PendingTopupsModal.tsx
-- **Imports:** `src/db/queries.ts` (recordTopupWithCoins, getCoinConfig), `src/lib/playerHubApi.ts` (confirmTopupIntent, rejectTopupIntent), `src/store/topupInbox.ts`, `src/store/toastStore.ts`
-- **Imported by:** TopBar
-- **Ripple:** If `recordTopupWithCoins` signature changes → update call here. If `confirmTopupIntent` or `rejectTopupIntent` error types change → update error handling. Confirm path writes to Dexie AND Supabase in sequence — not atomic across both. Supabase fires first, then Dexie.
-
-### src/lib/coins.ts
-- **Imports:** `src/types/index.ts` (CoinTier, ClubSettings)
-- **Imported by:** `src/db/queries.ts` (coinsEarnedForTopup, resolveCoinConfig), `src/pages/player/PlayerScan.tsx` (coinsEarnedForTopup), `src/components/CoinRedemptionPill.tsx` (maxRedeemableCoins, coinsToMinutes, coinsToRupees), `src/lib/coinExpiry.ts`, `src/lib/playerHubApi.ts` (syncCoinConfig reads config)
-- **Ripple:** `DEFAULT_COIN_CONFIG` is the fallback for all unconfigured clubs — change it carefully. If `CoinTier` type changes → update `PlayerHubSettings.tsx` CoinTiersEditor + `PlayerScan.tsx` preview.
-
-### src/lib/coinExpiry.ts
-- **Imports:** `src/db/database.ts`, `src/lib/coins.ts`, `src/db/queries.ts` (getCoinConfig)
-- **Imported by:** `src/App.tsx` (applyExpirySweep via ExpirySweepRunner)
-- **Ripple:** Reads `WalletTransaction` rows for FIFO lot logic — if `balanceType`/`coinDelta`/`referenceType` fields change → update lot reconstruction logic. Writes new `coin_expiry` rows — if `WalletReferenceType` changes → update here.
-
-### src/lib/streak.ts
-- **Imports:** `src/db/database.ts`, `src/types/index.ts`
-- **Imported by:** `src/pages/SessionDetail.tsx` (checkAndAwardStreak called at session payment confirm, lines 750 + 801)
-- **Ripple:** Called in SessionDetail's payment confirm path — if session stop flow changes → verify call site is still reached. Reads `walletTransactions` for distinct session days — if session debit referenceType changes → update filter.
-
-### src/lib/dormancy.ts
-- **Imports:** `src/db/database.ts`
-- **Imported by:** `src/components/BringBackList.tsx`
-- **Ripple:** Filters `customers` by `lastVisitAt` — if Customer schema changes → update filter logic here.
-
-### src/lib/nudge.ts
-- **Imports:** `src/db/database.ts`
-- **Imported by:** `src/components/BringBackList.tsx`, `src/components/NudgeTemplateEditor.tsx`
-- **Ripple:** `logNudgeSent` writes a `WalletTransaction` with `referenceType:'engagement_log'` — if that type is removed from the union → TS error here.
-
-### src/components/CoinTiersEditor.tsx
-- **Imports:** `src/types/index.ts` (CoinTier)
-- **Imported by:** `src/pages/PlayerHubSettings.tsx`
-- **Ripple:** Props are `tiers/onChange` — safe to style. If `CoinTier` type changes → update here.
-
-### src/components/CoinRedemptionPill.tsx
-- **Imports:** `src/lib/coins.ts`, `src/types/customer.ts`
-- **Imported by:** `src/pages/SessionDetail.tsx:697` (post-stop payment flow)
-- **Ripple:** If `Customer.coinBalance` is removed → update props. If coin math functions change → update displayed values.
-
-### src/components/BringBackList.tsx
-- **Imports:** `src/lib/dormancy.ts`, `src/lib/nudge.ts`, `src/lib/customerDisplay.ts`
-- **Imported by:** `src/pages/PlayerHubSettings.tsx`
-- **Ripple:** Pure UI + API calls. If WhatsApp link format changes → update `buildWhatsAppLink` in nudge.ts (not here).
-
-### src/components/EngagementConfigCard.tsx
-- **Imports:** `src/db/queries.ts` (updateSettings), `src/types/index.ts`
-- **Imported by:** `src/pages/PlayerHubSettings.tsx`
-- **Ripple:** Writes to ClubSettings engagement fields — if field names change → update here + `streak.ts` + `coinExpiry.ts` readers.
-
-### src/components/NudgeTemplateEditor.tsx
-- **Imports:** `src/lib/nudge.ts`
-- **Imported by:** `src/pages/PlayerHubSettings.tsx`
-- **Ripple:** Template variables (`{name}`, `{coins}`, `{clubName}`, etc.) must stay in sync with `renderNudgeTemplate` in `nudge.ts`.
-
-### Modified shared modules
-
-**src/hooks/useLiveData.ts** — added `useSyncClubFromSupabase()`
-- Now imports `src/lib/playerHubApi.ts` (getOwnerClub). Any change to getOwnerClub return shape ripples here.
-- `_clubSyncDone` module-level flag: do NOT add other one-time-run logic using the same pattern without resetting it properly on sign-out.
-
-**src/App.tsx** — added `ExpirySweepRunner` + 2 new routes
-- `ExpirySweepRunner` calls `applyExpirySweep` from `coinExpiry.ts`. Gate is `dbReady + session + subscriptionLoaded` — must remain consistent with other gated operations.
-- If you add a new public route → add its prefix to the `isPublicRoute` check in `AppLayout`.
-
-**src/db/queries.ts** — added `recordTopupWithCoins`, `getCoinConfig`, and streak/expiry helpers
-- `recordTopupWithCoins` is the ONLY correct path for crediting wallet + coins atomically. Never split this into two separate DB calls.
-- If `Customer.firstTopupAt` is renamed → update the welcome-bonus guard inside this tx.
-
-**src/pages/PlayerHubSettings.tsx** — now imports: slug.ts, playerHubApi.ts, coins.ts, realtimeTopups.ts, CoinTiersEditor, EngagementConfigCard, BringBackList, NudgeTemplateEditor
-- Heaviest import graph in the app. If any of these move → update imports here first.
-
----
-
-## Pricing visibility ripples (Phase 0, 16 Jun 2026, #84)
-
-### clubs.tables_json + clubs.accepts_pricing_display (Supabase)
-- **Schema:** `public.clubs.tables_json jsonb default '[]'` + `public.clubs.accepts_pricing_display boolean default true`. Migration: `supabase/migrations/20260616_pricing_visibility.sql` — ⚠ run manually.
-- **RPC:** `get_club_public_info(p_slug text)` now returns 7 columns (added `tables_json`, `accepts_pricing_display`). Drop+recreate semantics — Postgres can't extend OUT parameters via CREATE OR REPLACE alone.
-- **Ripple:** If you add any new column to `clubs` that needs to be readable by the public Player Hub page, extend `get_club_public_info` AND every accessor: `playerHubApi.ts:getClubPublicInfo`, `types/playerHub.ts:ClubPublicInfo`, and any place that reads `clubInfo.<field>` (PlayerScan.tsx, Poster.tsx). Never bypass the RPC — anon does NOT have direct table read grants.
-- **Public-safe contract:** `tables_json` rows are a slim projection — `name, gameType, ratePerHour, ratePerFrame?, rateCard?, toleranceMinutes?, rateCardBilling?` only. NEVER add internal IDs, session data, owner-private flags, or anything the player shouldn't see.
-
-### src/lib/playerHubApi.ts — syncTablesJsonBySlug
-- **New fn:** `syncTablesJsonBySlug(slug, tables: GameTable[])` — fire-and-forget mirror. Filters `outOfService`, projects only public-safe fields. Targets by slug (matching `syncCoinConfig` exactly), NOT by `getOwnerClub().id`. Calls `.select('id')` after the update and warns if `data.length === 0` so silent RLS / slug mismatches surface in DevTools.
-- **Imported by:** `src/components/TableFormModal.tsx` (the ONLY call site today).
-- **Ripple:** If you change `PublicTableInfo` (rename a field, add a field): (a) update the projection inside `syncTablesJsonBySlug`; (b) update the player-side renderer in `PlayerScan.tsx` (`PricingCard` / `PricingRow`); (c) any field added MUST stay public-safe.
-- **Anti-pattern (Phase 0 follow-up bug):** Do NOT route owner-side mirror writes through `getOwnerClub() → .eq('id', club.id)`. `getOwnerClub` uses `.maybeSingle()` with no filter and can silently return null on a transient auth state — the mirror then early-exits and the catch swallows even that signal. Always target by slug (mirrors are owner-write, RLS already narrows). See Pattern P2 (Player-Hub).
-- **`getClubPublicInfo` extension:** Two new fields with safe fallbacks (`?? []` / `?? true`) — pre-migration club rows return `null` for the new columns, the page degrades gracefully (no pricing card shown). If you remove either fallback you will crash `/c/<slug>` for any club whose migration hasn't run yet.
-
-### src/components/TableFormModal.tsx — owner-side mirror
-- **New helper:** `mirrorTablesToSupabase()` — Dexie-read settings + all tables → `syncTablesJsonBySlug(settings.slug, allTables)`. No `getOwnerClub` round-trip. Skips with `console.warn` when `settings.slug` is absent. Called fire-and-forget from `handleSave`, `handleDisable`, `handleEnable`. Every early-exit branch logs to console so a future "swallowed silently" regression is visible in DevTools.
-- **Ripple:** Any future code path that mutates `gameTables` (rename, batch reorder, mass enable/disable, import) MUST also call `mirrorTablesToSupabase()` (or its equivalent) after the Dexie write commits, or the Supabase mirror drifts. Known drift today: Import Everything (`src/lib/importEverything.ts`) replaces all tables but does NOT re-sync `tables_json`. Acceptable for v1; track if customer asks.
-- **Never block the Dexie write on the Supabase mirror.** Pattern matches `syncCoinConfig` — Dexie is authoritative.
-
-### src/pages/player/PlayerScan.tsx — PricingCard / PricingRow
-- Two new local components below `PlayerScan` form. `PricingCard` is collapsible (default closed), grouped by gameType. `PricingRow` renders either tier grid + tolerance line OR `₹X/hr` (+ `₹Y/frame` for snooker).
-- **Visibility guards:** Card is rendered ONLY when `clubInfo.acceptsPricingDisplay === true` AND `clubInfo.tablesJson.length > 0`. Do NOT add an empty-state fallback for players.
-- **Ripple:** If `PublicTableInfo` shape changes → update `PricingRow`. If `GameType` adds a new variant → add a `GAME_LABELS` entry (otherwise rendered as raw key, ugly but not broken).
-- **Pattern:** Public page, no Dexie, no auth. Keep it that way.
-
-### Settings → Player Hub flow dependency
-- Existing dependency: owner saves slug in `PlayerHubSettings` → `upsertClub` creates the Supabase club row → `settings.slug` mirrored to Dexie.
-- **NEW dependency:** Owner saves a table in `TableFormModal` → Dexie write → if `settings.slug` present, mirror `tables_json` to Supabase. If `settings.slug` is missing (no Player Hub setup yet), no mirror runs — first slug save does NOT retroactively trigger a tables mirror. Acceptable trade-off: the next table edit will mirror everything. Track if customer reports stale pricing on `/c/<slug>` right after first slug setup.
-
----
-
-## Import Everything — added 14 Jun 2026 (#79 Phase A)
-
-### If you change the export/import file format
-
-**Source of truth:** `ClubKeeperBackupV16` interface in `src/db/queries.ts`. `CURRENT_SCHEMA_VERSION` constant in the same file mirrors `database.ts` Dexie version.
-
-**Affects (every place that touches the backup contract):**
-- `src/db/queries.ts` — `getAllDataForExport()` (writer) + `ClubKeeperBackupV16` + `CURRENT_SCHEMA_VERSION`
-- `src/lib/importEverything.ts` — `importEverythingFromFile()` (reader) — its `BackupShape` validator + `requiredArrayKeys` list must match the interface keys 1:1
-- `references/data_model.md` — "Data Export Format (v16)" section
-- `src/pages/Settings.tsx` — export consumer (Phase B will add the import consumer here too)
-
-**Rules (load-bearing):**
-1. Every Dexie store in `ClubKeeperDB` MUST appear in BOTH the export builder AND the import clear+bulkAdd loop AND `ClubKeeperBackupV16`. Forgetting one = silent data loss on the next backup cycle.
-2. When you bump Dexie version in `database.ts`, also bump `CURRENT_SCHEMA_VERSION` in `queries.ts`. Pair commits — otherwise import accepts a stale-format file or rejects valid new exports.
-3. IDs (`id`, `tableId`, `sessionId`, `customerId`) are preserved verbatim across export → import. Never auto-generate fresh ids during import — foreign-key links would break.
-4. Import is atomic: one `db.transaction('rw', [all 9 stores], …)` that calls `.clear()` then `.bulkAdd()` for each store. Any throw rolls back the whole tx — never partial.
-5. Active-session pre-check (`status !== 'completed'`) blocks import. Importing on top of a running session would corrupt timer math (Pattern T1).
-6. Subscription / auth / Supabase state is NEVER touched — import is Dexie-only.
-
-### If you add a new Dexie table
-
-The ripple is wider than usual because of import/export:
-- `src/db/database.ts` — new `this.version(N).stores({...})` block
-- `src/db/queries.ts` — bump `CURRENT_SCHEMA_VERSION` to `N`; add field to `ClubKeeperBackupV16`; add `toArray()` call in `getAllDataForExport`; **add `db.<newTable>` to `resetEverything()`'s tx table list AND its `clear()` Promise.all**
-- `src/lib/importEverything.ts` — add table to `requiredArrayKeys`, the typed coercion block, the `db.transaction('rw', [...])` table list, the `clear()` Promise.all, and the bulkAdd block
-- `references/data_model.md` — "Data Export Format (v16)" section interface
-
-**Discovered when:** Import Everything Phase A, 14 Jun 2026 (#79). Phase A0 closed #78 (export was missing 6 of 9 tables). #81 (15 Jun 2026) found the same drift in `resetEverything()` — only 3 of 9 stores cleared, canteen/wallet/customers all survived a "reset".
-
-### If you change `resetEverything()` (`src/db/queries.ts`)
-
-**Single-source-of-truth invariant:** the 9-store list inside `resetEverything()` MUST stay 1:1 with:
-- `getAllDataForExport()` (also in `queries.ts`) — same 9 stores
-- `importEverythingFromFile()` (in `src/lib/importEverything.ts`) — its tx table list + `clear()` Promise.all
-
-If any of the three drift, the symptom is silent data leakage (export misses a store → #78; reset misses a store → #81). Adding a Dexie store = update all three in the same commit.
-
-**Affects:**
-- `src/db/queries.ts` — `resetEverything` body, `ActiveSessionsPresentError` export
-- `src/pages/Settings.tsx` — `handleReset` catches `ActiveSessionsPresentError` and shows toast "Stop all active sessions before resetting." Mirrors the import flow's active-session guard.
-- `src/db/seed.ts` — `seedIfEmpty()` is called AFTER the clear tx commits; seed must populate enough state for a brand-new install (currently: 1 tables row + 1 settings singleton)
-
-**Critical correctness rules:**
-- Single flat `db.transaction('rw', [all 9 stores], …)` — partial wipe must roll back.
-- Active-session pre-check throws `ActiveSessionsPresentError` BEFORE opening the tx. Resetting on top of a running session corrupts the next session's timer math (Pattern T1).
-- Auth / subscription / Supabase state NEVER touched — Dexie-only.
-- `seedIfEmpty()` runs AFTER the tx so its inserts aren't rolled back by a tx-internal throw.
-
-**Discovered when:** #81 (15 Jun 2026) — Sugeet reset everything and the canteen item list still showed up. Same drift class as #78.
-
-### `src/lib/importEverything.ts`
-
-- **Imports:** `src/db/database.ts` (`db`), `src/db/queries.ts` (`CURRENT_SCHEMA_VERSION`), `src/types`, `src/types/customer`, `src/types/walletTransaction`
-- **Imported by:** `src/pages/Settings.tsx` (production consumer — `importEverythingFromFile`, `ImportSuccess`, `ImportFailureReason` types), `src/main.tsx` (DEV-only dynamic import for `window.__importEverythingFromFile` + `window.runImportExportRoundTrip`), `src/lib/__devTools__/importExportRoundTrip.ts` (dev round-trip self-test)
-- **Failure-reason union (`ImportFailureReason`)** — UI must handle all of: `parse_error`, `not_clubkeeper_file`, `legacy_incomplete_format`, `schema_too_new`, `active_sessions_present`, `empty_file`, `transaction_failed`. Adding a new reason → update the `importErrorMessage()` switch at the top of `Settings.tsx`.
-
-### `src/lib/__devTools__/importExportRoundTrip.ts` (DEV-only)
-
-- **Imports:** `src/db/database.ts` (`db`), `src/db/queries.ts` (`getAllDataForExport`, `getPiggyBalance`), `src/lib/importEverything.ts` (`importEverythingFromFile`)
-- **Imported by:** `src/main.tsx` ONLY, behind `import.meta.env.DEV` dynamic import — tree-shaken from production bundle (verified: bundle unchanged at 954.91 kB across Phase B → Phase C)
-- **Exposes:** `window.runImportExportRoundTrip(): Promise<RoundTripResult>` in dev
-- **Snapshot measures (11):** counts for all 9 stores + `walletBalanceTotal` + `piggyCurrent`. If you add a new Dexie store, ALSO add it to the snapshot here (or the self-test will pass while quietly missing the new store).
-- **DESTRUCTIVE:** wipes and restores the live Dexie DB. Same `active_sessions_present` guard as the production importer.
-
-### If you change the import flow in Settings (#79 Phase B)
-
-**Affects:**
-- `src/pages/Settings.tsx` — `importErrorMessage()` (module-level helper, must cover every `ImportFailureReason`), `importFileRef`, `pendingImportFile`, `importConfirmOpen`, `importing`, `importSuccess` state; `handleImportButtonClick` / `handleImportFileChange` / `handleImportCancel` / `handleImportConfirm` / `handleImportSuccessDone` handlers; the new action row in the Data & Backup section; hidden `<input type="file">` mounted as a sibling of the trigger button; the destructive confirm `<Modal>`; the full-viewport success overlay (`fixed inset-0 z-50`); inline `<ImportCountRow>` sub-component
-- `src/lib/importEverything.ts` — source of truth for `ImportSuccess` shape (counts + walletBalanceTotal). Adding a new count field → add it to `ImportSuccess`, populate in the reducer, and render a new `<ImportCountRow>` in the overlay
-- After success: `window.location.assign('/tables')` is intentional — every `useLiveQuery` must remount and re-fetch. Do NOT change to `navigate('/tables')` — SPA navigation keeps the existing Dexie observers, and although they'd refire on the bulk writes, the hard nav also resets module-level flags like `_clubSyncDone` that could otherwise leak stale state across the import boundary.
-- File input uses `className="hidden"` — programmatic `.click()` works reliably for `type="file"`. Do NOT migrate to Pattern U9's opacity-0 overlay; U9 is for `type="date"` Chrome activation quirks, irrelevant here.
-
-**Discovered when:** Import Everything Phase B, 14 Jun 2026 (#79).
+1. Find the right feature section (use Quick Index).
+2. Add the file path under "Files in scope" or add a new cross-feature ripple bullet.
+3. Promote it to an "Invariant" only if violating it is a guaranteed bug, not a pattern preference.
+4. Cross-link related sections rather than duplicating content.
+5. Bump the "Last updated" date.
+
+If no existing section fits, add a new feature section using the template. Add a corresponding entry to the Quick Index.

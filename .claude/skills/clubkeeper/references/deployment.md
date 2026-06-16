@@ -20,6 +20,10 @@
 | **SSL** | Auto via Vercel |
 | **To revert** | Remove custom domain from Vercel dashboard; `clubkeeper.vercel.app` continues working. |
 
+## Supabase keep-alive
+
+`.github/workflows/supabase-keepalive.yml` runs a daily cron (06:00 UTC) that hits `GET /rest/v1/clubs?select=id&limit=1` with the anon key. Free-tier Supabase pauses projects after 7 days of inactivity — a paused project means the live topup/pricing QR (`app.handbookhq.in/c/<slug>`) dies at a real club. The Action keeps the project warm. Requires repo secret `SUPABASE_ANON_KEY`. Manual run via Actions tab → workflow_dispatch. Failing job = GitHub notification.
+
 ## Pushing Changes (Sugeet's workflow)
 
 Standard flow whenever code changes:

@@ -1,0 +1,25 @@
+# Supabase keep-alive ping
+#
+# Free-tier Supabase projects pause after 7 days of inactivity. A paused project
+# means the LIVE topup + pricing QR at app.handbookhq.in/c/<slug> goes dead at a
+# real club. This workflow runs a daily cheap REST query so the project always
+# registers activity within the 7-day window.
+#
+# Requires repo secret SUPABASE_ANON_KEY (the public VITE_SUPABASE_ANON_KEY value
+# already shipped in the client bundle — safe to use; anon key only allows
+# RLS-gated read access). Do NOT use the service_role key here.
+name: supabase-keepalive
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # daily 06:00 UTC (~11:30 AM IST)
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST
+        run: |
+          curl -sf "https://vkczmgzujpidbwtzulel.supabase.co/rest/v1/clubs?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}"

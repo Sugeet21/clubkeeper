@@ -2,6 +2,12 @@
 
 ---
 
+## 16 Jun 2026 — Supabase keep-alive GitHub Action
+
+Added `.github/workflows/supabase-keepalive.yml` — daily cron (06:00 UTC / ~11:30 IST) pings the Supabase REST endpoint with the anon key so the free-tier project never trips the 7-day inactivity pause that would dead-end the live topup/pricing QR at `app.handbookhq.in/c/<slug>`.
+
+---
+
 ## 16 Jun 2026 — Phase 0 shipped to production (#84)
 
 Pushed 83359b0 + bffac35 to `main`; Vercel auto-deployed to app.handbookhq.in. Owner verified on localhost first — pricing card renders correctly on `/c/star-club` with tables grouped by game type, all rates showing. Production verified after PWA service-worker refresh.
