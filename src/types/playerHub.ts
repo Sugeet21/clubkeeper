@@ -13,9 +13,13 @@ export interface TopupIntent {
 import type { CoinTier, RateTier, GameType } from '.'
 
 // Public-safe slim projection of an owner's active table. Never includes
-// internal IDs, session data, or anything beyond what a player needs to see
-// pricing. Mirrored to Supabase clubs.tables_json on owner-side table save.
+// session data or owner-private fields. Includes `id` (the Dexie GameTable.id)
+// since v17 booking needs the player to round-trip a table identifier back
+// to the owner; the id is meaningless outside the owner's IndexedDB and
+// carries no PII, so exposing it is safe.
+// Mirrored to Supabase clubs.tables_json on owner-side table save.
 export interface PublicTableInfo {
+  id?: number                       // v17: optional for back-compat with rows mirrored pre-booking; treat missing as opaque
   name: string
   gameType: GameType
   ratePerHour: number
@@ -33,4 +37,7 @@ export interface ClubPublicInfo {
   coinTiers: CoinTier[]
   tablesJson: PublicTableInfo[]
   acceptsPricingDisplay: boolean
+  // v17 — advance booking (Phase 1 of #84)
+  acceptsBookings: boolean
+  bookingAdvanceAmount: number     // ₹; default 100 if undefined on row
 }

@@ -15,9 +15,11 @@ import {
   pauseForPayment,
   confirmPaymentAndStop,
   cancelPaymentAndResume,
+  creditBookingAdvanceRemainder,
   IncompatibleTableError,
   TableOccupiedError,
 } from '../db/queries'
+import type { Booking } from '../types/booking'
 import { useTable, useTables, useSessionItems, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatHMS, formatDuration } from '../lib/time'
@@ -381,6 +383,22 @@ export default function SessionDetail() {
   const settings = useSettings()
   const { show: showToast } = useToastStore()
 
+  // v17 P1e: if this session was started via a booking link, surface the booking
+  // so PaymentSplitSheet can show the prepaid advance and short-circuit collection.
+  // Pattern T4 — DB-static deps only; no clock math inside the live query.
+  const linkedBooking = useLiveQuery<Booking | null>(
+    async () => {
+      if (!sidValid) return null
+      const row = await db.bookings
+        .where('status').equals('consumed')
+        .filter((b) => b.consumedSessionId === sid)
+        .first()
+      return row ?? null
+    },
+    [sid, sidValid],
+  )
+  const prepaidAdvance = linkedBooking?.advanceAmount ?? 0
+
   // Tick every second so the timer re-renders
   useTick()
 
@@ -422,6 +440,18 @@ export default function SessionDetail() {
   useEffect(() => {
     getCoinConfig().then(setCoinConfig).catch(() => {/* use defaults */})
   }, [])
+
+  // P1e: when a linked booking is present, auto-link its customer by phone so
+  // PaymentSplitSheet shows wallet + the advance is wired to the right person.
+  // linkBookingToSession in StartSession ensured the customer row exists.
+  useEffect(() => {
+    if (!linkedBooking || linkedCustomer) return
+    let cancelled = false
+    db.customers.where('phone').equals(linkedBooking.playerPhone).first().then((c) => {
+      if (!cancelled && c) setLinkedCustomer(c)
+    }).catch(() => { /* non-critical */ })
+    return () => { cancelled = true }
+  }, [linkedBooking, linkedCustomer])
 
   // Populate edit-start fields whenever the modal is opened
   useEffect(() => {
@@ -1240,6 +1270,7 @@ export default function SessionDetail() {
               headline={summaryLine}
               initialCustomer={linkedCustomer}
               onCustomerLinked={(c) => setLinkedCustomer(c)}
+              prepaidAdvance={prepaidAdvance}
               onCancel={() => {
                 setSplitSheetOpen(false)
                 if (session.paymentInProgress) {
@@ -1258,14 +1289,37 @@ export default function SessionDetail() {
                     referenceId: numericSessionId.toString(),
                   })
                 }
+                // P1e: when a booking advance was applied, the sheet collected
+                // only `grandTotal − advance` from the customer. To keep the
+                // confirmPaymentAndStop invariant honest (cash+upi+wallet ===
+                // grandTotal), we first credit the full advance to the
+                // customer's wallet (one ledger row), then route the consumed
+                // portion through the breakdown's `wallet` leg. Net effect:
+                //   surplus = max(0, advance − grandTotal) stays in wallet
+                //   consumed = min(advance, grandTotal) was paid via wallet
+                let writeBreakdown = breakdown
+                if (linkedBooking && prepaidAdvance > 0 && effectiveCustomerId) {
+                  const grand = finalGrandTotal - coinDiscount
+                  const consumed = Math.min(grand, prepaidAdvance)
+                  await creditBookingAdvanceRemainder({
+                    customerId: effectiveCustomerId,
+                    amount: prepaidAdvance,
+                    bookingId: linkedBooking.id,
+                  })
+                  writeBreakdown = {
+                    cash: breakdown.cash,
+                    upi: breakdown.upi,
+                    wallet: breakdown.wallet + consumed,
+                  }
+                }
                 await confirmPaymentAndStop(
                   numericSessionId,
-                  breakdown,
+                  writeBreakdown,
                   effectiveCustomerId ?? undefined,
                 )
                 setSplitSheetOpen(false)
                 setBreakdownRecorded(true)
-                setConfirmedBreakdown(breakdown)
+                setConfirmedBreakdown(writeBreakdown)
                 if (effectiveCustomerId) {
                   checkAndAwardStreak(effectiveCustomerId)
                     .then(({ awarded, coins, customerName }) => {

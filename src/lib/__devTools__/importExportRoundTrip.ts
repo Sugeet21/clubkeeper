@@ -31,6 +31,7 @@ interface Snapshot {
   canteenItems: number
   canteenSales: number
   stockPurchases: number
+  bookings: number
   walletBalanceTotal: number
   piggyCurrent: number
 }
@@ -46,6 +47,7 @@ async function takeSnapshot(): Promise<Snapshot> {
     canteenItems,
     canteenSales,
     stockPurchases,
+    bookings,
     piggy,
   ] = await Promise.all([
     db.gameTables.count(),
@@ -57,6 +59,7 @@ async function takeSnapshot(): Promise<Snapshot> {
     db.canteenItems.count(),
     db.canteenSales.count(),
     db.stockPurchases.count(),
+    db.bookings.count(),
     getPiggyBalance(),
   ])
   const walletBalanceTotal = customers.reduce(
@@ -73,6 +76,7 @@ async function takeSnapshot(): Promise<Snapshot> {
     canteenItems,
     canteenSales,
     stockPurchases,
+    bookings,
     walletBalanceTotal,
     piggyCurrent: piggy.current,
   }
@@ -90,6 +94,7 @@ const ALL_KEYS: SnapKey[] = [
   'canteenItems',
   'canteenSales',
   'stockPurchases',
+  'bookings',
   'walletBalanceTotal',
   'piggyCurrent',
 ]
@@ -153,7 +158,7 @@ export async function runImportExportRoundTrip(): Promise<RoundTripResult> {
   const ok = mismatches.length === 0
   if (ok) {
     console.log(
-      '%c[round-trip] PASS — export ↔ import is lossless across all 11 measures.',
+      '%c[round-trip] PASS — export ↔ import is lossless across all 12 measures.',
       'color:#4f4;font-weight:bold',
     )
   } else {

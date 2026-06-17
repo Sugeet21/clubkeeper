@@ -1220,6 +1220,7 @@ export default function Settings() {
               <ImportCountRow label="Canteen sales" value={importSuccess.counts.canteenSales} />
               <ImportCountRow label="Stock purchases" value={importSuccess.counts.stockPurchases} />
               <ImportCountRow label="Wallet transactions" value={importSuccess.counts.walletTxs} />
+              <ImportCountRow label="Bookings" value={importSuccess.counts.bookings} />
             </div>
           </div>
           <div

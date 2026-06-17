@@ -23,7 +23,8 @@ Database name is `ClubKeeperDB_<userId>` (Supabase UUID) for per-user isolation.
 | v13 | 10 Jun 2026 | Split payments + walk-in canteen sale + piggy. New tables `canteenSales` and `stockPurchases`. Adds optional `Session.paymentBreakdown`, `ClubSettings.piggyOpeningBalance` + `piggyStartedAt`. `.upgrade()` backfills completed sessions with `{cash: amount, upi: 0, wallet: 0}` and initialises piggy settings. ⚠ Items-revenue gap in backfill. |
 | v14 | 10–11 Jun 2026 | `ClubSettings.slug?` + `slugLocked?` for Player Hub. Additive, no `.upgrade()`. |
 | v15 | 10–11 Jun 2026 | `Customer.coinBalance?`. `WalletTransaction.balanceType?/coinDelta?/rupeeEquivalent?`. `ClubSettings` coin config fields + `acceptsTopups?` + `coinRedemptionModes?`. Same store strings as v14. No `.upgrade()`. |
-| **v16** | **10–11 Jun 2026** | **`Customer.firstTopupAt?/lastStreakBonusAt?/expiryAppliedAt?`. `ClubSettings` engagement fields. `WalletReferenceType` extended. Same store strings. No `.upgrade()`. Current version.** |
+| v16 | 10–11 Jun 2026 | `Customer.firstTopupAt?/lastStreakBonusAt?/expiryAppliedAt?`. `ClubSettings` engagement fields. `WalletReferenceType` extended. Same store strings. No `.upgrade()`. |
+| **v17** | **17 Jun 2026** | **Adds `bookings: 'id, tableId, slotStart, status, [tableId+slotStart]'` store (Phase 1 advance booking, #84). Adds optional `ClubSettings.acceptsBookings?/bookingAdvanceAmount?`. Additive, no `.upgrade()`. Current version.** |
 
 ### Schema Version 16 (current)
 

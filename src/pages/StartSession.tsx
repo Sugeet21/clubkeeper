@@ -2,10 +2,42 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/database'
-import { getActiveSessionForTable, startSession, getRecentPlayerNames } from '../db/queries'
+import {
+  getActiveSessionForTable,
+  startSession,
+  getRecentPlayerNames,
+  getLinkableBookingsForTable,
+  getUpcomingBookingsForTable,
+  linkBookingToSession,
+  BookingAlreadyConsumedError,
+} from '../db/queries'
 import { validatePlayerName, validateNote, NOTE_MAX } from '../lib/validation'
 import { NOTIFY_PRESETS } from '../lib/notifyPresets'
+import { Modal } from '../components/Modal'
 import type { BillingMode } from '../types'
+import type { Booking } from '../types/booking'
+
+// Booking-linkage window: confirmed booking whose slotStart is within ±30 min
+// of "now" auto-prompts the staff to attach it. Wider than 30 means stale
+// bookings would resurface; narrower means a customer arriving slightly early
+// gets ignored.
+const BOOKING_LINK_WINDOW_MS = 30 * 60_000
+// Walk-in conflict lookahead — warn if a confirmed booking exists in the next
+// 90 min on the same table when staff is about to start a walk-in. Warn-only,
+// never blocks the start.
+const WALKIN_CONFLICT_LOOKAHEAD_MS = 90 * 60_000
+
+function formatRupees(n: number): string {
+  return `₹${n.toLocaleString('en-IN')}`
+}
+
+function formatSlotTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString('en-IN', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
 
 // ─── Icon ─────────────────────────────────────────────────────────────────────
 
@@ -47,9 +79,53 @@ export default function StartSession() {
   const [customNotifyMinutes, setCustomNotifyMinutes] = useState('')
   const [showCustomNotify, setShowCustomNotify] = useState(false)
 
+  // Booking linkage (P1e): confirmed bookings within ±30 min on this table.
+  // `linkedBooking` is the staff-chosen one; setting it pre-fills the form +
+  // is passed to handleSubmit so linkBookingToSession runs in the same step.
+  const [linkableBookings, setLinkableBookings] = useState<Booking[]>([])
+  const [linkedBooking, setLinkedBooking] = useState<Booking | null>(null)
+  const [linkModalOpen, setLinkModalOpen] = useState(false)
+  const [upcomingBookings, setUpcomingBookings] = useState<Booking[]>([])
+
   useEffect(() => {
     getRecentPlayerNames().then(setRecentNames)
   }, [])
+
+  // Lookup linkable + upcoming bookings for this table. Re-runs only on tid
+  // change — `Date.now()` inside the effect is fine because StartSession is a
+  // mount-and-stay page; users don't sit on it for >30 min.
+  useEffect(() => {
+    if (!Number.isFinite(tid)) return
+    const now = Date.now()
+    let cancelled = false
+    Promise.all([
+      getLinkableBookingsForTable(tid, now, BOOKING_LINK_WINDOW_MS),
+      getUpcomingBookingsForTable(tid, now, WALKIN_CONFLICT_LOOKAHEAD_MS),
+    ]).then(([linkable, upcoming]) => {
+      if (cancelled) return
+      setLinkableBookings(linkable)
+      // Auto-open the link modal only if exactly one booking is in window AND
+      // the form hasn't been touched yet — staff that already typed a name
+      // probably isn't expecting an interstitial.
+      if (linkable.length >= 1) setLinkModalOpen(true)
+      setUpcomingBookings(upcoming.filter((b) => !linkable.some((l) => l.id === b.id)))
+    }).catch(() => { /* swallow — non-critical lookup */ })
+    return () => { cancelled = true }
+  }, [tid])
+
+  function applyLinkedBooking(b: Booking) {
+    setLinkedBooking(b)
+    setLinkModalOpen(false)
+    // Pre-fill name from booking — staff can still edit
+    if (b.playerName && !playerName.trim()) {
+      setPlayerName(b.playerName)
+    }
+    setError(null)
+  }
+
+  function clearLinkedBooking() {
+    setLinkedBooking(null)
+  }
 
   // Reset to per_hour if table has no frame rate
   useEffect(() => {
@@ -132,6 +208,24 @@ export default function StartSession() {
         notifyMs,
       )
 
+      // Booking linkage (P1e): if staff picked a booking from the prompt, mark
+      // it consumed + auto-link customer in the same step. We do NOT await this
+      // failing block-style — a linkage hiccup must not strand the session, so
+      // we surface the error but still navigate. Idempotent on retry.
+      if (linkedBooking) {
+        try {
+          await linkBookingToSession(linkedBooking.id, newId)
+        } catch (e) {
+          if (e instanceof BookingAlreadyConsumedError) {
+            // Race with another device — silent; session is fine, advance just
+            // won't be applied here. Owner can reconcile manually.
+            console.warn('[booking] linkage skipped — booking already consumed')
+          } else {
+            console.warn('[booking] linkage failed:', e)
+          }
+        }
+      }
+
       navigate(`/session/${newId}`, { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -181,6 +275,46 @@ export default function StartSession() {
       {error && (
         <div className="mx-4 mb-4 rounded-xl border border-busy/30 bg-busy/10 px-4 py-3 text-busy text-[13px]">
           {error}
+        </div>
+      )}
+
+      {/* Linked booking pill (P1e) — shows the attached booking; tap to unlink. */}
+      {linkedBooking && (
+        <div className="mx-4 mb-4 rounded-xl border border-accent/30 bg-accent/10 px-4 py-3 flex items-start gap-3">
+          <span className="text-accent text-lg leading-none mt-0.5">📅</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-accent text-[13px] font-semibold">
+              Linked to booking · {linkedBooking.playerName || linkedBooking.playerPhone}
+            </p>
+            <p className="text-text-dim text-[12px] mt-0.5">
+              {formatSlotTime(linkedBooking.slotStart)} · {linkedBooking.durationMin} min · advance {formatRupees(linkedBooking.advanceAmount)} paid
+            </p>
+          </div>
+          <button
+            onClick={clearLinkedBooking}
+            className="text-text-faint text-[12px] min-h-[36px] px-2"
+          >
+            Unlink
+          </button>
+        </div>
+      )}
+
+      {/* Walk-in conflict warning (P1e) — warn-only when starting a walk-in on
+          a table that has an upcoming reservation in the next 90 min. Never
+          blocks the start; staff judgment call. Hidden if the staff has
+          already linked the booking that's about to conflict. */}
+      {!linkedBooking && upcomingBookings.length > 0 && (
+        <div className="mx-4 mb-4 rounded-xl border border-paused/30 bg-paused/10 px-4 py-3 flex items-start gap-3">
+          <span className="text-paused text-lg leading-none mt-0.5">⚠️</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-paused text-[13px] font-semibold">
+              Booking coming up on this table
+            </p>
+            <p className="text-text-dim text-[12px] mt-0.5">
+              {upcomingBookings[0].playerName || upcomingBookings[0].playerPhone} at {formatSlotTime(upcomingBookings[0].slotStart)} ({upcomingBookings[0].durationMin} min)
+              {upcomingBookings.length > 1 ? ` · +${upcomingBookings.length - 1} more` : ''}
+            </p>
+          </div>
         </div>
       )}
 
@@ -366,6 +500,48 @@ export default function StartSession() {
           {submitting ? 'Starting…' : '▶  Start Timer Now'}
         </button>
       </div>
+
+      {/* Booking linkage modal — opens on mount when ≥1 confirmed booking is
+          within ±30 min on this table. Staff Links → fills form + marks
+          booking consumed at submit. Skip → fall back to walk-in. */}
+      <Modal
+        open={linkModalOpen}
+        onClose={() => setLinkModalOpen(false)}
+        title="Booking found for this table"
+      >
+        <div className="space-y-3">
+          <p className="text-text-dim text-[13px]">
+            Tap a booking to attach it to this session. The advance will be applied at payment time.
+          </p>
+          {linkableBookings.map((b) => {
+            const isSelected = linkedBooking?.id === b.id
+            return (
+              <button
+                key={b.id}
+                onClick={() => applyLinkedBooking(b)}
+                className={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
+                  isSelected
+                    ? 'border-accent bg-accent/10'
+                    : 'border-border bg-bg-elevated'
+                }`}
+              >
+                <p className="text-text text-[14px] font-semibold">
+                  {b.playerName?.trim() || '(no name)'} <span className="text-text-dim">· {b.playerPhone}</span>
+                </p>
+                <p className="text-text-dim text-[12px] mt-0.5">
+                  {formatSlotTime(b.slotStart)} · {b.durationMin} min · advance {formatRupees(b.advanceAmount)} paid
+                </p>
+              </button>
+            )
+          })}
+          <button
+            onClick={() => { setLinkModalOpen(false); clearLinkedBooking() }}
+            className="w-full min-h-[44px] rounded-xl border border-border bg-bg text-text-dim text-[13px] font-semibold"
+          >
+            Skip — treat as walk-in
+          </button>
+        </div>
+      </Modal>
     </div>
   )
 }

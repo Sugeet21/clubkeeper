@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import PlayerScanLayout from './PlayerScanLayout'
 import { UpiQrCard } from '../../components/UpiQrCard'
 import { getClubPublicInfo, submitTopupIntent, getTopupIntentStatus } from '../../lib/playerHubApi'
@@ -130,6 +130,7 @@ function Spinner({ size = 20 }: { size?: number }) {
 
 export default function PlayerScan() {
   const { clubSlug } = useParams<{ clubSlug: string }>()
+  const navigate = useNavigate()
   const [pageState, setPageState] = useState<PageState>('loading')
   const [clubInfo, setClubInfo] = useState<ClubPublicInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -650,6 +651,20 @@ export default function PlayerScan() {
             `Pay ₹${amount ? amount.toLocaleString('en-IN') : '—'} via UPI`
           )}
         </button>
+
+        {/* Book a table — Phase 1, #84. Second CTA below the topup submit.
+            Shown only when the club has opted in (`accepts_bookings=true` in
+            Supabase) AND there's at least one mirrored table with an `id`
+            (Part A defensive read — without ids we can't safely submit). */}
+        {clubInfo?.acceptsBookings && clubInfo.tablesJson.some((t) => typeof t.id === 'number') && (
+          <button
+            onClick={() => clubSlug && navigate(`/c/${clubSlug}/book`)}
+            className="w-full min-h-[52px] rounded-2xl font-bold text-[16px] bg-bg-card border border-accent/40 text-accent flex items-center justify-center gap-2"
+          >
+            <span>📅</span>
+            <span>Book a table</span>
+          </button>
+        )}
 
         {/* Pricing visibility (Phase 0, #84). Hidden entirely when the club
             hasn't enabled the display OR has no public tables_json yet. */}

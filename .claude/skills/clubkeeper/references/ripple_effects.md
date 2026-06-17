@@ -49,6 +49,7 @@ If you're changing... → Read sections...
 | New route (public or private), rename route, BottomNav, PUBLIC_PATHS | [Routing & Cross-cutting](#routing--cross-cutting) |
 | `/c/:slug`, `/poster/:slug`, PlayerScan, Poster, `playerHubApi.ts`, `supabasePublic.ts`, `slug.ts`, `TopupRealtimeBridge`, two-client rule | [Player Hub](#player-hub) |
 | Supabase project URL/anon key change, GitHub Actions, keep-alive ping | [Infra: Supabase Keep-Alive](#infra-supabase-keep-alive) |
+| `booking_intents`, `db.bookings`, `Booking` interface, `accepts_bookings`/`booking_advance_amount`, `submit_booking_intent`, `get_booking_intent_status`, BookingScreen, PendingBookingsModal, realtimeBookings, bookingInbox, `/bookings`, session linkage | [Advance Booking](#advance-booking) |
 | `tables_json`, `accepts_pricing_display`, `syncTablesJsonBySlug`, `PricingCard` | [Pricing Visibility on Player Hub](#pricing-visibility-on-player-hub) |
 | `coins.ts`, `CoinRedemptionPill`, `CoinTiersEditor`, `recordTopupWithCoins`, `coins_credited` RPC | [ClubCoins](#clubcoins) |
 | `streak.ts`, `coinExpiry.ts`, `dormancy.ts`, `nudge.ts`, `ExpirySweepRunner`, `BringBackList`, engagement config | [Engagement](#engagement) |
@@ -1042,6 +1043,79 @@ Cross-feature ripples:
 See also: `bug_patterns.md` Pattern T1 (active-session pre-check), `references/data_model.md` "Data Export Format (v16)".
 
 Last updated: 15 Jun 2026
+
+---
+
+## Advance Booking
+
+Owns: player advance booking on `/c/<slug>`, owner confirm/reject, persisted bookings record, session-time linkage. Hybrid model — Supabase `booking_intents` is a transient postbox (<=24h, lazy-cleaned inside `submit_booking_intent`); confirmed-or-later bookings cross to owner's Dexie `bookings` store (v17, P1b) which is the permanent record.
+
+Files in scope (P1a — shipped, migration pending manual run):
+- `supabase/migrations/20260617_booking_intents.sql` — clubs gains `accepts_bookings boolean default false` + `booking_advance_amount int default 100` (check 0–10000); creates `booking_intents` table with RLS `booking_intents_owner_select|update` mirroring topup_intents; SECURITY DEFINER RPCs `submit_booking_intent` (lazy cleanup + conflict check + rate limit) and `get_booking_intent_status`; `get_club_public_info` dropped+recreated with new OUT params; realtime publication + `replica identity full` on `booking_intents`.
+
+Files in scope (P1d — shipped):
+- `src/components/BookingRealtimeBridge.tsx` — clone of `TopupRealtimeBridge`. Mounted in `App.tsx` alongside it. Same Pattern A6/A7/A8 guards + gated on `club.acceptsBookings` (no channel for clubs that haven't opted in). Toast on INSERT unless owner is on `/bookings`.
+- `src/components/PendingBookingsModal.tsx` — clone of `PendingTopupsModal`. Per-row state machine. Confirm = `confirmBookingIntent` (Supabase first, returns server ISO `confirmed_at`) → `db.bookings.add({id: intent.id, ...})` with ConstraintError swallowed for idempotent retry. Reject = `rejectBookingIntent` (Supabase-only; nothing crosses to Dexie — hybrid postbox boundary held).
+- `src/pages/Bookings.tsx` — private `/bookings` route. `useLiveQuery` over `db.bookings.where('slotStart').between(windowStart, windowEnd)` (Pattern T4 — DB-static deps). Status badge derived in render body from `Date.now()`. Pending pill opens the modal. Empty state when `!acceptsBookings`.
+- `src/components/TopBar.tsx` — second badge: calendar icon between online dot and canteen. Gated on `settings.slug && settings.acceptsBookings`. Sky-400 dot when `usePendingBookingCount > 0`.
+- `src/pages/PlayerHubSettings.tsx` — "Accept bookings" toggle + "Advance per booking" input. Toggle: Supabase-first via `syncBookingConfigBySlug`. Input: onBlur commits Supabase then Dexie, inline error. Mount-effect's single `getOwnerClub()` now hydrates BOTH topups + bookings (still guarded with separate loaded flags so a remount doesn't override a just-saved toggle).
+- `src/App.tsx` — `<BookingRealtimeBridge />` mounted at app shell; `/bookings` route registered under `RequireAccess`.
+
+Files in scope (P1c — shipped):
+- `src/pages/player/BookingScreen.tsx` — new route `/c/:clubSlug/book`. 6-step wizard (gameType → table → date → time → duration → summary), 30-min steps in `[8:00, 24:00)` with today's past times hidden, durations from `rateCard` or fallback `[30,60,90,120]` priced off `ratePerHour`, advance from `clubInfo.bookingAdvanceAmount`, UPI deep-link + collapsible `<UpiQrCard>` reused verbatim, 8s payment-button delay, 3s poll, 10-min expire. UPI note prefix `BOOK-`.
+- `src/pages/player/PlayerScan.tsx` — "📅 Book a table" CTA below topup submit; gated on `acceptsBookings && tablesJson.some(t.id is number)`.
+- `src/App.tsx` — route registered under existing `/c/` public-route prefix.
+- `src/pages/PlayerHubSettings.tsx` — mount-effect one-shot self-heal: when `settings.slug` exists, fires `getAllTables() → syncTablesJsonBySlug` once per session (`sessionStorage` key `ck_tables_json_id_backfill_v17_<slug>`). Backfills `tables_json` rows mirrored pre-P1b that lacked `id` field.
+
+Files in scope (P1e-1 — shipped 17 Jun 2026):
+- `src/types/walletTransaction.ts` — `WalletReferenceType` extended with `'booking_advance'` (additive).
+- `src/db/queries.ts` — `linkBookingToSession(bookingId, sessionId)` (flat tx, marks booking consumed + lookup-or-creates customer by phone), `creditBookingAdvanceRemainder({customerId, amount, bookingId})` (flat tx, wallet credit + ledger row), `getLinkableBookingsForTable(tableId, now, ±windowMs)` + `getUpcomingBookingsForTable(tableId, now, lookaheadMs)` (use `[tableId+slotStart]` compound index for range scans), `BookingAlreadyConsumedError` (exported, swallowed by StartSession on race).
+- `src/pages/StartSession.tsx` — mount-effect queries linkable + upcoming bookings. Linkable auto-opens `<Modal>` "Booking found for this table" with per-row Link / Skip buttons. Linked booking renders as accent pill (player name/phone, slot time, advance ₹) with Unlink. Walk-in conflict banner (paused color) when `!linkedBooking && upcomingBookings.length > 0` — warn-only. `handleSubmit` calls `linkBookingToSession(newId)` after `startSession` returns; `BookingAlreadyConsumedError` is swallowed with console.warn (never strand the staff).
+- `src/components/PaymentSplitSheet.tsx` — new optional prop `prepaidAdvance?: number` (defaults 0). When > 0: `collectionTarget = max(0, total − prepaidAdvance)` drives the `canConfirm` boolean AND the quick-fill chips. Header label flips "Total" → "Collect" with subline "Total ₹Y − advance ₹Z" + green "+₹W to wallet" line when advance > total. `totalIsValid` widened to `total > 0 || safePrepaid > 0` so the all-prepaid case isn't blocked.
+- `src/pages/SessionDetail.tsx` — `useLiveQuery` over `db.bookings.where('status').equals('consumed').filter(b.consumedSessionId === sid)` (Pattern T4 — DB-static deps) exposes `linkedBooking`. An effect auto-links the booking's customer by phone (so wallet + name pre-fill before the sheet opens). `<PaymentSplitSheet prepaidAdvance={linkedBooking?.advanceAmount ?? 0} />`. At confirm: if linked booking + linked customer, the FULL `prepaidAdvance` is `creditBookingAdvanceRemainder`-credited to wallet first (one ledger row, `referenceType='booking_advance'`); then `breakdown.wallet` is bumped by `consumed = min(grandTotal, prepaidAdvance)` before calling `confirmPaymentAndStop`. Net effect: surplus stays in wallet, consumed flows through the standard wallet leg → existing P1 invariant `cash+upi+wallet === grandTotal` holds with ZERO changes to `recordSessionPaymentBreakdown` or `confirmPaymentAndStop`.
+
+Files in scope (P1e-2 — pending — deferred to next session):
+- `supabase/migrations/20260617_booking_cancel.sql` (new) — `cancel_booking_intent` SECURITY DEFINER RPC (slug + intentId + phone match for auth). Status update only — wallet refund happens client-side via realtime → owner Dexie + a queries-layer `cancelBookingIfAllowed` helper.
+- `src/lib/playerHubApi.ts` — `cancelBookingIntent({slug, intentId, phone})` via `supabasePublic`; owner-side `cancelBookingAndRefund(bookingId)` query.
+- `src/pages/player/BookingScreen.tsx` — Cancel button visible when `status='confirmed' && now < slotStart - 2h`. Hidden inside the 2h window. Refund flows through `BookingRealtimeBridge` → owner Dexie → wallet credit (`creditBookingAdvanceRemainder` reused with the same `referenceType='booking_advance'`).
+- No-show auto-expire sweep: extend `src/App.tsx` `ExpirySweepRunner` (or sibling) to also scan `db.bookings.where('status').equals('confirmed').filter(b.slotEnd + 30min < now && !b.consumedSessionId)` → mark `'no_show'`. No wallet credit (forfeit). Same 4h cadence as coin expiry.
+
+Invariants:
+- **Two-client rule (Pattern A7):** Player-side RPCs (`submitBookingIntent`, `getBookingIntentStatus`) use `supabasePublic` and `withTimeout(..., 8000, label)`. Owner-side `getPendingBookings`/confirm/reject use `supabase`.
+- **Pattern P2 — slug-targeted mirror:** `syncBookingConfigBySlug` MUST `.eq('slug', settings.slug)` — never `getOwnerClub() → .eq('id', club.id)`. Add `.select('id')` and warn on empty.
+- **Hybrid postbox boundary:** `pending` status lives ONLY in Supabase. Only `confirmed`/`rejected`/`expired` ever cross to Dexie, and ONLY `confirmed` writes a `db.bookings` row (via PendingBookingsModal confirm). `rejected` is status-only Supabase update; nothing to Dexie.
+- **Lazy cleanup:** Each `submit_booking_intent` call deletes `non-pending AND created_at < now() - interval '24 hours'`. No cron, no Pro plan. Free-tier safe.
+- **Conflict check:** `submit_booking_intent` rejects overlap with any `pending` OR `confirmed` row on same `(club_id, table_id)`. Player sees `slot_taken`.
+- **Rate limit:** Max 3 pending intents per phone per club in last 10 min (mirrors topup).
+- **Realtime (Pattern S6):** New `booking_intents` table added to `supabase_realtime` publication + `replica identity full` in the same migration — otherwise the bridge subscribes silently and receives nothing.
+- **Fallback-timer leak FIX (vs topup):** `realtimeBookings.ts` MUST cancel its 5s→30s polling timer once channel becomes `SUBSCRIBED`. Do NOT replicate the known leak from `realtimeTopups.ts`.
+- **No 'pending' in Dexie schema:** Booking status union in TS is `'confirmed'|'consumed'|'no_show'|'cancelled'`. Adding `'pending'` to Dexie is a violation of the hybrid model.
+- **Booking.id === intentId:** carry the Supabase intent UUID verbatim onto the Dexie row at confirm time. Foreign-key audit trail.
+- **Advance is server-config + slug-mirrored:** Single flat number per club (no per-table advance in v1). Owner edits in PlayerHubSettings → Supabase-first write → Dexie mirror → `syncBookingConfigBySlug` re-mirror on save.
+- **`StartSession` lookup window: ±30 min** of `Date.now()`. Sessions outside this window do NOT auto-prompt linkage. Owner can still manually link via /bookings (deferred to v2).
+- **Walk-in conflict (90-min lookahead):** Warn only, never block. Staff judgment call.
+- **Cancellation window (v1, hard-coded):** Player cancel >2h before `slot_start` → status `cancelled` + advance → wallet credit. <2h → no cancel button. Auto-expire 30 min after `slot_end` if not consumed → status `no_show` + advance forfeit (no wallet credit).
+- **Migration safety (pre-run):** `getClubPublicInfo` MUST default `acceptsBookings ?? false` and `bookingAdvanceAmount ?? 100` in the TS mapper so `/c/<slug>` does not crash for clubs whose migration hasn't been applied yet.
+- **Player-side defensive read (Part A):** BookingScreen MUST filter `tablesJson.filter(t => typeof t.id === 'number')` before showing the table picker. Pre-P1b `tables_json` rows lack `id` — submitting one would send `null` as `p_table_id` and the owner would get an unconfirmable intent. If filtered list is empty → "no_tables" state, never a broken picker.
+- **Time math (Pattern T1):** `slotStart` / `slotEnd` are Unix ms internally throughout BookingScreen and Dexie `bookings` rows. ISO timestamptz strings only at the Supabase RPC boundary (`submitBookingIntent` does `new Date(ms).toISOString()`). Never store ISO strings in Dexie or do clock-counter math.
+- **Today's past-time filter:** `buildTimeOptions(date, now)` filters `ms > now` so any 30-min step earlier than the current moment never appears on TODAY's chip grid. Future days get the full window.
+
+Cross-feature ripples:
+- → [Player Hub](#player-hub) — `getClubPublicInfo` RPC extended (signature change ripples to anyone reading the RPC). Two-client rule continues to apply.
+- → [Pricing Visibility on Player Hub](#pricing-visibility-on-player-hub) — `tables_json` is what BookingScreen reads to enumerate tables + tier prices. If `tables_json` is empty (slug-setup gap), booking flow MUST show "ask owner to refresh table list" rather than crash.
+- → [Topup Inbox & Realtime](#topup-inbox--realtime) — TopBar gains a SECOND badge; visual layout must accommodate both. `BookingRealtimeBridge` mounts alongside `TopupRealtimeBridge` in App.tsx with identical Pattern A6/A7/A8 guards.
+- → [Sessions](#sessions) — StartSession gains a "Booking found" modal pre-step; stop-payment in PaymentSplitSheet deducts advance.
+- → [Payment Split & Payment Mode](#payment-split--payment-mode) — `PaymentSplitSheet` now accepts a "prepaid advance" prop; if `final < advance`, surplus credits customer wallet (creating customer by phone if absent — mirrors topup confirm).
+- → [Wallet & Customers](#wallet--customers) — Advance refund on >2h cancel creates a wallet credit. WalletTransaction `referenceType` may need a new value `'booking_advance'` (decide at P1e — keep additive, off-default).
+- → [Settings](#settings) — `bookingAdvanceAmount` input added to PlayerHubSettings.
+- → [Schema & Migrations](#schema--migrations) — Dexie bumps to v17 (additive). `getAllDataForExport()` MUST include `bookings`; `ClubKeeperBackupV16` becomes `V17`; `CURRENT_SCHEMA_VERSION = 17`; `importEverything` clear+bulkAdd loop adds the store.
+- → [Import / Export / Reset](#import--export--reset) — every new Dexie store ripples here per `data_model.md` "Forward-compatibility rule".
+- → [Routing & Cross-cutting](#routing--cross-cutting) — `/bookings` registered as private (behind `RequireAccess`). PUBLIC_PATHS unchanged (booking screen lives under `/c/:slug`).
+- → [Auth & Access Guard](#auth--access-guard) — `BookingRealtimeBridge` gated identically to `TopupRealtimeBridge` (`dbReady && session && subscriptionLoaded && !isPlayerHubPath`).
+
+See also: `bug_patterns.md` Pattern P2 (slug-targeted mirror), Pattern S6 (realtime publication), Pattern A6/A7/A8 (Bridge guards), Pattern P1 (player doesn't recompute owner-derived values), Pattern T4 (live-query DB-static, current-time in render), Pattern W1 (workflow/deploy validation before debugging local-vs-prod). Decisions: D-PlayerHub-1 (Supabase-first), D-2026-06-11 (client-side owner update via RLS).
+
+Last updated: 17 Jun 2026 (P1e-1 session linkage + prepaid advance shipped — pending owner verification; P1e-2 player cancel + no-show sweep deferred to next session)
 
 ---
 

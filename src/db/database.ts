@@ -10,6 +10,7 @@ import type {
 } from '../types'
 import type { Customer } from '../types/customer'
 import type { WalletTransaction } from '../types/walletTransaction'
+import type { Booking } from '../types/booking'
 
 // ─── Per-user DB class ────────────────────────────────────────────────────────
 // Database name is `ClubKeeperDB_<userId>` so two different Google accounts
@@ -27,6 +28,7 @@ export class ClubKeeperDB extends Dexie {
   canteenItems!: Table<CanteenItem, number>
   canteenSales!: Table<CanteenSale, string>
   stockPurchases!: Table<StockPurchase, string>
+  bookings!: Table<Booking, string>
 
   constructor(dbName: string) {
     super(dbName)
@@ -301,6 +303,27 @@ export class ClubKeeperDB extends Dexie {
       canteenItems: '++id, name, isActive, sortOrder',
       canteenSales: 'id, createdAt, customerId',
       stockPurchases: 'id, createdAt, canteenItemId, source',
+    })
+    // Version 17: Advance booking (Phase 1 of #84) — additive only, no .upgrade().
+    // Adds bookings store. Permanent owner-side record of CONFIRMED player
+    // advance bookings. Pending intents live ONLY in Supabase (booking_intents).
+    // Indexes: tableId for /bookings agenda (per-table timeline), slotStart for
+    // window queries (StartSession ±30 min linkage lookup), status for filtering
+    // active vs consumed/cancelled. Compound [tableId+slotStart] for the most
+    // common query: "any confirmed booking on this table within ±30 min of now?"
+    // — Pattern T4 compliant when consumed from useLiveQuery.
+    // Adds optional ClubSettings.acceptsBookings + ClubSettings.bookingAdvanceAmount.
+    this.version(17).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+      bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
     })
   }
 }

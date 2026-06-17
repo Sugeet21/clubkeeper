@@ -24,9 +24,12 @@ import CustomerProfile from './pages/CustomerProfile'
 import Canteen from './pages/Canteen'
 import QuickSale from './pages/QuickSale'
 import Piggy from './pages/Piggy'
+import Bookings from './pages/Bookings'
 import PlayerScan from './pages/player/PlayerScan'
+import BookingScreen from './pages/player/BookingScreen'
 import Poster from './pages/Poster'
 import { TopupRealtimeBridge } from './components/TopupRealtimeBridge'
+import { BookingRealtimeBridge } from './components/BookingRealtimeBridge'
 
 const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback']
 // /c/ and /poster/ are public but use path prefixes — checked via startsWith in AppLayout
@@ -110,6 +113,9 @@ function AppLayout() {
     location.pathname.startsWith('/c/') ||
     location.pathname.startsWith('/poster/')
 
+  // `/c/<slug>/book` reuses the public Player Hub path-prefix guard above
+  // (`startsWith('/c/')`) — no change needed to AuthInitializer / Bridge skips.
+
   return (
     <>
       <ToastContainer />
@@ -121,6 +127,7 @@ function AppLayout() {
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/subscribe" element={<Subscribe />} />
           <Route path="/c/:clubSlug" element={<PlayerScan />} />
+          <Route path="/c/:clubSlug/book" element={<BookingScreen />} />
           <Route path="/poster/:slug" element={<Poster />} />
 
           {/* ── Private routes (auth + active subscription required) ──── */}
@@ -139,6 +146,7 @@ function AppLayout() {
             <Route path="/canteen" element={<Canteen />} />
             <Route path="/quick-sale" element={<QuickSale />} />
             <Route path="/piggy" element={<Piggy />} />
+            <Route path="/bookings" element={<Bookings />} />
           </Route>
         </Routes>
       </div>
@@ -155,6 +163,7 @@ export default function App() {
         <AudioUnlocker />
         <ExpirySweepRunner />
         <TopupRealtimeBridge />
+        <BookingRealtimeBridge />
         <AppLayout />
       </BrowserRouter>
     </ErrorBoundary>

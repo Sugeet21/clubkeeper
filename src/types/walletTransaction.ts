@@ -12,6 +12,7 @@ export type WalletReferenceType =
   | 'welcome_bonus'    // Phase 3: first-topup one-shot bonus
   | 'streak_bonus'     // Phase 3: N distinct visit-days in window bonus
   | 'engagement_log'   // Phase 3: zero-balance audit row when nudge is sent
+  | 'booking_advance'  // v17 Phase 1 P1e: advance carried into a linked session (excess credited; cancel refund)
 
 export interface WalletTransaction {
   id: string                            // UUID v4

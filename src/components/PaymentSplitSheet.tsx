@@ -15,6 +15,14 @@ interface PaymentSplitSheetProps {
   allowCustomerLink?: boolean
   // Called whenever the linked customer changes (linked or unlinked).
   onCustomerLinked?: (customer: Customer | null) => void
+  // v17 P1e: prepaid booking advance. When > 0:
+  //  - Sheet shows an "Advance paid" line in the header (₹ amount).
+  //  - Steppers collect the REMAINING balance only (total - prepaidAdvance,
+  //    clamped to ≥ 0). When advance ≥ total, the steppers all default to 0
+  //    and Confirm is immediately allowed; the parent is responsible for
+  //    crediting the surplus to the customer's wallet via
+  //    creditBookingAdvanceRemainder before/after confirming.
+  prepaidAdvance?: number
   onCancel: () => void
   onConfirm: (
     breakdown: { cash: number; upi: number; wallet: number },
@@ -43,6 +51,7 @@ export function PaymentSplitSheet({
   initialCustomer,
   allowCustomerLink = true,
   onCustomerLinked,
+  prepaidAdvance = 0,
   onCancel,
   onConfirm,
 }: PaymentSplitSheetProps) {
@@ -81,13 +90,21 @@ export function PaymentSplitSheet({
 
   const walletAvailable = linkedCustomer?.walletBalance ?? 0
   const walletEnabled = linkedCustomer !== null && walletAvailable > 0
+  // Prepaid advance reduces what the customer still owes today. When advance
+  // ≥ total, collection target is 0 — confirm is immediately allowed (steppers
+  // all stay 0; parent credits the surplus to wallet separately).
+  const safePrepaid = Math.max(0, Math.floor(prepaidAdvance))
+  const collectionTarget = Math.max(0, total - safePrepaid)
   // SINGLE source of truth for the "does the breakdown match?" check.
   // The Confirm button's `disabled` prop AND the status line BOTH read this.
   const sum = cash + upi + wallet
-  const remaining = total - sum
-  const matches = sum === total
-  const over = sum > total
-  const totalIsValid = Number.isFinite(total) && total > 0
+  const remaining = collectionTarget - sum
+  const matches = sum === collectionTarget
+  const over = sum > collectionTarget
+  // Total is "valid for collection" if either positive remaining OR a prepaid
+  // advance covers it entirely. Zero-with-no-advance still falls through to the
+  // "No amount to record" guard (caller is expected to short-circuit upstream).
+  const totalIsValid = Number.isFinite(total) && (total > 0 || safePrepaid > 0)
   // Confirm is gated on the EXACT same `matches` boolean used by the status line.
   const canConfirm = matches && !submitting && totalIsValid
 
@@ -110,16 +127,17 @@ export function PaymentSplitSheet({
 
   function quickFill(mode: 'cash' | 'upi' | 'half' | 'wallet') {
     setError(null)
-    if (mode === 'cash') { setCash(total); setUpi(0); setWallet(0); return }
-    if (mode === 'upi')  { setCash(0); setUpi(total); setWallet(0); return }
+    const target = collectionTarget
+    if (mode === 'cash') { setCash(target); setUpi(0); setWallet(0); return }
+    if (mode === 'upi')  { setCash(0); setUpi(target); setWallet(0); return }
     if (mode === 'half') {
-      const half = Math.floor(total / 2)
-      setCash(half); setUpi(total - half); setWallet(0); return
+      const half = Math.floor(target / 2)
+      setCash(half); setUpi(target - half); setWallet(0); return
     }
     // wallet — cap at availableBalance, send the remainder to cash
     if (mode === 'wallet') {
-      const w = Math.min(total, walletAvailable)
-      setWallet(w); setCash(total - w); setUpi(0); return
+      const w = Math.min(target, walletAvailable)
+      setWallet(w); setCash(target - w); setUpi(0); return
     }
   }
 
@@ -162,11 +180,21 @@ export function PaymentSplitSheet({
             </div>
             <div className="text-right">
               <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint">
-                Total
+                {safePrepaid > 0 ? 'Collect' : 'Total'}
               </p>
               <p className="text-accent font-mono font-bold text-xl tabular-nums">
-                ₹{total.toLocaleString('en-IN')}
+                ₹{(safePrepaid > 0 ? collectionTarget : total).toLocaleString('en-IN')}
               </p>
+              {safePrepaid > 0 && (
+                <p className="text-text-faint text-[11px] mt-0.5">
+                  Total ₹{total.toLocaleString('en-IN')} − advance ₹{safePrepaid.toLocaleString('en-IN')}
+                  {safePrepaid > total && (
+                    <span className="block text-free">
+                      +₹{(safePrepaid - total).toLocaleString('en-IN')} to wallet
+                    </span>
+                  )}
+                </p>
+              )}
             </div>
           </div>
         </div>

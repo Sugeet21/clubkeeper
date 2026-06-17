@@ -38,6 +38,11 @@ export async function getClubPublicInfo(slug: string): Promise<ClubPublicInfo | 
     coinTiers: (row.coin_tiers_json as CoinTier[] | null) ?? [],
     tablesJson: (row.tables_json as PublicTableInfo[] | null) ?? [],
     acceptsPricingDisplay: (row.accepts_pricing_display as boolean | null) ?? true,
+    // v17 — pre-migration safe: if the RPC was last deployed before booking
+    // columns existed, the row keys come back undefined. Default both fields
+    // so /c/<slug> never crashes for an un-migrated club.
+    acceptsBookings: (row.accepts_bookings as boolean | null) ?? false,
+    bookingAdvanceAmount: (row.booking_advance_amount as number | null) ?? 100,
   }
 }
 
@@ -97,12 +102,15 @@ export interface ClubRow {
   acceptsTopups: boolean
   coinsEnabled: boolean
   coinTiers: CoinTier[]
+  // v17 — advance booking
+  acceptsBookings: boolean
+  bookingAdvanceAmount: number
 }
 
 export async function getOwnerClub(): Promise<ClubRow | null> {
   const { data, error } = await supabase
     .from('clubs')
-    .select('id, slug, club_name, upi_id, accepts_topups, coins_enabled, coin_tiers_json')
+    .select('id, slug, club_name, upi_id, accepts_topups, coins_enabled, coin_tiers_json, accepts_bookings, booking_advance_amount')
     .maybeSingle()
   if (error) throw error
   if (!data) return null
@@ -114,6 +122,8 @@ export async function getOwnerClub(): Promise<ClubRow | null> {
     acceptsTopups: data.accepts_topups as boolean,
     coinsEnabled: (data.coins_enabled as boolean | null) ?? false,
     coinTiers: (data.coin_tiers_json as CoinTier[] | null) ?? [],
+    acceptsBookings: (data.accepts_bookings as boolean | null) ?? false,
+    bookingAdvanceAmount: (data.booking_advance_amount as number | null) ?? 100,
   }
 }
 
@@ -255,6 +265,11 @@ export async function syncTablesJsonBySlug(
     .filter((t) => !t.outOfService)
     .map((t) => {
       const row: PublicTableInfo = {
+        // v17: include the Dexie GameTable.id so player BookingScreen can round-trip
+        // a table identifier back to the owner via submit_booking_intent. This is
+        // a meaningless integer outside the owner's IndexedDB (no PII) — safe to
+        // expose, and required for the hybrid booking model.
+        id: t.id,
         name: t.name,
         gameType: t.gameType,
         ratePerHour: t.ratePerHour,
@@ -283,5 +298,165 @@ export async function syncTablesJsonBySlug(
     // current auth user. Surfaces silent mismatches that would otherwise stay
     // invisible (the original Phase 0 bug).
     console.warn(`[syncTablesJsonBySlug] update matched 0 rows for slug="${slug}" — check that the owner's club row has this slug.`)
+  }
+}
+
+// ─── v17: Advance booking (Phase 1 of #84) ───────────────────────────────────
+// Mirrors the topup pattern exactly. Public-facing RPCs go through
+// supabasePublic (Pattern A7 / two-client rule); owner-side mutations go through
+// the authenticated `supabase` client and rely on RLS for authorization
+// (per D-2026-06-11 — no Vercel function needed).
+
+// Public: anon submits a booking intent. Returns the new intent id (UUID).
+// `slotStartIso` MUST be an ISO timestamptz string in the future.
+export async function submitBookingIntent(payload: {
+  slug: string
+  tableId: number
+  tableName: string
+  gameType: string
+  playerName: string
+  playerPhone: string                  // 10 digits, no +91
+  slotStartIso: string                 // ISO timestamptz
+  durationMin: number                  // integer 15..720
+  tierPrice: number                    // integer ₹
+  advanceAmount: number                // integer ₹
+  notes?: string
+}): Promise<string> {
+  const { data, error } = await withTimeout(
+    supabasePublic.rpc('submit_booking_intent', {
+      p_slug: payload.slug,
+      p_table_id: payload.tableId,
+      p_table_name: payload.tableName,
+      p_game_type: payload.gameType,
+      p_player_name: payload.playerName || '',
+      p_player_phone: payload.playerPhone,
+      p_slot_start: payload.slotStartIso,
+      p_duration_min: payload.durationMin,
+      p_tier_price: payload.tierPrice,
+      p_advance_amount: payload.advanceAmount,
+      p_notes: payload.notes ?? '',
+    }),
+    8000,
+    'submit_booking_intent',
+  )
+  if (error) {
+    const msg = error.message ?? ''
+    if (msg.includes('club_not_found')) throw new Error('club_not_found')
+    if (msg.includes('bookings_disabled')) throw new Error('bookings_disabled')
+    if (msg.includes('slot_in_past')) throw new Error('slot_in_past')
+    if (msg.includes('slot_taken')) throw new Error('slot_taken')
+    if (msg.includes('rate_limited')) throw new Error('rate_limited')
+    throw error
+  }
+  return data as string
+}
+
+export async function getBookingIntentStatus(
+  intentId: string,
+): Promise<{ status: string; confirmedAt: string | null } | null> {
+  const { data, error } = await withTimeout(
+    supabasePublic.rpc('get_booking_intent_status', { p_intent_id: intentId }),
+    8000,
+    'get_booking_intent_status',
+  )
+  if (error) throw error
+  if (!data || data.length === 0) return null
+  return {
+    status: data[0].status as string,
+    confirmedAt: (data[0].confirmed_at as string | null) ?? null,
+  }
+}
+
+// Owner-authenticated: read all pending booking intents for this club.
+export interface PendingBookingRow {
+  id: string
+  tableId: number
+  tableName: string
+  gameType: string
+  playerName: string | null
+  playerPhone: string
+  slotStart: string                    // ISO from Supabase
+  slotEnd: string
+  durationMin: number
+  tierPrice: number
+  advanceAmount: number
+  notes: string | null
+  createdAt: string
+}
+
+export async function getPendingBookings(clubId: string): Promise<PendingBookingRow[]> {
+  const { data, error } = await supabase
+    .from('booking_intents')
+    .select(
+      'id, table_id, table_name, game_type, player_name, player_phone, slot_start, slot_end, duration_min, tier_price, advance_amount, notes, created_at',
+    )
+    .eq('club_id', clubId)
+    .eq('status', 'pending')
+    .order('slot_start', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map((r) => ({
+    id: r.id as string,
+    tableId: r.table_id as number,
+    tableName: r.table_name as string,
+    gameType: r.game_type as string,
+    playerName: (r.player_name as string | null) ?? null,
+    playerPhone: r.player_phone as string,
+    slotStart: r.slot_start as string,
+    slotEnd: r.slot_end as string,
+    durationMin: r.duration_min as number,
+    tierPrice: r.tier_price as number,
+    advanceAmount: r.advance_amount as number,
+    notes: (r.notes as string | null) ?? null,
+    createdAt: r.created_at as string,
+  }))
+}
+
+// Owner-authenticated: flip intent → confirmed (RLS narrows to owner's club).
+// Returns the confirmed_at server timestamp so the caller can use the SAME
+// value when writing the Dexie booking row (avoids clock-skew drift between
+// Supabase and the local machine).
+export async function confirmBookingIntent(intentId: string): Promise<string> {
+  const confirmedAt = new Date().toISOString()
+  const { error } = await supabase
+    .from('booking_intents')
+    .update({ status: 'confirmed', confirmed_at: confirmedAt })
+    .eq('id', intentId)
+  if (error) throw error
+  return confirmedAt
+}
+
+export async function rejectBookingIntent(intentId: string): Promise<void> {
+  const { error } = await supabase
+    .from('booking_intents')
+    .update({ status: 'rejected' })
+    .eq('id', intentId)
+  if (error) throw error
+}
+
+// Fire-and-forget: mirror booking config (accepts_bookings + advance amount) to
+// the Supabase clubs row. Targets by slug — Pattern P2 — never via getOwnerClub.
+// Errors are warn-only; Dexie is authoritative for owner-side reads.
+export async function syncBookingConfigBySlug(
+  slug: string,
+  acceptsBookings: boolean,
+  bookingAdvanceAmount: number,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('clubs')
+    .update({
+      accepts_bookings: acceptsBookings,
+      booking_advance_amount: bookingAdvanceAmount,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('slug', slug)
+    .select('id')
+  if (error) {
+    console.warn('[syncBookingConfigBySlug] Supabase sync failed:', error.message)
+    return
+  }
+  if (!data || data.length === 0) {
+    console.warn(
+      `[syncBookingConfigBySlug] update matched 0 rows for slug="${slug}" — check that the owner's club row has this slug.`,
+    )
   }
 }

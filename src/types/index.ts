@@ -169,6 +169,9 @@ export interface ClubSettings {
   dormancyEnabled?: boolean
   dormantThresholdDays?: number  // default 14
   nudgeTemplate?: string
+  // v17: advance booking (Phase 1 of #84)
+  acceptsBookings?: boolean       // mirrors Supabase clubs.accepts_bookings; treat missing as false
+  bookingAdvanceAmount?: number   // ₹; default 100; range 0–10000
 }
 
 export interface CanteenItem {

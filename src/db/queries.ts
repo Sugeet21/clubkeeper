@@ -17,15 +17,16 @@ import type {
 } from '../types'
 import type { Customer } from '../types/customer'
 import type { WalletTransaction } from '../types/walletTransaction'
+import type { Booking } from '../types/booking'
 
 /**
  * Current Dexie schema version. Mirror of `this.version(N)` in `database.ts`.
  * Used by export/import to gate forward-compatibility. Bump when database.ts bumps.
  */
-export const CURRENT_SCHEMA_VERSION = 16
+export const CURRENT_SCHEMA_VERSION = 17
 
-export interface ClubKeeperBackupV16 {
-  schemaVersion: 16
+export interface ClubKeeperBackupV17 {
+  schemaVersion: 17
   exportedAt: number
   tables: GameTable[]
   sessions: Session[]
@@ -36,7 +37,14 @@ export interface ClubKeeperBackupV16 {
   canteenItems: CanteenItem[]
   canteenSales: CanteenSale[]
   stockPurchases: StockPurchase[]
+  bookings: Booking[]
 }
+
+// Kept exported under the old name for any downstream code that hasn't been
+// updated yet — TS structural typing means the V17 superset is assignable
+// where V16 was required (every V16 field is still present). Will be removed
+// once all call sites import V17 directly.
+export type ClubKeeperBackupV16 = ClubKeeperBackupV17
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -501,6 +509,7 @@ export async function resetEverything(): Promise<void> {
       db.canteenItems,
       db.canteenSales,
       db.stockPurchases,
+      db.bookings,
     ],
     async () => {
       await Promise.all([
@@ -513,13 +522,14 @@ export async function resetEverything(): Promise<void> {
         db.canteenItems.clear(),
         db.canteenSales.clear(),
         db.stockPurchases.clear(),
+        db.bookings.clear(),
       ])
     },
   )
   await seedIfEmpty()
 }
 
-export async function getAllDataForExport(): Promise<ClubKeeperBackupV16> {
+export async function getAllDataForExport(): Promise<ClubKeeperBackupV17> {
   const [
     tables,
     sessions,
@@ -530,6 +540,7 @@ export async function getAllDataForExport(): Promise<ClubKeeperBackupV16> {
     canteenItems,
     canteenSales,
     stockPurchases,
+    bookings,
   ] = await Promise.all([
     db.gameTables.toArray(),
     db.sessions.toArray(),
@@ -540,6 +551,7 @@ export async function getAllDataForExport(): Promise<ClubKeeperBackupV16> {
     db.canteenItems.toArray(),
     db.canteenSales.toArray(),
     db.stockPurchases.toArray(),
+    db.bookings.toArray(),
   ])
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -553,6 +565,7 @@ export async function getAllDataForExport(): Promise<ClubKeeperBackupV16> {
     canteenItems,
     canteenSales,
     stockPurchases,
+    bookings,
   }
 }
 
@@ -1835,6 +1848,142 @@ export async function redeemCoins(params: {
     await db.customers.update(customerId, {
       coinBalance: newCoinBalance,
       lastVisitAt: Date.now(),
+    })
+  })
+}
+
+// ─── v17 Phase 1 P1e — Advance booking session linkage ───────────────────────
+
+export class BookingAlreadyConsumedError extends Error {
+  constructor() {
+    super('This booking has already been linked to a session.')
+    this.name = 'BookingAlreadyConsumedError'
+  }
+}
+
+/**
+ * Find confirmed bookings whose slotStart is within ±windowMs of `now` for a
+ * given table. Used by StartSession on mount to surface a "Booking found"
+ * prompt. Excludes anything already consumed/cancelled/no_show.
+ */
+export async function getLinkableBookingsForTable(
+  tableId: number,
+  now: number,
+  windowMs: number,
+): Promise<Booking[]> {
+  const low = now - windowMs
+  const high = now + windowMs
+  return db.bookings
+    .where('[tableId+slotStart]')
+    .between([tableId, low], [tableId, high], true, true)
+    .filter((b) => b.status === 'confirmed' && b.consumedSessionId === undefined)
+    .toArray()
+}
+
+/**
+ * Find confirmed bookings on a table whose slotStart falls inside (now, now+lookaheadMs].
+ * Used by StartSession to render a walk-in conflict warning when staff is about
+ * to start a session on a table that has an upcoming reservation. Warn-only —
+ * never blocks the walk-in.
+ */
+export async function getUpcomingBookingsForTable(
+  tableId: number,
+  now: number,
+  lookaheadMs: number,
+): Promise<Booking[]> {
+  return db.bookings
+    .where('[tableId+slotStart]')
+    .between([tableId, now], [tableId, now + lookaheadMs], false, true)
+    .filter((b) => b.status === 'confirmed' && b.consumedSessionId === undefined)
+    .toArray()
+}
+
+/**
+ * Atomically attach a confirmed booking to a session.
+ *
+ * - Marks booking.status = 'consumed' and sets booking.consumedSessionId.
+ * - If a customer exists by playerPhone, returns customerId; otherwise creates
+ *   one and returns its id so the caller can link it in PaymentSplitSheet.
+ *
+ * Single flat tx (Pattern D7). Throws BookingAlreadyConsumedError if the
+ * booking was raced to 'consumed' by a parallel link attempt.
+ */
+export async function linkBookingToSession(
+  bookingId: string,
+  sessionId: number,
+): Promise<{ customerId: string }> {
+  return db.transaction('rw', db.bookings, db.customers, async () => {
+    const booking = await db.bookings.get(bookingId)
+    if (!booking) throw new Error('Booking not found.')
+    if (booking.status !== 'confirmed' || booking.consumedSessionId !== undefined) {
+      throw new BookingAlreadyConsumedError()
+    }
+
+    // Customer lookup-or-create by phone. We do NOT touch walletBalance here;
+    // the advance gets applied at payment time via PaymentSplitSheet.
+    let customer = await db.customers.where('phone').equals(booking.playerPhone).first()
+    if (!customer) {
+      const now = Date.now()
+      customer = {
+        id: crypto.randomUUID(),
+        phone: booking.playerPhone,
+        name: booking.playerName?.trim() || null,
+        walkInCode: null,
+        walletBalance: 0,
+        createdAt: now,
+        lastVisitAt: now,
+      }
+      await db.customers.add(customer)
+    } else {
+      await db.customers.update(customer.id, { lastVisitAt: Date.now() })
+    }
+
+    await db.bookings.update(bookingId, {
+      status: 'consumed',
+      consumedSessionId: sessionId,
+    })
+
+    return { customerId: customer.id }
+  })
+}
+
+/**
+ * Credit the unused portion of a booking advance back to the customer's wallet.
+ *
+ * Used by PaymentSplitSheet when `prepaidAdvance > finalGrandTotal`. Writes a
+ * WalletTransaction (type='credit', referenceType='booking_advance') and bumps
+ * customer.walletBalance. Single flat tx (Pattern D7); MUST NOT be called from
+ * inside another transaction.
+ */
+export async function creditBookingAdvanceRemainder(params: {
+  customerId: string
+  amount: number
+  bookingId: string
+}): Promise<void> {
+  const { customerId, amount, bookingId } = params
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error('Remainder amount must be a positive integer.')
+  }
+  await db.transaction('rw', db.customers, db.walletTransactions, async () => {
+    const customer = await db.customers.get(customerId)
+    if (!customer) throw new Error('Customer not found.')
+    const now = Date.now()
+    const newBalance = customer.walletBalance + amount
+    await db.walletTransactions.add({
+      id: crypto.randomUUID(),
+      customerId,
+      type: 'credit',
+      amount,
+      balanceAfter: newBalance,
+      paymentMode: null,
+      referenceType: 'booking_advance',
+      referenceId: bookingId,
+      notes: 'Unused booking advance credited to wallet',
+      createdAt: now,
+    })
+    await db.customers.update(customerId, {
+      walletBalance: newBalance,
+      lastVisitAt: now,
     })
   })
 }

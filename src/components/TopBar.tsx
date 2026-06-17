@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { usePendingTopupCount } from '../store/topupInbox'
+import { usePendingBookingCount } from '../store/bookingInbox'
+import { useSettings } from '../hooks/useLiveData'
 
 interface Props {
   onWalletPress?: () => void
@@ -13,6 +15,11 @@ export default function TopBar({ onWalletPress, onQuickSalePress }: Props) {
   const subtitle = format(new Date(), "EEE · d MMM · h:mm a")
   const [online, setOnline] = useState(navigator.onLine)
   const pendingTopups = usePendingTopupCount()
+  const pendingBookings = usePendingBookingCount()
+  const settings = useSettings()
+  // Booking icon only renders when the owner has opted in. settings.slug is
+  // also required because the realtime channel needs a clubs row to exist.
+  const showBookingIcon = Boolean(settings?.slug && settings?.acceptsBookings)
 
   useEffect(() => {
     const on = () => setOnline(true)
@@ -39,6 +46,29 @@ export default function TopBar({ onWalletPress, onQuickSalePress }: Props) {
         )}
         {online && (
           <span className="w-1.5 h-1.5 rounded-full bg-free shrink-0 mr-1" />
+        )}
+        {/* Bookings button — between online dot and canteen. Only shown when
+            the club has opted in. Sky/blue dot distinguishes booking pending
+            from the amber topup pending dot on the wallet icon next to it. */}
+        {showBookingIcon && (
+          <button
+            onClick={() => navigate('/bookings')}
+            className="w-9 h-9 relative flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors"
+            aria-label="Bookings"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+            {pendingBookings > 0 && (
+              <span
+                className="absolute top-1 right-1 w-2 h-2 rounded-full bg-sky-400"
+                aria-hidden="true"
+              />
+            )}
+          </button>
         )}
         {/* Canteen button — between online dot and wallet */}
         <button

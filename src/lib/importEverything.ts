@@ -11,6 +11,7 @@ import type {
 } from '../types'
 import type { Customer } from '../types/customer'
 import type { WalletTransaction } from '../types/walletTransaction'
+import type { Booking } from '../types/booking'
 
 export type ImportFailureReason =
   | 'parse_error'
@@ -32,6 +33,7 @@ export interface ImportSuccess {
     canteenItems: number
     canteenSales: number
     stockPurchases: number
+    bookings: number
   }
   walletBalanceTotal: number
 }
@@ -56,6 +58,7 @@ interface BackupShape {
   canteenItems?: unknown
   canteenSales?: unknown
   stockPurchases?: unknown
+  bookings?: unknown
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -145,6 +148,11 @@ export async function importEverythingFromFile(file: File): Promise<ImportResult
   if (!('settings' in candidate)) {
     return { ok: false, reason: 'not_clubkeeper_file', detail: 'Missing settings field' }
   }
+  // bookings is v17+; pre-v17 backups omit it. Accept missing as empty array
+  // so older exports import cleanly onto a current build.
+  if (candidate.bookings !== undefined && !Array.isArray(candidate.bookings)) {
+    return { ok: false, reason: 'not_clubkeeper_file', detail: 'bookings field must be an array if present' }
+  }
 
   // 5. Schema version gate
   if (schemaVersion > CURRENT_SCHEMA_VERSION) {
@@ -161,6 +169,7 @@ export async function importEverythingFromFile(file: File): Promise<ImportResult
   const canteenItems = candidate.canteenItems as CanteenItem[]
   const canteenSales = candidate.canteenSales as CanteenSale[]
   const stockPurchases = candidate.stockPurchases as StockPurchase[]
+  const bookings = (candidate.bookings as Booking[] | undefined) ?? []
 
   // 6. Pre-check: refuse if any active session in CURRENT DB
   try {
@@ -189,6 +198,7 @@ export async function importEverythingFromFile(file: File): Promise<ImportResult
         db.canteenItems,
         db.canteenSales,
         db.stockPurchases,
+        db.bookings,
       ],
       async () => {
         await Promise.all([
@@ -201,6 +211,7 @@ export async function importEverythingFromFile(file: File): Promise<ImportResult
           db.canteenItems.clear(),
           db.canteenSales.clear(),
           db.stockPurchases.clear(),
+          db.bookings.clear(),
         ])
 
         // Bulk-insert each store. bulkAdd preserves ids verbatim — critical for FK links.
@@ -213,6 +224,7 @@ export async function importEverythingFromFile(file: File): Promise<ImportResult
         if (canteenItems.length) await db.canteenItems.bulkAdd(canteenItems)
         if (canteenSales.length) await db.canteenSales.bulkAdd(canteenSales)
         if (stockPurchases.length) await db.stockPurchases.bulkAdd(stockPurchases)
+        if (bookings.length) await db.bookings.bulkAdd(bookings)
       },
     )
   } catch (err) {
@@ -244,6 +256,7 @@ export async function importEverythingFromFile(file: File): Promise<ImportResult
       canteenItems: canteenItems.length,
       canteenSales: canteenSales.length,
       stockPurchases: stockPurchases.length,
+      bookings: bookings.length,
     },
     walletBalanceTotal,
   }

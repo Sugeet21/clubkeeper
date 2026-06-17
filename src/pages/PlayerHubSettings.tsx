@@ -6,7 +6,8 @@ import { CoinTiersEditor } from '../components/CoinTiersEditor'
 import { EngagementConfigCard } from '../components/EngagementConfigCard'
 import { updateSettings } from '../db/queries'
 import { generateSlug, validateSlug, isSlugAvailable } from '../lib/slug'
-import { upsertClub, updateAcceptsTopups, getOwnerClub, syncCoinConfig } from '../lib/playerHubApi'
+import { upsertClub, updateAcceptsTopups, getOwnerClub, syncCoinConfig, syncTablesJsonBySlug, syncBookingConfigBySlug } from '../lib/playerHubApi'
+import { getAllTables } from '../db/queries'
 import { useToastStore } from '../store/toastStore'
 import { DEFAULT_COIN_CONFIG, resolveCoinConfig } from '../lib/coins'
 import type { ClubSettings, CoinTier } from '../types'
@@ -80,6 +81,13 @@ export function PlayerHubSettings({ settings }: Props) {
   const [acceptsTopups, setAcceptsTopups] = useState(settings?.acceptsTopups ?? true)
   const [toggling, setToggling] = useState(false)
   const [topupsLoaded, setTopupsLoaded] = useState(false)
+  // ── Booking opt-in + advance (Phase 1 of #84) ────────────────────────────
+  const [acceptsBookings, setAcceptsBookings] = useState(settings?.acceptsBookings ?? false)
+  const [bookingTogglingState, setBookingTogglingState] = useState(false)
+  const [bookingsLoaded, setBookingsLoaded] = useState(false)
+  const [advanceDraft, setAdvanceDraft] = useState(String(settings?.bookingAdvanceAmount ?? 100))
+  const [advanceError, setAdvanceError] = useState<string | null>(null)
+  const [advanceSaving, setAdvanceSaving] = useState(false)
 
   // ── ClubCoins local state ─────────────────────────────────────────────────
   const coinConfig = resolveCoinConfig(settings ?? {})
@@ -167,17 +175,62 @@ export function PlayerHubSettings({ settings }: Props) {
     }
   }
 
-  // ── Load accepts_topups from Supabase on mount if slug already exists ─────
-  // Only runs once (guarded by topupsLoaded) — prevents remount from overriding a just-saved toggle
+  // ── Load accepts_topups + accepts_bookings from Supabase on mount if slug
+  // already exists. Both guarded with their own "loaded" flag so a remount
+  // doesn't override a just-saved toggle. Single getOwnerClub() round-trip
+  // serves both — cheaper than two.
   useEffect(() => {
-    if (!settings?.slug || topupsLoaded) return
+    if (!settings?.slug || (topupsLoaded && bookingsLoaded)) return
     getOwnerClub()
       .then((club) => {
-        if (club) setAcceptsTopups(club.acceptsTopups)
+        if (club) {
+          if (!topupsLoaded) setAcceptsTopups(club.acceptsTopups)
+          if (!bookingsLoaded) {
+            setAcceptsBookings(club.acceptsBookings)
+            setAdvanceDraft(String(club.bookingAdvanceAmount))
+            // Mirror to Dexie if the local value is missing so the toggle in
+            // TopBar / Bookings stays consistent on reload.
+            if (settings?.acceptsBookings === undefined || settings?.bookingAdvanceAmount === undefined) {
+              void updateSettings({
+                acceptsBookings: club.acceptsBookings,
+                bookingAdvanceAmount: club.bookingAdvanceAmount,
+              })
+            }
+          }
+        }
         setTopupsLoaded(true)
+        setBookingsLoaded(true)
       })
-      .catch(() => { setTopupsLoaded(true) })
-  }, [settings?.slug, topupsLoaded])
+      .catch(() => { setTopupsLoaded(true); setBookingsLoaded(true) })
+  }, [settings?.slug, topupsLoaded, bookingsLoaded, settings?.acceptsBookings, settings?.bookingAdvanceAmount])
+
+  // ── v17 self-heal: re-mirror tables_json once per session ────────────────
+  // Phase 0 mirrored tables_json WITHOUT a per-table `id` field. Phase 1
+  // (advance booking) needs `id` so the player BookingScreen can round-trip
+  // a table identifier through submit_booking_intent. Existing clubs would
+  // otherwise have to manually re-save each table to backfill — this fires
+  // a single fire-and-forget re-mirror on page mount when a slug exists.
+  // Idempotent (slug-targeted UPDATE in `syncTablesJsonBySlug`); harmless
+  // to repeat across refreshes.
+  useEffect(() => {
+    const slug = settings?.slug
+    if (!slug) return
+    if (typeof window === 'undefined') return
+    const flagKey = `ck_tables_json_id_backfill_v17_${slug}`
+    if (window.sessionStorage.getItem(flagKey) === '1') return
+    window.sessionStorage.setItem(flagKey, '1')
+    void (async () => {
+      try {
+        const tables = await getAllTables()
+        await syncTablesJsonBySlug(slug, tables)
+        // eslint-disable-next-line no-console
+        console.log('[backfill] re-mirrored tables_json with ids')
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[backfill] tables_json re-mirror failed:', e)
+      }
+    })()
+  }, [settings?.slug])
 
   // ── Pre-fill slug draft from settings when modal opens ───────────────────
   useEffect(() => {
@@ -251,6 +304,58 @@ export function PlayerHubSettings({ settings }: Props) {
       setToggling(false)
     }
   }, [showToast])
+
+  // ── Accept-bookings toggle (Supabase-first, mirrors topup pattern, Pattern R2) ──
+  const handleToggleBookings = useCallback(async (val: boolean) => {
+    const currentSlug = settings?.slug
+    if (!currentSlug) return
+    setBookingTogglingState(true)
+    setAcceptsBookings(val)
+    try {
+      // Use the current advance value so Supabase mirror stays in sync. Read
+      // from settings rather than the draft (which may be mid-edit).
+      const currentAdvance = settings?.bookingAdvanceAmount ?? 100
+      await syncBookingConfigBySlug(currentSlug, val, currentAdvance)
+      await updateSettings({ acceptsBookings: val })
+    } catch {
+      setAcceptsBookings(!val)
+      showToast('Failed to update. Try again.')
+    } finally {
+      setBookingTogglingState(false)
+    }
+  }, [settings?.slug, settings?.bookingAdvanceAmount, showToast])
+
+  // ── Advance amount — onBlur commits via debounced save ───────────────────
+  const handleAdvanceBlur = useCallback(async () => {
+    const trimmed = advanceDraft.trim()
+    if (trimmed === '') {
+      setAdvanceDraft(String(settings?.bookingAdvanceAmount ?? 100))
+      setAdvanceError(null)
+      return
+    }
+    const n = parseInt(trimmed, 10)
+    if (isNaN(n) || n < 0 || n > 10000) {
+      setAdvanceError('Must be ₹0 – ₹10,000')
+      return
+    }
+    const currentSlug = settings?.slug
+    setAdvanceError(null)
+    setAdvanceSaving(true)
+    try {
+      // Mirror to Supabase first so player-side reads see the new advance
+      // immediately. Then Dexie. Both must succeed or we revert the draft.
+      if (currentSlug) {
+        await syncBookingConfigBySlug(currentSlug, acceptsBookings, n)
+      }
+      await updateSettings({ bookingAdvanceAmount: n })
+      setAdvanceDraft(String(n))
+    } catch {
+      setAdvanceError('Save failed. Try again.')
+      // Don't blow away the draft — let owner retry the same value.
+    } finally {
+      setAdvanceSaving(false)
+    }
+  }, [advanceDraft, acceptsBookings, settings?.slug, settings?.bookingAdvanceAmount])
 
   const slug = settings?.slug
   const locked = settings?.slugLocked
@@ -356,6 +461,43 @@ export function PlayerHubSettings({ settings }: Props) {
           onChange={toggling ? () => {} : handleToggleTopups}
         />
       </div>
+
+      {/* Accept bookings toggle + advance amount input (Phase 1 of #84) */}
+      <div className="flex items-center justify-between min-h-[44px]">
+        <div>
+          <p className="text-[14px] font-semibold text-text">Accept bookings</p>
+          <p className="text-[11px] text-text-faint mt-0.5">Players can book tables in advance via QR</p>
+        </div>
+        <Toggle
+          value={acceptsBookings}
+          onChange={bookingTogglingState ? () => {} : handleToggleBookings}
+        />
+      </div>
+
+      {acceptsBookings && (
+        <div className="bg-bg border border-border rounded-2xl px-4 py-3">
+          <div className="flex items-center gap-2">
+            <p className="text-[13px] text-text-dim flex-1">Advance per booking</p>
+            <span className="text-[13px] text-text-faint">₹</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={advanceDraft}
+              onChange={(e) => { setAdvanceDraft(e.target.value.replace(/\D/g, '').slice(0, 5)); setAdvanceError(null) }}
+              onBlur={handleAdvanceBlur}
+              disabled={advanceSaving}
+              className="w-20 px-2 py-1.5 bg-bg-card border border-border rounded-xl text-text text-[14px] outline-none focus:border-accent text-right font-mono"
+              aria-label="Advance amount per booking"
+            />
+          </div>
+          {advanceError && <p className="text-busy text-[11px] mt-1 text-right">{advanceError}</p>}
+          {!advanceError && (
+            <p className="text-text-faint text-[11px] mt-1">
+              Same advance applies to every booking. 0–10,000.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* ── ClubCoins sub-card ─────────────────────────────────────────────── */}
       <div className="bg-bg border border-border rounded-2xl px-4 py-4">
