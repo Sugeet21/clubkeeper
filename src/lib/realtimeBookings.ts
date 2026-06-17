@@ -12,6 +12,16 @@ export interface BookingInsertEvent {
   advanceAmount: number
 }
 
+// Fired on any UPDATE to booking_intents — currently used by P1e-2 to detect
+// player-initiated cancellations (confirmed → cancelled) and trigger owner-side
+// reconciliation (Dexie booking row + wallet refund). Re-using one UPDATE
+// listener avoids opening a second channel.
+export interface BookingUpdateEvent {
+  intentId: string
+  oldStatus: string | undefined
+  newStatus: string | undefined
+}
+
 let pollingTimer: ReturnType<typeof setInterval> | null = null
 let fallbackInitTimer: ReturnType<typeof setTimeout> | null = null
 let channel: ReturnType<typeof supabase.channel> | null = null
@@ -26,6 +36,7 @@ function playPendingSound() {
 export async function subscribeToBookingIntents(
   clubId: string,
   onInsert?: (event: BookingInsertEvent) => void,
+  onUpdate?: (event: BookingUpdateEvent) => void,
 ): Promise<void> {
   // Idempotent re-call: tear down + rebuild so a new onInsert callback (or
   // a different clubId) replaces the live channel cleanly.
@@ -99,10 +110,14 @@ export async function subscribeToBookingIntents(
         filter: `club_id=eq.${clubId}`,
       },
       (payload) => {
+        const intentId = (payload.new as { id?: string })?.id
         const oldStatus = (payload.old as { status?: string })?.status
         const newStatus = (payload.new as { status?: string })?.status
         if (oldStatus === 'pending' && newStatus !== 'pending') {
           decrementPending()
+        }
+        if (onUpdate && intentId) {
+          onUpdate({ intentId, oldStatus, newStatus })
         }
       },
     )

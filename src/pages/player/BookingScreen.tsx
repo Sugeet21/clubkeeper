@@ -6,6 +6,8 @@ import {
   getClubPublicInfo,
   submitBookingIntent,
   getBookingIntentStatus,
+  cancelBookingIntent,
+  getBookedSlots,
 } from '../../lib/playerHubApi'
 import type { ClubPublicInfo, PublicTableInfo } from '../../types/playerHub'
 
@@ -122,9 +124,16 @@ type PageState =
   | 'awaiting_payment'
   | 'waiting_confirm'
   | 'confirmed'
+  | 'cancelling'
+  | 'cancelled'
   | 'rejected'
   | 'expired'
   | 'error'
+
+// Player cancellation window — must match server-side check in
+// cancel_booking_intent (20260618_booking_cancel.sql). >2h before slot_start
+// allows cancel; otherwise the button is hidden.
+const CANCEL_CUTOFF_MS = 2 * 60 * 60 * 1000
 
 function Spinner({ size = 20 }: { size?: number }) {
   return (
@@ -162,6 +171,15 @@ export default function BookingScreen() {
   const [intentId, setIntentId] = useState<string | null>(null)
   const [payBtnEnabled, setPayBtnEnabled] = useState(false)
   const [elapsed, setElapsed] = useState(0)
+  // Cancel-flow state — inline error shown on the confirmed screen if the
+  // server rejects (e.g. raced past the 2h cutoff after the button rendered).
+  const [cancelError, setCancelError] = useState<string | null>(null)
+
+  // #90: Booked slots for the currently chosen (table, date). [start,end] in
+  // Unix ms. Fetched once per (table, date) change via the effect below. The
+  // initial empty array means "no blockers known" — server-side slot_taken
+  // remains the safety net.
+  const [bookedRanges, setBookedRanges] = useState<{ start: number; end: number }[]>([])
 
   // Polling
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -203,6 +221,38 @@ export default function BookingScreen() {
         setPageState('error')
       })
   }, [clubSlug])
+
+  // ── #90: Fetch booked slots whenever (table, date) is set ─────────────────
+  useEffect(() => {
+    if (!clubSlug || !tableId || dateMs === null) {
+      setBookedRanges([])
+      return
+    }
+    const dayStart = new Date(dateMs)
+    dayStart.setHours(0, 0, 0, 0)
+    const dayEnd = new Date(dateMs)
+    dayEnd.setHours(23, 59, 59, 999)
+    let cancelled = false
+    getBookedSlots({
+      slug: clubSlug,
+      tableId,
+      dayStartIso: dayStart.toISOString(),
+      dayEndIso: dayEnd.toISOString(),
+    })
+      .then((rows) => {
+        if (cancelled) return
+        setBookedRanges(
+          rows.map((r) => ({
+            start: new Date(r.slotStartIso).getTime(),
+            end: new Date(r.slotEndIso).getTime(),
+          })),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setBookedRanges([])
+      })
+    return () => { cancelled = true }
+  }, [clubSlug, tableId, dateMs])
 
   // ── 8s delay on "I've paid" button (matches PlayerScan) ───────────────────
   useEffect(() => {
@@ -276,10 +326,41 @@ export default function BookingScreen() {
     return buildTimeOptions(selectedDate, Date.now())
   }, [selectedDate])
 
+  // #90: A 30-min step is "booked" if any booked range overlaps its [ms, ms+30min) window.
+  function isStepBooked(ms: number): boolean {
+    const stepEnd = ms + SLOT_STEP_MIN * 60 * 1000
+    for (const r of bookedRanges) {
+      if (r.start < stepEnd && r.end > ms) return true
+    }
+    return false
+  }
+
+  // #90: For the chosen slotStart, the longest selectable duration is capped
+  // by the next booked range's start time (if any). Returns minutes, or null
+  // if no cap. Durations longer than the cap are disabled in step 'duration'.
+  function maxDurationMinFromSlotStart(startMs: number): number | null {
+    let nextBookedStart: number | null = null
+    for (const r of bookedRanges) {
+      if (r.start >= startMs) {
+        if (nextBookedStart === null || r.start < nextBookedStart) {
+          nextBookedStart = r.start
+        }
+      }
+    }
+    if (nextBookedStart === null) return null
+    return Math.max(0, Math.floor((nextBookedStart - startMs) / 60000))
+  }
+
   const durationOptions = useMemo<DurationOption[]>(() => {
     if (!selectedTable) return []
     return durationsForTable(selectedTable)
   }, [selectedTable])
+
+  const maxDurationCap = useMemo<number | null>(() => {
+    if (slotStartMs === null) return null
+    return maxDurationMinFromSlotStart(slotStartMs)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotStartMs, bookedRanges])
 
   const slotEndMs = useMemo<number | null>(() => {
     if (slotStartMs === null || durationMin === null) return null
@@ -406,6 +487,33 @@ export default function BookingScreen() {
     }
   }
 
+  // P1e-2: cancel button visible only when now < slotStart - 2h. Server
+  // re-checks the same window — UI gate is a UX nicety, not a security check.
+  const canCancel =
+    slotStartMs !== null && intentId !== null && Date.now() < slotStartMs - CANCEL_CUTOFF_MS
+
+  async function handleCancel() {
+    if (!intentId || !canCancel) return
+    setCancelError(null)
+    setPageState('cancelling')
+    try {
+      await cancelBookingIntent({ intentId, playerPhone: phone.trim() })
+      setPageState('cancelled')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : ''
+      if (msg === 'too_late') {
+        setCancelError('Too late to cancel — please contact the club directly.')
+      } else if (msg === 'invalid_status') {
+        setCancelError('This booking can no longer be cancelled here.')
+      } else if (msg === 'not_found') {
+        setCancelError('Booking not found. Please contact the club.')
+      } else {
+        setCancelError('Could not cancel. Please try again.')
+      }
+      setPageState('confirmed')
+    }
+  }
+
   const shortCode = intentId ? `CK-${intentId.slice(-6).toUpperCase()}` : ''
   const upiNote = `BOOK-${intentId ? intentId.slice(-6).toUpperCase() : 'PAY'}`
 
@@ -484,7 +592,8 @@ export default function BookingScreen() {
     )
   }
 
-  if (pageState === 'confirmed' && selectedTable && slotEndMs !== null && slotStartMs !== null && durationMin !== null) {
+  if ((pageState === 'confirmed' || pageState === 'cancelling') && selectedTable && slotEndMs !== null && slotStartMs !== null && durationMin !== null) {
+    const cancelling = pageState === 'cancelling'
     return (
       <PlayerScanLayout>
         <div className="flex flex-col items-center gap-5 py-8 text-center">
@@ -515,6 +624,60 @@ export default function BookingScreen() {
               {playerName.trim() || '(no name)'} · {phone.replace(/(\d{5})(\d{5})/, '$1 $2')}
             </p>
           </div>
+
+          {/* P1e-2: Cancel button — visible only > 2h before slot_start.
+              Inside the 2h cutoff we hide the button entirely and show a
+              static notice so the player understands cancellation isn't
+              automatic anymore. */}
+          {canCancel ? (
+            <div className="w-full flex flex-col gap-2">
+              {cancelError && (
+                <p className="text-busy text-[13px] text-left">{cancelError}</p>
+              )}
+              <button
+                onClick={handleCancel}
+                disabled={cancelling}
+                className={`w-full min-h-[48px] rounded-2xl border text-[14px] font-semibold transition-opacity ${
+                  cancelling
+                    ? 'bg-busy/8 border-busy/30 text-busy/60 cursor-not-allowed'
+                    : 'bg-busy/8 border-busy/40 text-busy'
+                }`}
+              >
+                {cancelling ? 'Cancelling…' : 'Cancel booking & refund advance to wallet'}
+              </button>
+              <p className="text-text-faint text-[11px]">
+                Cancellation is allowed up to 2 hours before your slot. Advance is credited back to your wallet at this club.
+              </p>
+            </div>
+          ) : (
+            <p className="text-text-faint text-[12px] text-center">
+              Cancellation closes 2 hours before slot. Contact the club to cancel late.
+            </p>
+          )}
+        </div>
+      </PlayerScanLayout>
+    )
+  }
+
+  if (pageState === 'cancelled') {
+    return (
+      <PlayerScanLayout>
+        <div className="flex flex-col items-center gap-4 py-10 text-center">
+          <div className="w-14 h-14 rounded-full bg-busy/12 flex items-center justify-center">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-busy">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </div>
+          <p className="text-[18px] font-bold text-text">Booking cancelled</p>
+          <p className="text-text-dim text-sm">
+            Your advance of {formatRupees(advanceAmount)} has been refunded to your wallet at {clubInfo?.clubName ?? 'the club'}.
+          </p>
+          <button
+            onClick={() => clubSlug && navigate(`/c/${clubSlug}`)}
+            className="min-h-[44px] px-6 bg-accent text-bg font-bold rounded-2xl mt-2"
+          >
+            Back
+          </button>
         </div>
       </PlayerScanLayout>
     )
@@ -748,15 +911,28 @@ export default function BookingScreen() {
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2">
-                {timeOptions.map(({ ms, label }) => (
-                  <button
-                    key={ms}
-                    onClick={() => pickTime(ms)}
-                    className="min-h-[44px] bg-bg-card border border-border rounded-xl text-text text-[13px] font-mono"
-                  >
-                    {label}
-                  </button>
-                ))}
+                {timeOptions.map(({ ms, label }) => {
+                  const booked = isStepBooked(ms)
+                  return (
+                    <button
+                      key={ms}
+                      onClick={() => !booked && pickTime(ms)}
+                      disabled={booked}
+                      className={`min-h-[44px] rounded-xl text-[13px] font-mono flex flex-col items-center justify-center leading-tight ${
+                        booked
+                          ? 'bg-bg-card/40 border border-border/40 text-text-faint cursor-not-allowed'
+                          : 'bg-bg-card border border-border text-text'
+                      }`}
+                    >
+                      <span>{label}</span>
+                      {booked && (
+                        <span className="text-[9px] uppercase tracking-widest text-busy mt-0.5">
+                          Booked
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -764,16 +940,40 @@ export default function BookingScreen() {
 
         {step === 'duration' && (
           <div className="flex flex-col gap-2">
-            {durationOptions.map((opt) => (
-              <button
-                key={opt.minutes}
-                onClick={() => pickDuration(opt)}
-                className="w-full bg-bg-card border border-border rounded-2xl px-4 py-3.5 flex items-center justify-between min-h-[52px]"
-              >
-                <span className="text-text font-semibold text-[15px]">{opt.minutes} min</span>
-                <span className="text-accent font-bold text-[15px] font-mono">{formatRupees(opt.price)}</span>
-              </button>
-            ))}
+            {durationOptions.map((opt) => {
+              const overlaps = maxDurationCap !== null && opt.minutes > maxDurationCap
+              return (
+                <button
+                  key={opt.minutes}
+                  onClick={() => !overlaps && pickDuration(opt)}
+                  disabled={overlaps}
+                  className={`w-full rounded-2xl px-4 py-3.5 flex items-center justify-between min-h-[52px] border ${
+                    overlaps
+                      ? 'bg-bg-card/40 border-border/40 cursor-not-allowed'
+                      : 'bg-bg-card border-border'
+                  }`}
+                >
+                  <span className="flex flex-col items-start leading-tight">
+                    <span className={`font-semibold text-[15px] ${overlaps ? 'text-text-faint' : 'text-text'}`}>
+                      {opt.minutes} min
+                    </span>
+                    {overlaps && (
+                      <span className="text-busy text-[11px] uppercase tracking-widest mt-0.5">
+                        Overlaps next booking
+                      </span>
+                    )}
+                  </span>
+                  <span className={`font-bold text-[15px] font-mono ${overlaps ? 'text-text-faint' : 'text-accent'}`}>
+                    {formatRupees(opt.price)}
+                  </span>
+                </button>
+              )
+            })}
+            {maxDurationCap !== null && durationOptions.every((o) => o.minutes > maxDurationCap) && (
+              <p className="text-text-faint text-[12px] mt-2">
+                Only {maxDurationCap} min available before the next booking. Pick another start time.
+              </p>
+            )}
           </div>
         )}
 

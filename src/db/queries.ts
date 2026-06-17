@@ -1987,3 +1987,111 @@ export async function creditBookingAdvanceRemainder(params: {
     })
   })
 }
+
+/**
+ * Owner-side reconciliation after player cancels a confirmed booking.
+ *
+ * Triggered by BookingRealtimeBridge when it sees status flip
+ * 'confirmed' → 'cancelled' on a booking_intents UPDATE event.
+ *
+ * Single flat tx (Pattern D7):
+ *   1. Mark Dexie booking.status = 'cancelled' (idempotent — noop if already).
+ *      Skipped if booking row never crossed to Dexie (e.g. cancel arrived
+ *      before owner Dexie was hydrated — defensive, do nothing).
+ *   2. Lookup-or-create customer by booking.playerPhone.
+ *   3. Credit booking.advanceAmount as a wallet credit
+ *      (referenceType='booking_advance', referenceId=bookingId).
+ *
+ * Idempotency: if booking.status is already 'cancelled' AND a credit row
+ * with referenceId=bookingId already exists, the function is a noop. This
+ * matters because realtime can replay an UPDATE event after a brief
+ * disconnect.
+ */
+export async function reconcileCancelledBooking(bookingId: string): Promise<void> {
+  await db.transaction('rw', db.bookings, db.customers, db.walletTransactions, async () => {
+    const booking = await db.bookings.get(bookingId)
+    if (!booking) {
+      // Booking never crossed to Dexie (cancel before confirm hydrated locally),
+      // or got wiped by reset. Nothing to refund here — Supabase row is the
+      // source of truth for the player; owner just won't see it locally.
+      return
+    }
+    if (booking.status === 'cancelled') {
+      // Already reconciled; check if the refund landed too. If a credit row
+      // already exists with this bookingId, we're done.
+      const existing = await db.walletTransactions
+        .where('referenceType').equals('booking_advance')
+        .and((t) => t.referenceId === bookingId && t.type === 'credit')
+        .first()
+      if (existing) return
+    }
+    // 1. Flip Dexie booking → cancelled
+    if (booking.status !== 'cancelled') {
+      await db.bookings.update(bookingId, { status: 'cancelled' })
+    }
+    // 2. Lookup-or-create customer by phone
+    let customer = await db.customers.where('phone').equals(booking.playerPhone).first()
+    if (!customer) {
+      const now = Date.now()
+      customer = {
+        id: crypto.randomUUID(),
+        phone: booking.playerPhone,
+        name: booking.playerName?.trim() || null,
+        walkInCode: null,
+        walletBalance: 0,
+        createdAt: now,
+        lastVisitAt: now,
+      }
+      await db.customers.add(customer)
+    }
+    // 3. Credit the advance back as a wallet credit (refund)
+    if (booking.advanceAmount > 0) {
+      const now = Date.now()
+      const newBalance = customer.walletBalance + booking.advanceAmount
+      await db.walletTransactions.add({
+        id: crypto.randomUUID(),
+        customerId: customer.id,
+        type: 'credit',
+        amount: booking.advanceAmount,
+        balanceAfter: newBalance,
+        paymentMode: null,
+        referenceType: 'booking_advance',
+        referenceId: bookingId,
+        notes: 'Booking cancelled — advance refunded to wallet',
+        createdAt: now,
+      })
+      await db.customers.update(customer.id, {
+        walletBalance: newBalance,
+        lastVisitAt: now,
+      })
+    }
+  })
+}
+
+/**
+ * Sweep Dexie bookings for no-shows.
+ *
+ * A confirmed booking whose `slotEnd + 30 min` is in the past AND that was
+ * never linked to a session is marked 'no_show'. No wallet credit (forfeit —
+ * per skill cancellation-window policy).
+ *
+ * Idempotent. Safe to call on every app mount + every 4h alongside the coin
+ * expiry sweep. Returns count of newly marked rows for telemetry.
+ */
+export async function applyNoShowSweep(now: number = Date.now()): Promise<number> {
+  const NO_SHOW_GRACE_MS = 30 * 60_000
+  // We can't push the time math into Dexie's index — slotEnd isn't indexed —
+  // so we read all 'confirmed' rows and filter in JS. Tiny set (bookings are
+  // ephemeral by design); negligible cost.
+  const candidates = await db.bookings.where('status').equals('confirmed').toArray()
+  const stale = candidates.filter(
+    (b) => b.consumedSessionId === undefined && b.slotEnd + NO_SHOW_GRACE_MS < now,
+  )
+  if (stale.length === 0) return 0
+  await db.transaction('rw', db.bookings, async () => {
+    for (const b of stale) {
+      await db.bookings.update(b.id, { status: 'no_show' })
+    }
+  })
+  return stale.length
+}

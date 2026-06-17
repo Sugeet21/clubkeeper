@@ -300,7 +300,7 @@ export default function PendingTopupsModal({
   coinConfig,
   engagementConfig,
 }: Props) {
-  const { modalOpen, closeModal } = useTopupInbox()
+  const { modalOpen, closeModal, pendingCount } = useTopupInbox()
   const [resolvedConfig, setResolvedConfig] = useState<CoinConfig>(
     coinConfig ?? resolveCoinConfig({}),
   )
@@ -324,7 +324,15 @@ export default function PendingTopupsModal({
       onClose={closeModal}
       title={`Pending Top-ups (${intents.length})`}
     >
-      {intents.length === 0 ? (
+      {intents.length === 0 && pendingCount > 0 ? (
+        <div className="py-8 flex flex-col items-center gap-3">
+          <div
+            className="border-2 border-accent border-t-transparent rounded-full animate-spin"
+            style={{ width: 20, height: 20 }}
+          />
+          <p className="text-text-dim text-sm">Loading pending top-ups…</p>
+        </div>
+      ) : intents.length === 0 ? (
         <div className="py-8 text-center">
           <p className="text-text-dim text-sm">No pending top-ups</p>
         </div>

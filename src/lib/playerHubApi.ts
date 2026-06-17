@@ -351,6 +351,69 @@ export async function submitBookingIntent(payload: {
   return data as string
 }
 
+// Public: player cancels their OWN confirmed booking. Phone match is the
+// authorization check (player has no Supabase auth). Server-side enforces the
+// >2h-before-slot window — if it returns 'too_late' we surface it inline.
+export async function cancelBookingIntent(params: {
+  intentId: string
+  playerPhone: string
+}): Promise<void> {
+  const { error } = await withTimeout(
+    supabasePublic.rpc('cancel_booking_intent', {
+      p_intent_id: params.intentId,
+      p_player_phone: params.playerPhone,
+    }),
+    8000,
+    'cancel_booking_intent',
+  )
+  if (error) {
+    // supabase-js wraps `raise exception '<code>'` differently across versions
+    // and the chosen status code; the keyword may land in any of message,
+    // details, or hint. Check all three so the typed error mapping is robust
+    // to that variance.
+    const errObj = error as { message?: string; details?: string; hint?: string }
+    const bag = `${errObj.message ?? ''} | ${errObj.details ?? ''} | ${errObj.hint ?? ''}`
+    if (bag.includes('not_found')) throw new Error('not_found')
+    if (bag.includes('invalid_status')) throw new Error('invalid_status')
+    if (bag.includes('too_late')) throw new Error('too_late')
+    throw error
+  }
+}
+
+// #90: Anon-readable list of already-taken slot windows for a (club, table,
+// day) so the player time picker can grey them out instead of letting the
+// player tap → pay → server reject with slot_taken. Returns ISO timestamps;
+// caller converts to Unix ms. Pre-migration safe: returns [] if the RPC
+// doesn't exist yet (caller catches and treats as no-blockers).
+export async function getBookedSlots(params: {
+  slug: string
+  tableId: number
+  dayStartIso: string
+  dayEndIso: string
+}): Promise<{ slotStartIso: string; slotEndIso: string }[]> {
+  const { data, error } = await withTimeout(
+    supabasePublic.rpc('get_booked_slots', {
+      p_slug: params.slug,
+      p_table_id: params.tableId,
+      p_day_start: params.dayStartIso,
+      p_day_end: params.dayEndIso,
+    }),
+    8000,
+    'get_booked_slots',
+  )
+  if (error) {
+    // RPC not deployed yet → no-op (player sees the old behaviour).
+    const msg = (error.message ?? '').toLowerCase()
+    if (msg.includes('does not exist') || msg.includes('could not find')) return []
+    throw error
+  }
+  if (!Array.isArray(data)) return []
+  return data.map((row: { slot_start: string; slot_end: string }) => ({
+    slotStartIso: row.slot_start,
+    slotEndIso: row.slot_end,
+  }))
+}
+
 export async function getBookingIntentStatus(
   intentId: string,
 ): Promise<{ status: string; confirmedAt: string | null } | null> {

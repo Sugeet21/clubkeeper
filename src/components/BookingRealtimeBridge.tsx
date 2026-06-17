@@ -6,8 +6,10 @@ import {
   subscribeToBookingIntents,
   unsubscribeBookingIntents,
   type BookingInsertEvent,
+  type BookingUpdateEvent,
 } from '../lib/realtimeBookings'
 import { getOwnerClub } from '../lib/playerHubApi'
+import { reconcileCancelledBooking } from '../db/queries'
 
 // Sibling of TopupRealtimeBridge — keeps the booking_intents realtime channel
 // open for the entire authenticated session. Same Pattern A6/A7/A8 guards:
@@ -51,6 +53,31 @@ export function BookingRealtimeBridge() {
 
     let cancelled = false
 
+    function handleUpdate(event: BookingUpdateEvent) {
+      // P1e-2: player cancelled a confirmed booking. Reconcile owner-side —
+      // flip Dexie status + credit advance refund to wallet. Fire-and-forget
+      // with explicit catch; reconcile is idempotent so a duplicate event
+      // from realtime replay is safe.
+      if (event.oldStatus === 'confirmed' && event.newStatus === 'cancelled') {
+        void reconcileCancelledBooking(event.intentId)
+          .then(() => {
+            // Toast unless owner is on /bookings (they'll see the badge change live).
+            if (pathnameRef.current === '/bookings') return
+            showRef.current({
+              message: 'Booking cancelled — advance refunded to wallet',
+              type: 'info',
+              actionLabel: 'View',
+              onAction: () => navigateRef.current('/bookings'),
+              durationMs: 6000,
+            })
+          })
+          .catch((e: unknown) => {
+            // Non-critical — surfacing as a quiet warn keeps the bridge running.
+            console.warn('[booking] reconcile failed:', e)
+          })
+      }
+    }
+
     function handleInsert(event: BookingInsertEvent) {
       // If the owner is already on /bookings they see the live list — no toast.
       if (pathnameRef.current === '/bookings') return
@@ -80,7 +107,7 @@ export function BookingRealtimeBridge() {
         // Only subscribe when the owner has opted in to bookings. Otherwise we
         // burn a realtime slot for nothing and confuse the badge.
         if (!club.acceptsBookings) return
-        await subscribeToBookingIntents(club.id, handleInsert)
+        await subscribeToBookingIntents(club.id, handleInsert, handleUpdate)
         if (cancelled) {
           unsubscribeBookingIntents()
           return

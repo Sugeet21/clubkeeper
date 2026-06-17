@@ -7,6 +7,7 @@ import { RequireAccess } from './components/RequireAccess'
 import { useAuthStore } from './store/authStore'
 import { unlockAudio } from './lib/alarm'
 import { applyExpirySweep } from './lib/coinExpiry'
+import { applyNoShowSweep } from './db/queries'
 import Home from './pages/Home'
 import Summary from './pages/Summary'
 import History from './pages/History'
@@ -100,6 +101,17 @@ function ExpirySweepRunner() {
         }
       })
       .catch((err: unknown) => console.error('[expiry] sweep failed', err))
+
+    // P1e-2: no-show sweep — mark confirmed bookings 'no_show' once their
+    // slot ends + 30 min grace passes without a session link. Same 4h cadence,
+    // same gates, NO wallet refund (forfeit per skill policy).
+    applyNoShowSweep()
+      .then((count) => {
+        if (count > 0) {
+          console.log(`[booking] marked ${count} no-show booking(s)`)
+        }
+      })
+      .catch((err: unknown) => console.error('[booking] no-show sweep failed', err))
   }, [dbReady, session, subscriptionLoaded])
 
   return null

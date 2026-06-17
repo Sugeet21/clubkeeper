@@ -167,7 +167,14 @@ function ConfirmRow({
 }
 
 export default function PendingBookingsModal({ intents, onIntentHandled }: Props) {
-  const { modalOpen, closeModal } = useBookingInbox()
+  const { modalOpen, closeModal, pendingCount } = useBookingInbox()
+
+  // BUG #88: when arriving via toast 'View', pendingCount > 0 may be set by
+  // realtime BEFORE the page's intent-fetch effect resolves. Showing an empty
+  // state in that window confuses the owner ("modal didn't open"). Show a
+  // spinner whenever the badge says there should be rows but we haven't
+  // received them yet.
+  const isLoadingIntents = intents.length === 0 && pendingCount > 0
 
   return (
     <Modal
@@ -175,7 +182,15 @@ export default function PendingBookingsModal({ intents, onIntentHandled }: Props
       onClose={closeModal}
       title={`Pending Bookings (${intents.length})`}
     >
-      {intents.length === 0 ? (
+      {isLoadingIntents ? (
+        <div className="py-8 flex flex-col items-center gap-3">
+          <div
+            className="border-2 border-accent border-t-transparent rounded-full animate-spin"
+            style={{ width: 20, height: 20 }}
+          />
+          <p className="text-text-dim text-sm">Loading pending bookings…</p>
+        </div>
+      ) : intents.length === 0 ? (
         <div className="py-8 text-center">
           <p className="text-text-dim text-sm">No pending bookings</p>
         </div>
