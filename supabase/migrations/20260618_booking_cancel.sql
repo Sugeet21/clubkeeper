@@ -15,6 +15,17 @@
 --   - now() < slot_start - interval '2 hours' (else 'too_late')
 --
 -- Paste into Supabase Dashboard → SQL Editor → New query → Run.
+--
+-- CHECK constraint update: 20260617 only allowed pending/confirmed/rejected/
+-- expired. Without this, the UPDATE below would raise check_violation at
+-- runtime. Applied to prod 18 Jun 2026.
+
+alter table public.booking_intents
+  drop constraint if exists booking_intents_status_check;
+
+alter table public.booking_intents
+  add constraint booking_intents_status_check
+  check (status in ('pending', 'confirmed', 'rejected', 'expired', 'cancelled'));
 
 create or replace function public.cancel_booking_intent(
   p_intent_id uuid,
