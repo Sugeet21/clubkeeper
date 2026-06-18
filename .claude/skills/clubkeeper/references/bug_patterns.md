@@ -635,6 +635,30 @@ Files most affected: `src/components/Modal.tsx`, `src/components/subscribe/Payme
 The `footer?: ReactNode` prop allows consumers to pin action buttons outside the scroll container while leaving all other consumers unaffected. Consumers that don't pass `footer` get a `h-6` spacer.
 **Files affected:** `src/components/Modal.tsx` (fixed 9 Jun 2026), `src/components/TableFormModal.tsx` (passes `footer={footerContent}`).
 
+### Pattern M5 — Modals with async-loaded content must distinguish "empty" from "still loading" (#88, 18 Jun 2026)
+**Symptom signature:** Owner gets a realtime toast ("1 pending — View"), taps it, lands on a list page, taps the badge → modal opens but shows "No pending" empty state. Owner taps badge again — nothing happens. After hard refresh, modal opens correctly with the row inside. Bug symmetric across `PendingTopupsModal` (`/wallet`) and `PendingBookingsModal` (`/bookings`).
+**Root cause:** Two effects race. The Zustand badge count (`pendingCount`) updates synchronously from the realtime channel BEFORE the page mounts. The page-mount effect that fetches `pendingIntents` (keyed on `[dbReady, session]`) is async — it takes ~500ms to resolve `getOwnerClub()` + `getPendingTopups(clubId)`. If the owner taps inside that window, the modal opens with `intents=[]` AND `pendingCount > 0`. The empty-state copy ("No pending top-ups") is misleading; the second tap is a no-op because `modalOpen` is already `true`. Hard refresh fixes it because the round-trip completes before any tap.
+**Rule:** When a modal's contents are loaded asynchronously by the parent page, the modal must render THREE distinct states, not two:
+- `intents.length > 0` → render rows
+- `intents.length === 0 && pendingCount > 0` (or equivalent "we know there's something" signal) → render a spinner + "Loading…"
+- `intents.length === 0 && pendingCount === 0` → render "No pending" empty state
+```tsx
+{isLoadingIntents ? (
+  <div className="py-8 flex flex-col items-center gap-3">
+    <Spinner size={20} />
+    <p className="text-text-dim text-sm">Loading pending bookings…</p>
+  </div>
+) : intents.length === 0 ? (
+  <div className="py-8 text-center">
+    <p className="text-text-dim text-sm">No pending bookings</p>
+  </div>
+) : (
+  /* rows */
+)}
+```
+The store's badge count IS the source of truth for "is something there?" — trust it over the not-yet-loaded list. Don't conflate "fetch in flight" with "no data."
+**Files affected:** `src/components/PendingTopupsModal.tsx`, `src/components/PendingBookingsModal.tsx` (both fixed bc49c59).
+
 ### Pattern M1 — Scrim and sheet must be independent fixed layers (BUG-012)
 **Symptom signature:** Modal scrim "intercepts pointer events" — backdrop blocks clicks on the sheet.
 **Root cause:** `fixed inset-0 flex items-end` parent wrapping `absolute inset-0` scrim sibling + `relative z-10` sheet → scrim expands over sheet, stacking context conflict.

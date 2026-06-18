@@ -1084,6 +1084,17 @@ Files in scope (P1e-2 — shipped 18 Jun 2026):
 - `src/db/queries.ts` — `applyNoShowSweep(now?)`: scans `db.bookings.where('status').equals('confirmed')`, JS-filters `consumedSessionId === undefined && slotEnd + 30 min < now`, marks each `'no_show'` in a flat tx. Returns count. **No wallet credit** (forfeit per skill policy).
 - `src/App.tsx` `ExpirySweepRunner` — extended to also fire `applyNoShowSweep()` after `applyExpirySweep()`. Same gates, same 4h cadence, same `lastExpirySweep` sessionStorage anchor (booking sweep piggybacks).
 
+Files in scope (booked-slot visibility — shipped 18 Jun 2026, closes #90):
+- `supabase/migrations/20260619_booked_slots_rpc.sql` (applied to prod) — `get_booked_slots(p_slug, p_table_id, p_day_start, p_day_end)` SECURITY DEFINER, returns `[(slot_start, slot_end)]` for status IN ('pending','confirmed') matching the (club, table) on a date window. Anon + authenticated execute granted. Window capped to 8 days to prevent abuse. Silent-empty on unknown slug (no existence leak).
+- `src/lib/playerHubApi.ts` — `getBookedSlots({slug, tableId, dayStartIso, dayEndIso})` via `supabasePublic` + `withTimeout(8000, 'get_booked_slots')`. Pre-migration safe: on "function does not exist" returns `[]` (player sees the old behaviour, nothing breaks).
+- `src/pages/player/BookingScreen.tsx` — new state `bookedRanges: {start:number; end:number}[]`. New effect keyed on `[clubSlug, tableId, dateMs]` fetches slots; ISO → Unix ms at the boundary (Pattern T1). New helpers `isStepBooked(ms)` and `maxDurationMinFromSlotStart(startMs)`. Time-step renders booked 30-min steps as disabled + muted + "Booked" caption. Duration-step disables options where `opt.minutes > maxDurationCap` with "Overlaps next booking" badge + empty-cap fallback message.
+
+Files in scope (#84 cancel migration constraint patch — shipped 18 Jun 2026):
+- `supabase/migrations/20260618_booking_cancel.sql` — added `ALTER … DROP/ADD CONSTRAINT` step before the RPC. Original 20260617 only allowed `pending|confirmed|rejected|expired` in the status CHECK; the cancel UPDATE would have raised `check_violation` at runtime. Applied to prod via Supabase MCP.
+
+Files in scope (#88 — async-loaded modal state, shipped 18 Jun 2026):
+- `src/components/PendingBookingsModal.tsx`, `src/components/PendingTopupsModal.tsx` — modal body now renders three states: rows / spinner / empty. Spinner shows whenever `intents.length === 0 && pendingCount > 0`. Pulls `pendingCount` from `useBookingInbox` / `useTopupInbox` (was previously only reading `modalOpen` + `closeModal`). See bug_patterns Pattern M5.
+
 Phase 1 of #84 is code-complete. Awaiting owner verification of all four sub-phases (P1c/P1d/P1e-1/P1e-2) on device before #84 can close.
 
 Invariants:
@@ -1109,6 +1120,9 @@ Invariants:
 - **Player-side defensive read (Part A):** BookingScreen MUST filter `tablesJson.filter(t => typeof t.id === 'number')` before showing the table picker. Pre-P1b `tables_json` rows lack `id` — submitting one would send `null` as `p_table_id` and the owner would get an unconfirmable intent. If filtered list is empty → "no_tables" state, never a broken picker.
 - **Time math (Pattern T1):** `slotStart` / `slotEnd` are Unix ms internally throughout BookingScreen and Dexie `bookings` rows. ISO timestamptz strings only at the Supabase RPC boundary (`submitBookingIntent` does `new Date(ms).toISOString()`). Never store ISO strings in Dexie or do clock-counter math.
 - **Today's past-time filter:** `buildTimeOptions(date, now)` filters `ms > now` so any 30-min step earlier than the current moment never appears on TODAY's chip grid. Future days get the full window.
+- **Booked-slot visibility (#90):** `getBookedSlots` is anon-readable but exposes ONLY `(slot_start, slot_end)` — never `player_phone`, `player_name`, or `advance_amount`. Anyone scraping the slug sees timing only. The 8-day window cap blocks bulk harvesting. Status filter is `IN ('pending','confirmed')` only — rejected/expired/cancelled rows don't block future booking.
+- **Server slot_taken is still the safety net:** Booked-slot UI is a UX nicety. The server-side overlap check inside `submit_booking_intent` MUST stay — never assume the client filtered correctly (stale fetch, race with another submission, etc.).
+- **Async modal state (Pattern M5):** Modals with parent-fetched lists MUST render three states (rows / loading / empty), driven by the store's `pendingCount`. The badge count is the authoritative "something is there" signal; the list array is fetch state. Conflating the two re-introduces #88.
 
 Cross-feature ripples:
 - → [Player Hub](#player-hub) — `getClubPublicInfo` RPC extended (signature change ripples to anyone reading the RPC). Two-client rule continues to apply.
