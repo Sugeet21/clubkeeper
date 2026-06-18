@@ -100,21 +100,6 @@ export default function TopBar({ onWalletPress, onQuickSalePress }: Props) {
             />
           )}
         </button>
-        <button
-          onClick={() => navigate('/settings')}
-          className="w-9 h-9 flex items-center justify-center rounded-xl text-text-dim hover:text-text hover:bg-bg-elevated transition-colors -mr-0.5"
-          aria-label="Settings"
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="2.5" stroke="currentColor" strokeWidth="1.5" />
-            <path
-              d="M10 2.5v1.8M10 15.7v1.8M2.5 10h1.8M15.7 10h1.8M4.7 4.7l1.3 1.3M14 14l1.3 1.3M15.3 4.7l-1.3 1.3M6 14l-1.3 1.3"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
         </div>
       </div>
       {/* Subtitle row — date on the left, optional Quick Sale pill on the right.

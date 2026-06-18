@@ -136,6 +136,9 @@ export default function Home() {
 
   return (
     <div className="bg-bg min-h-screen">
+      {/* Desktop container: caps content at ~1400px and centers it.
+          Mobile (<768px) is unaffected — max-w-[1400px] is wider than the viewport. */}
+      <div className="max-w-[1400px] mx-auto">
 
       {/* Install banner */}
       {showInstall && (
@@ -190,7 +193,7 @@ export default function Home() {
 
       <SubscriptionStatusBanner />
 
-      <div className="px-4 space-y-3 pb-6">
+      <div className="px-4 pb-6 space-y-3 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3">
         {filteredTables.map((table) => (
           <TableCard
             key={table.id}
@@ -200,6 +203,9 @@ export default function Home() {
           />
         ))}
       </div>
+
+      </div>
+      {/* /max-w-5xl — FAB and modals are viewport-fixed, must live outside */}
 
       {/* FAB — opens Add Table modal inline */}
       <button
