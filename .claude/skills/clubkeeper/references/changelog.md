@@ -2,6 +2,31 @@
 
 ---
 
+## 18 Jun 2026 — Desktop / laptop responsiveness, Phase 1: Tables page (#91) — commit f50942a
+
+First page of the desktop-responsiveness initiative. Driven by paying-customer feedback that on a 1920px laptop screen, ClubKeeper looked like a mobile layout stretched edge-to-edge — table rows spanning full width, "FREE" pills floating ~1500px from the table name, two Settings entry points on Tables (top-right gear AND bottom-nav). All five reported pages (Tables, Bookings, Settings, Wallet topup success, Canteen + canteen-add modal) tracked under one parent issue #91; this commit ships Phase 1 only.
+
+**Changes (Tables / Home only):**
+- `src/components/TopBar.tsx` — removed the top-right Settings gear (old lines 103-117). Right cluster on Tables was crowded: 3 icons + Quick Sale pill on a 360px screen. Settings is now reachable ONLY via the bottom-nav Settings tab. **Hard rule going forward (recorded in ripple_effects.md):** do not re-add a gear to TopBar.
+- `src/pages/Home.tsx` — wrapped install banner, orphaned banner, TopBar / SummaryStrip / FilterPills, `SubscriptionStatusBanner`, and the table grid in `<div className="max-w-[1400px] mx-auto">`. Mobile (<768px) is untouched — the wrapper is wider than the viewport so layout is identical. On laptop (≥1024px), content fills ~1400px centered with ~260px black on each side of a 1920px screen (down from ~900px each side at the v1 `max-w-5xl` width that Sugeet rejected).
+- Table grid is now responsive via Tailwind breakpoints: `space-y-3 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3`. 1 col mobile / 2 col tablet / 3 col laptop. `TableCard` is width-agnostic — no card-side changes needed.
+- FAB stays OUTSIDE the wrapper so it anchors to viewport, not container right edge. If it were inside, on desktop it would float in the middle of the screen where the container ends.
+
+**Sizing decision history (locked in #91):**
+- v1: `max-w-5xl` (1024px) — Sugeet rejected: "most of the space is empty". On a 1920px screen this left ~900px of black on each side, still feeling like a "centered phone column".
+- v2 (shipped): `max-w-[1400px]` + 3-col grid. ~70% screen usage on laptop. Sugeet approved.
+- Rejected alternatives offered but not picked: full-width 4-col grid (risk of tiny cards depending on count), left sidebar nav (bigger structural change — BottomNav would have to hide on desktop).
+
+**Remaining pages (Phase 2 onward, tracked under #91):**
+- Bookings (`/bookings`) — most-broken on desktop per owner ("phone window centered on laptop")
+- Settings (`/settings`)
+- Wallet topup success screen
+- Canteen (`/canteen`) + Add canteen item modal
+
+Build clean (1013.84 kB, +2.7 kB). #91 stays open until owner verifies all 5 pages on his laptop AND on phone (mobile regression check). Phase 1 commit message: `ui(tables): desktop responsiveness — remove duplicate gear + 3-col grid (#91 — partial, pending owner verification)`.
+
+---
+
 ## 18 Jun 2026 — Three-bug bundle: pending modal loading state + booked slot UI + ship P1e-2 to prod (#88, #89, #90) — commit bc49c59
 
 - **#88** PendingTopupsModal + PendingBookingsModal now show a spinner ("Loading pending…") whenever `intents.length === 0 && pendingCount > 0`. Eliminates the window where toast-View → modal-tap showed a misleading "No pending" empty state while the page's `[dbReady, session]` effect was still fetching `pendingIntents`. Owner perceived this as "modal not clickable" because tapping the pill again was a no-op (modal was already open over an empty list).

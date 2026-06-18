@@ -601,16 +601,19 @@ Last updated: 8 Jun 2026
 Owns: `/tables` page, table grid, FilterPills, TopBar, today total.
 
 Files in scope:
-- `src/pages/Home.tsx` — table grid, `sessionMap`, `todayTotal` (Pattern T4), `runningAmount` in render body, FAB Add Table modal (inline since Phase 2C-1)
+- `src/pages/Home.tsx` — table grid, `sessionMap`, `todayTotal` (Pattern T4), `runningAmount` in render body, FAB Add Table modal (inline since Phase 2C-1). **Content wrapped in `max-w-[1400px] mx-auto` for desktop responsiveness (18 Jun 2026, #91). FAB stays OUTSIDE the wrapper so it anchors to viewport, not container right edge.**
 - `src/components/TableCard.tsx` — 4 visual states (Free, Busy, Paused, Out of Service); "Paying…" badge for `paymentInProgress`; bell icon for armed alarms
 - `src/components/FilterPills.tsx` — props `pills`, `active`, `onChange`; all pills `min-h-[44px]`
-- `src/components/TopBar.tsx` — two stacked rows. Row 1: "Today" heading + icon group. Row 2: date subtitle + optional `+ Quick Sale` pill. Date `<p>` is `truncate min-w-0`; pill is `shrink-0`. Right side at 360px: online dot (6px) + canteen (w-9 h-9) + wallet (w-9 h-9) + gear (w-9 h-9). NO 5th icon.
+- `src/components/TopBar.tsx` — two stacked rows. Row 1: "Today" heading + icon group. Row 2: date subtitle + optional `+ Quick Sale` pill. Date `<p>` is `truncate min-w-0`; pill is `shrink-0`. **Right side at 360px (18 Jun 2026, #91): online dot (6px) + bookings (w-9 h-9, conditional) + canteen (w-9 h-9) + wallet (w-9 h-9). NO gear icon — Settings is reachable ONLY via the bottom-nav Settings tab.**
 
 Invariants:
-- Touch targets: gear `w-11 h-11` (44px) minimum (BUG-006 fix); all FilterPills `min-h-[44px]` (BUG-005); icon buttons `w-9 h-9` (36px tap zone meets 44px on mobile).
-- Settings gear → `/settings`; canteen → `/canteen`; wallet → `/wallet`; QuickSale pill → `/quick-sale`.
+- Touch targets: all FilterPills `min-h-[44px]` (BUG-005); icon buttons `w-9 h-9` (36px tap zone meets 44px on mobile).
+- TopBar no longer contains a Settings entry (#91). Adding it back would re-introduce the duplicate-with-bottom-nav crowding that the owner explicitly removed.
+- canteen → `/canteen`; wallet → `/wallet`; QuickSale pill → `/quick-sale`; bookings → `/bookings` (conditional on `settings.slug && settings.acceptsBookings`).
 - Home is the only consumer of TopBar today; `onQuickSalePress` prop omitted = pill hidden.
 - FAB Add Table opens inline `TableFormModal` (NOT navigate to `/settings`) — BUG-004 fix.
+- **Desktop grid (#91):** `<div class="px-4 pb-6 space-y-3 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3">` — 1 col mobile, 2 col tablet (≥768px), 3 col laptop (≥1024px). `TableCard` is width-agnostic; safe in any column width down to ~360px.
+- **Desktop container (#91):** `max-w-[1400px] mx-auto` wraps install banner, orphaned banner, TopBar/SummaryStrip/FilterPills, `SubscriptionStatusBanner`, and the table grid. FAB and modals must stay OUTSIDE this wrapper (they are `fixed inset-0` / `fixed bottom-X right-Y` and need viewport anchoring).
 
 Cross-feature ripples:
 - → [Tables](#tables) (`TableCard` states, `TableFormModal` 3rd call site).
@@ -619,9 +622,11 @@ Cross-feature ripples:
 - → [Quick Sale](#quick-sale) (TopBar pill).
 - → [Wallet & Customers](#wallet--customers) (TopBar wallet icon).
 - → [Canteen / Stock](#canteen--stock) (TopBar canteen icon).
+- → [Advance Booking](#advance-booking) (TopBar bookings icon, conditional).
 - → [Routing & Cross-cutting](#routing--cross-cutting) (any route rename ripples here).
+- → [Settings](#settings) + [Wallet & Customers](#wallet--customers) + [Canteen / Stock](#canteen--stock) + [Advance Booking](#advance-booking): if those pages adopt the same `max-w-[1400px] mx-auto` shell pattern, document the same FAB-outside-wrapper rule on each.
 
-Last updated: 10 Jun 2026
+Last updated: 18 Jun 2026 (#91 — desktop responsiveness Phase 1)
 
 ---
 
