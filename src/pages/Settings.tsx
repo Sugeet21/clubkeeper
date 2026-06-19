@@ -7,6 +7,7 @@ import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport,
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
 import { Toggle } from '../components/Toggle'
+import { SaveIndicator, useSaveIndicator } from '../components/SaveIndicator'
 import { PeakWindowBottomSheet } from '../components/PeakWindowBottomSheet'
 import { useToastStore } from '../store/toastStore'
 import { useAuthStore } from '../store/authStore'
@@ -268,6 +269,10 @@ export default function Settings() {
     sessionStorage.setItem('ck_settings_section', openSection)
   }, [openSection])
 
+  // Save indicators (Pattern U9)
+  const clubNameSave = useSaveIndicator()
+  const upiSave = useSaveIndicator()
+
   // Club name draft
   const [clubName, setClubName] = useState('')
   useEffect(() => {
@@ -326,11 +331,13 @@ export default function Settings() {
   async function handleSaveClubName() {
     const trimmed = clubName.trim()
     if (!trimmed || trimmed === settings?.clubName) return
-    await updateSettings({ clubName: trimmed })
-    // Fire-and-forget sync to Supabase. If the club row doesn't exist yet
-    // (owner hasn't set up Player Hub), this is a no-op — RLS returns 0 rows.
-    updateClubNameRemote(trimmed).catch(() => {
-      useToastStore.getState().show('Saved locally. Will sync when online.', 'error')
+    await clubNameSave.run(async () => {
+      await updateSettings({ clubName: trimmed })
+      // Fire-and-forget sync to Supabase. If the club row doesn't exist yet
+      // (owner hasn't set up Player Hub), this is a no-op — RLS returns 0 rows.
+      updateClubNameRemote(trimmed).catch(() => {
+        useToastStore.getState().show('Saved locally. Will sync when online.', 'error')
+      })
     })
   }
 
@@ -357,9 +364,10 @@ export default function Settings() {
     const trimmed = upiId.trim()
     const err = validateUpiId(trimmed)
     if (err) { setUpiError(err); return }
-    await updateSettings({ upiId: trimmed || undefined })
-    useToastStore.getState().show('UPI ID saved', 'success')
-    setUpiError(null)
+    await upiSave.run(async () => {
+      await updateSettings({ upiId: trimmed || undefined })
+      setUpiError(null)
+    })
   }
 
   async function handleRoundingChange(newMode: RoundingMode) {
@@ -586,9 +594,12 @@ export default function Settings() {
         >
           {/* Club name */}
           <div className="mt-3 mb-3">
-            <label className="block text-[11px] font-mono uppercase tracking-widest text-text-faint mb-1.5">
-              Club Name
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-[11px] font-mono uppercase tracking-widest text-text-faint">
+                Club Name
+              </label>
+              <SaveIndicator state={clubNameSave.state} error={clubNameSave.error} />
+            </div>
             <input
               type="text"
               value={clubName}
@@ -631,13 +642,20 @@ export default function Settings() {
                 When you set this, a payment QR appears after every session ends. Players scan and pay the exact amount.
               </p>
             )}
-            <button
-              onClick={handleSaveUpiId}
-              disabled={Boolean(upiError) || upiId.trim() === (settings?.upiId ?? '')}
-              className="mt-2.5 min-h-[44px] px-5 bg-accent text-bg rounded-xl text-[13px] font-bold disabled:opacity-40 active:scale-[0.99] transition-transform"
-            >
-              Save UPI ID
-            </button>
+            <div className="mt-2.5 flex items-center gap-3">
+              <button
+                onClick={handleSaveUpiId}
+                disabled={
+                  Boolean(upiError) ||
+                  upiId.trim() === (settings?.upiId ?? '') ||
+                  upiSave.state === 'saving'
+                }
+                className="min-h-[44px] px-5 rounded-xl text-[13px] font-bold active:scale-[0.99] transition-transform bg-accent text-bg disabled:bg-bg disabled:text-text-faint disabled:border disabled:border-border"
+              >
+                Save UPI ID
+              </button>
+              <SaveIndicator state={upiSave.state} error={upiSave.error} />
+            </div>
           </div>
 
           {/* Divider */}
