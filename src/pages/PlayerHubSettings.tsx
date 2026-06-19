@@ -294,7 +294,9 @@ export function PlayerHubSettings({ settings }: Props) {
     setAcceptsTopups(val)
     try {
       // Supabase first — if it fails, Dexie is never written, so no desync.
-      await updateAcceptsTopups(val)
+      const slug = settings?.slug
+      if (!slug) throw new Error('Set up Player Hub first.')
+      await updateAcceptsTopups(slug, val)
       await updateSettings({ acceptsTopups: val })
     } catch {
       // Revert optimistic UI update

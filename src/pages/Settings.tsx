@@ -333,11 +333,14 @@ export default function Settings() {
     if (!trimmed || trimmed === settings?.clubName) return
     await clubNameSave.run(async () => {
       await updateSettings({ clubName: trimmed })
-      // Fire-and-forget sync to Supabase. If the club row doesn't exist yet
-      // (owner hasn't set up Player Hub), this is a no-op — RLS returns 0 rows.
-      updateClubNameRemote(trimmed).catch(() => {
-        useToastStore.getState().show('Saved locally. Will sync when online.', 'error')
-      })
+      // Fire-and-forget sync to Supabase. If the owner hasn't set up Player
+      // Hub yet (no slug), the mirror helper returns slug_missing and skips.
+      const slug = settings?.slug
+      if (slug) {
+        updateClubNameRemote(slug, trimmed).catch(() => {
+          useToastStore.getState().show('Saved locally. Will sync when online.', 'error')
+        })
+      }
     })
   }
 

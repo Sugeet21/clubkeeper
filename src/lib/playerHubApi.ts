@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { supabasePublic } from './supabasePublic'
+import { mirrorToSupabaseBySlug } from './mirrorToSupabase'
 import type { ClubPublicInfo, PublicTableInfo } from '../types/playerHub'
 import type { CoinTier, GameTable } from '../types'
 
@@ -164,20 +165,17 @@ export async function upsertClub(payload: {
   }
 }
 
-export async function updateClubNameRemote(clubName: string): Promise<void> {
-  const { error } = await supabase
-    .from('clubs')
-    .update({ club_name: clubName, updated_at: new Date().toISOString() })
-    .not('id', 'is', null)
-  if (error) throw error
+// Pattern S6: slug-routed via mirrorToSupabaseBySlug. The legacy
+// `.not('id', 'is', null)` path relied on RLS narrowing to a single row, which
+// breaks silently if RLS evaluates to zero rows during an auth refresh window.
+export async function updateClubNameRemote(slug: string, clubName: string): Promise<void> {
+  const result = await mirrorToSupabaseBySlug('updateClubNameRemote', slug, { club_name: clubName })
+  if (!result.ok) throw new Error(result.reason)
 }
 
-export async function updateAcceptsTopups(accepts: boolean): Promise<void> {
-  const { error } = await supabase
-    .from('clubs')
-    .update({ accepts_topups: accepts, updated_at: new Date().toISOString() })
-    .not('id', 'is', null)
-  if (error) throw error
+export async function updateAcceptsTopups(slug: string, accepts: boolean): Promise<void> {
+  const result = await mirrorToSupabaseBySlug('updateAcceptsTopups', slug, { accepts_topups: accepts })
+  if (!result.ok) throw new Error(result.reason)
 }
 
 export interface PendingTopupRow {
@@ -235,15 +233,10 @@ export async function syncCoinConfig(
   coinsEnabled: boolean,
   coinTiers: CoinTier[],
 ): Promise<void> {
-  const { error } = await supabase
-    .from('clubs')
-    .update({
-      coins_enabled: coinsEnabled,
-      coin_tiers_json: coinTiers,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('slug', slug)
-  if (error) console.warn('[syncCoinConfig] Supabase sync failed:', error.message)
+  await mirrorToSupabaseBySlug('syncCoinConfig', slug, {
+    coins_enabled: coinsEnabled,
+    coin_tiers_json: coinTiers,
+  })
 }
 
 // Fire-and-forget: mirror the owner's active tables to the Supabase clubs row
@@ -281,24 +274,9 @@ export async function syncTablesJsonBySlug(
       return row
     })
 
-  const { data, error } = await supabase
-    .from('clubs')
-    .update({
-      tables_json: publicTables,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('slug', slug)
-    .select('id')
-  if (error) {
-    console.warn('[syncTablesJsonBySlug] Supabase sync failed:', error.message)
-    return
-  }
-  if (!data || data.length === 0) {
-    // RLS matched no row OR the slug doesn't exist on a club row owned by the
-    // current auth user. Surfaces silent mismatches that would otherwise stay
-    // invisible (the original Phase 0 bug).
-    console.warn(`[syncTablesJsonBySlug] update matched 0 rows for slug="${slug}" — check that the owner's club row has this slug.`)
-  }
+  await mirrorToSupabaseBySlug('syncTablesJsonBySlug', slug, {
+    tables_json: publicTables,
+  })
 }
 
 // ─── v17: Advance booking (Phase 1 of #84) ───────────────────────────────────
@@ -504,22 +482,8 @@ export async function syncBookingConfigBySlug(
   acceptsBookings: boolean,
   bookingAdvanceAmount: number,
 ): Promise<void> {
-  const { data, error } = await supabase
-    .from('clubs')
-    .update({
-      accepts_bookings: acceptsBookings,
-      booking_advance_amount: bookingAdvanceAmount,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('slug', slug)
-    .select('id')
-  if (error) {
-    console.warn('[syncBookingConfigBySlug] Supabase sync failed:', error.message)
-    return
-  }
-  if (!data || data.length === 0) {
-    console.warn(
-      `[syncBookingConfigBySlug] update matched 0 rows for slug="${slug}" — check that the owner's club row has this slug.`,
-    )
-  }
+  await mirrorToSupabaseBySlug('syncBookingConfigBySlug', slug, {
+    accepts_bookings: acceptsBookings,
+    booking_advance_amount: bookingAdvanceAmount,
+  })
 }
