@@ -185,7 +185,7 @@ export function AddItemBottomSheet({
     const threshold = await getLowStockThreshold()
     if (newStock === 0) {
       showToast(`${ci.name} out of stock`, 'error')
-    } else if (oldStock >= threshold && newStock < threshold) {
+    } else if (oldStock > threshold && newStock <= threshold) {
       showToast(`⚠️ ${ci.name} stock low — ${newStock} left`, 'info')
     }
   }

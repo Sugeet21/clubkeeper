@@ -2,6 +2,26 @@
 
 ---
 
+## 20 Jun 2026 — #92 Configurable low-stock threshold
+
+Owner-controllable cutoff for the "Low stock" badge. Old behaviour was hardcoded `qty <= 5` (with a stray `qty < 5` in one place). Customers with high-volume inventory wanted 10–20; small clubs wanted 3.
+
+Found on entry: `ClubSettings.lowStockThreshold?` already on the type, already in `DEFAULT_SETTINGS`, and `getLowStockThreshold()` (`?? 5` fallback) already wired into `Canteen.tsx`, `Summary.tsx`, and `AddItemBottomSheet.tsx`. The only missing piece was the Settings UI. So #92 became a thin UI + comparator-normalisation commit, not a full data wiring.
+
+**`src/pages/Settings.tsx`** — added a numeric `<input type="number" min={1} max={999}>` to the Club Info section, between UPI and Time Rounding. Label: "Low stock alert at" with helper "Canteen items at or below this quantity show a 'Low stock' badge." `lowStockDraft` is a string for typing UX; `handleLowStockBlur` parses, clamps to 1–999, reverts to current value on bad parse, and only calls `updateSettings` when the value actually changed. Toast confirms. No HTML `<form>`. Auto-persist on blur matches the project's pattern.
+
+**`src/pages/Canteen.tsx`** — `StatsRow` filter changed `currentStock < threshold` → `currentStock <= threshold`. Pre-#92 the helper had `<=` but the page filter had `<` — silent off-by-one that meant items at the exact threshold were never counted as "low" in the stats line.
+
+**`src/components/AddItemBottomSheet.tsx`** — crossing-into-low toast trigger normalised from `oldStock >= t && newStock < t` to `oldStock > t && newStock <= t`. Matches the new semantics ("at or below = low") so the toast fires exactly when the badge first appears.
+
+**Schema:** unchanged. Rides Dexie v18 as an additive optional field. No new backup interface alias.
+
+**Test plan:** new club with no value set → falls back to 5 (existing behaviour). Owner sets 10 → items at qty=10 now show low-stock badge AND the stats line counter increments. Owner types `0` → clamps to 1 on blur. Types `9999` → clamps to 999. Types `abc` → reverts to previous. Toast fires once when stock decrements *across* the new threshold.
+
+Build clean at 1034.17 kB (+1.36 kB over previous). Commit: pending below.
+
+---
+
 ## 20 Jun 2026 — Crypto hardening: constant-time HMAC compare on Razorpay webhook (#94 — a2f122a)
 
 External drive-by PR #80 from @dewhush flagged that `api/razorpay-webhook.ts` was comparing the computed HMAC against the `x-razorpay-signature` header with a plain `!==`. JS string equality short-circuits on first byte mismatch, so the comparison ran in non-constant time → theoretical timing side-channel.

@@ -65,7 +65,7 @@ function StatsRow({ items, threshold }: { items: CanteenItem[] | undefined; thre
     return <p className="text-xs text-text-faint mb-4 pl-1">Loading items…</p>
   }
   const lowStockCount = items.filter(
-    (i) => i.stockEnabled && i.currentStock !== null && i.currentStock > 0 && i.currentStock < threshold,
+    (i) => i.stockEnabled && i.currentStock !== null && i.currentStock > 0 && i.currentStock <= threshold,
   ).length
   return (
     <p className="text-xs text-text-faint mb-4 pl-1">

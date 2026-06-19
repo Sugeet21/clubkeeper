@@ -309,7 +309,8 @@ Owns: canteen item master list, stock decrement/restock, low-stock UI, item matc
 Files in scope:
 - `src/types/index.ts` — `CanteenItem { id, name, defaultPrice, stockEnabled, currentStock, isActive, createdAt, sortOrder, peakPrice? }`; `ClubSettings.lowStockThreshold?`, `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`
 - `src/db/database.ts` — v8 adds `canteenItems: '++id, name, isActive, sortOrder'`
-- `src/db/queries.ts` — `getCanteenItems(includeInactive)`, `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`, `decrementCanteenItemStock` (standalone-only — see Pattern D7), `getLowStockThreshold` (with `?? 5` fallback)
+- `src/db/queries.ts` — `getCanteenItems(includeInactive)`, `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`, `decrementCanteenItemStock` (standalone-only — see Pattern D7), `getLowStockThreshold` (implemented #92, with `?? 5` fallback, clamps 1–999)
+- `src/pages/Settings.tsx` — Club Info section hosts the numeric `lowStockThreshold` input (#92). Auto-persists on blur via `handleLowStockBlur` — clamps to 1–999, reverts to current on bad parse.
 - `src/db/seed.ts` — `DEFAULT_SETTINGS.lowStockThreshold` (default 5)
 - `src/lib/canteenMatch.ts` — `normalizeName` (trim+lowercase+collapse spaces), `findMatchingCanteenItem(name, price, items)`, `findCanteenItemByName(name, items)`. No Dexie imports.
 - `src/pages/Canteen.tsx` — list with StockPill, FAB, soft-delete confirm, opens `RestockSheet` from each item card, `StatsRow`
@@ -329,6 +330,7 @@ Invariants:
 - Locked decision: no auto-save freeform to canteen master list (would let staff typos pollute).
 - `RestockSheet`: Piggy chip DISABLED when `cost > piggyBalance`. If user had Piggy selected and cost rose past piggy, `effectiveSource` snaps to Other on confirm. `stockEnabled=false` caveat shown.
 - Stock can only grow via restock. `recordStockPurchase` single flat tx: insert StockPurchase + (if `stockEnabled=true`) `currentStock += qty`.
+- **Low-stock threshold (#92, 20 Jun 2026):** all surfaces compute via `getLowStockThreshold()` (Canteen `StatsRow`, `LowStockStrip` count in `Summary.tsx`, `AddItemBottomSheet.fireStockToastIfNeeded` crossing toast). Comparison normalized to `currentStock <= threshold` everywhere (was a mix of `<` and `<=` pre-#92 — see commit). Crossing-into-low rule is `oldStock > t && newStock <= t`. Owner edits in Settings → Club Info → "Low stock alert at" — auto-persists on blur. No Dexie bump (rides v18 as additive optional).
 - **Desktop layout (#91 Phase 2, 19 Jun 2026):** `Canteen.tsx` content is wrapped in `<div className="max-w-[1400px] mx-auto px-5">` (the wrapper REPLACES the page's old `<div className="px-5">`; `px-5` stays so card padding doesn't shift on mobile). Item list grid is `space-y-3 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3`. FAB and modals (`CanteenItemFormModal`, `RestockSheet`, delete-confirm) live OUTSIDE the wrapper — never move them inside, they'd anchor to the container right edge instead of the viewport on desktop. **`CanteenItemFormModal` is a shared `<Modal>`** so it inherits the desktop centered-dialog cap from Shared UI. **`RestockSheet` is its own component** — it stays a bottom-sheet on every viewport.
 
 Cross-feature ripples:
@@ -341,7 +343,7 @@ Cross-feature ripples:
 
 See also: `bug_patterns.md` Pattern D7 (nested tx), Pattern F7 (inline error vs toast), `decisions_active.md` (no auto-save freeform).
 
-Last updated: 19 Jun 2026 (#91 Phase 2 — desktop layout + Modal cap)
+Last updated: 20 Jun 2026 (#92 — configurable low-stock threshold)
 
 ---
 

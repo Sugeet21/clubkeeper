@@ -281,6 +281,12 @@ export default function Settings() {
     setUpiId(settings?.upiId ?? '')
   }, [settings?.upiId])
 
+  // Low stock threshold draft (#92). String for typing UX, parsed on blur.
+  const [lowStockDraft, setLowStockDraft] = useState('5')
+  useEffect(() => {
+    setLowStockDraft(String(settings?.lowStockThreshold ?? 5))
+  }, [settings?.lowStockThreshold])
+
   // Table form modal
   const [tableModal, setTableModal] = useState<{ open: boolean; table?: GameTable }>({ open: false })
 
@@ -331,6 +337,20 @@ export default function Settings() {
   function handleUpiBlur() {
     const err = validateUpiId(upiId)
     setUpiError(err)
+  }
+
+  async function handleLowStockBlur() {
+    const current = settings?.lowStockThreshold ?? 5
+    const parsed = parseInt(lowStockDraft, 10)
+    if (!Number.isFinite(parsed)) {
+      setLowStockDraft(String(current))
+      return
+    }
+    const clamped = Math.min(999, Math.max(1, parsed))
+    setLowStockDraft(String(clamped))
+    if (clamped === current) return
+    await updateSettings({ lowStockThreshold: clamped })
+    useToastStore.getState().show(`Low-stock alert at ${clamped} unit${clamped === 1 ? '' : 's'}`, 'success')
   }
 
   async function handleSaveUpiId() {
@@ -623,6 +643,36 @@ export default function Settings() {
             >
               Save UPI ID
             </button>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-border my-4" />
+
+          {/* Low-stock threshold (#92) */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <label htmlFor="lowStockThreshold" className="text-[11px] font-mono uppercase tracking-widest text-text-faint">
+                Low stock alert at
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="lowStockThreshold"
+                  type="number"
+                  min={1}
+                  max={999}
+                  step={1}
+                  inputMode="numeric"
+                  value={lowStockDraft}
+                  onChange={(e) => setLowStockDraft(e.target.value)}
+                  onBlur={handleLowStockBlur}
+                  className="w-20 px-3 py-2 bg-bg border border-border rounded-xl text-text text-[15px] text-right tabular-nums focus:border-accent outline-none min-h-[44px]"
+                />
+                <span className="text-[12px] text-text-muted">units</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-text-faint mt-1.5">
+              Canteen items at or below this quantity show a "Low stock" badge.
+            </p>
           </div>
 
           {/* Divider */}
