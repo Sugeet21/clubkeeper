@@ -2,6 +2,20 @@
 
 ---
 
+## 20 Jun 2026 — Crypto hardening: constant-time HMAC compare on Razorpay webhook (#94 — a2f122a)
+
+External drive-by PR #80 from @dewhush flagged that `api/razorpay-webhook.ts` was comparing the computed HMAC against the `x-razorpay-signature` header with a plain `!==`. JS string equality short-circuits on first byte mismatch, so the comparison ran in non-constant time → theoretical timing side-channel.
+
+PR was closed without merging — repo is public and the file handles payments, so accepting an unverified outside patch was too risky (the PR body also contained a crypto donation address, a known drive-by pattern). Applied the equivalent fix ourselves:
+
+**`api/razorpay-webhook.ts`** — added `timingSafeEqual` to the `crypto` import. After computing `expectedSig`, decode both sides into equal-length hex `Buffer`s and compare with `timingSafeEqual`. Length-mismatch path still returns 401 the same way (`timingSafeEqual` throws on length mismatch, so the length check has to come first). Same external behaviour, no API change, no migration needed.
+
+Build clean. Issue #94 opened to track. PR #80 closed with a polite thank-you comment explaining the public-repo policy.
+
+**Decision captured:** for any future external PR touching `api/*` (payments/auth surface), default is *thank, close, re-implement ourselves*. The suggestion may be valid; merging the patch is the risk.
+
+---
+
 ## 19 Jun 2026 — Peak Hour Pricing Phase 4: bulk-edit modal + onboarding banner (#68) — pending SHA
 
 Final slice of #68. Feature is now end-to-end and #68 ready to close pending owner verification.

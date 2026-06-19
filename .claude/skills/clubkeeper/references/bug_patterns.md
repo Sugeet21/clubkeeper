@@ -737,6 +737,18 @@ Never change `status` values or webhook behavior to encode this distinction — 
 
 Frontend sends `{ tier, cycle }` only — never timestamps, flags, or scenario intent. `trial_ends_at` is NEVER overwritten if the existing value is in the future and still valid. Scenario is logged to console + stored in Razorpay `notes` for dashboard debugging. Supabase update errors after a successful Razorpay create are logged but not thrown — webhook reconciles DB state when `subscription.authenticated` fires.
 
+### Pattern S10 — HMAC / token / secret comparisons MUST use `crypto.timingSafeEqual` (#94, 20 Jun 2026)
+**Symptom signature:** No user-visible symptom. Code review or external security report flags a webhook / signed-token verifier that uses `===` / `!==` to compare a computed HMAC against a header value.
+**Root cause:** JS string and `Buffer` equality short-circuit on first byte mismatch, so the wall-clock duration leaks how many leading bytes matched. With enough samples an attacker can recover the signature byte-by-byte. Practical exploitability is low over the public internet against HMAC-SHA256, but the fix is one line and the cost of getting this wrong on a payments surface is high.
+**Rule:** For any equality check on a secret, signature, HMAC, or auth token:
+1. Decode both sides to `Buffer` of the SAME length first (e.g. `Buffer.from(hex, 'hex')`).
+2. Length-check explicitly and return the failure response — `timingSafeEqual` THROWS on length mismatch, so an unchecked call becomes a 500 instead of a 401.
+3. Then call `crypto.timingSafeEqual(a, b)`.
+4. Never `===` / `!==` / `Buffer.compare() === 0` for these comparisons.
+**Reference implementation:** `api/razorpay-webhook.ts` after a2f122a.
+**Where else this rule applies in this repo:** any future `api/*` that verifies a signed header — Razorpay return-url verification, Supabase JWT signatures we ever verify ourselves (today we delegate to `supabase-js`), any WhatsApp / Twilio webhooks if we add them later.
+**Policy note attached to this pattern:** external PRs that touch `api/*` are NOT merged. Thank the contributor, close the PR, re-implement the suggestion ourselves if valid. Repo is public; payments surface is high-value.
+
 ---
 
 ## Payment & Money invariants
