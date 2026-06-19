@@ -126,11 +126,12 @@ function IconAlerts() {
   )
 }
 
-function IconPeakPricing() {
+function IconCanteen() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 2" />
+      <path d="M3 11h18v2a8 8 0 01-8 8h-2a8 8 0 01-8-8v-2z" />
+      <path d="M7 11V7a2 2 0 012-2h6a2 2 0 012 2v4" />
+      <line x1="21" y1="15" x2="23" y2="17" />
     </svg>
   )
 }
@@ -664,36 +665,6 @@ export default function Settings() {
           {/* Divider */}
           <div className="border-t border-border my-4" />
 
-          {/* Low-stock threshold (#92) */}
-          <div className="mb-3">
-            <div className="flex items-center justify-between mb-1.5">
-              <label htmlFor="lowStockThreshold" className="text-[11px] font-mono uppercase tracking-widest text-text-faint">
-                Low stock alert at
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  id="lowStockThreshold"
-                  type="number"
-                  min={1}
-                  max={999}
-                  step={1}
-                  inputMode="numeric"
-                  value={lowStockDraft}
-                  onChange={(e) => setLowStockDraft(e.target.value)}
-                  onBlur={handleLowStockBlur}
-                  className="w-20 px-3 py-2 bg-bg border border-border rounded-xl text-text text-[15px] text-right tabular-nums focus:border-accent outline-none min-h-[44px]"
-                />
-                <span className="text-[12px] text-text-muted">units</span>
-              </div>
-            </div>
-            <p className="text-[11px] text-text-faint mt-1.5">
-              Canteen items at or below this quantity show a "Low stock" badge.
-            </p>
-          </div>
-
-          {/* Divider */}
-          <div className="border-t border-border my-4" />
-
           {/* Time Rounding */}
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -777,7 +748,88 @@ export default function Settings() {
           </div>
         </SettingsSection>
 
-        {/* ── 3: Alerts ──────────────────────────────────────────────────── */}
+        {/* ── 3: Canteen (low stock + peak pricing) ───────────────────────── */}
+        <SettingsSection
+          id="canteen"
+          title="Canteen"
+          icon={<IconCanteen />}
+          isOpen={openSection === 'canteen'}
+          onToggle={() => toggleSection('canteen')}
+        >
+          <div className="mt-3 space-y-4">
+            {/* Low-stock threshold (#92) */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor="lowStockThreshold" className="text-[11px] font-mono uppercase tracking-widest text-text-faint">
+                  Low stock alert at
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="lowStockThreshold"
+                    type="number"
+                    min={1}
+                    max={999}
+                    step={1}
+                    inputMode="numeric"
+                    value={lowStockDraft}
+                    onChange={(e) => setLowStockDraft(e.target.value)}
+                    onBlur={handleLowStockBlur}
+                    className="w-20 px-3 py-2 bg-bg border border-border rounded-xl text-text text-[15px] text-right tabular-nums focus:border-accent outline-none min-h-[44px]"
+                  />
+                  <span className="text-[12px] text-text-muted">units</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-text-faint mt-1.5">
+                Canteen items at or below this quantity show a "Low stock" badge.
+              </p>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-border" />
+
+            {/* Peak Hour Pricing (#68) */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between min-h-[44px]">
+                <div className="pr-3">
+                  <p className="text-[14px] font-semibold text-text">Peak Hour Pricing</p>
+                  <p className="text-[11px] text-text-faint mt-0.5">Charge a higher price for canteen items during set hours.</p>
+                </div>
+                <Toggle
+                  value={settings?.peakPricingEnabled ?? false}
+                  onChange={(v) => void updateSettings({ peakPricingEnabled: v })}
+                  aria-label="Toggle peak hour pricing"
+                />
+              </div>
+
+              {(settings?.peakPricingEnabled ?? false) && (
+                <>
+                  <button
+                    onClick={() => setPeakSheetOpen(true)}
+                    className="w-full min-h-[44px] flex items-center justify-between px-4 py-3 rounded-xl bg-bg border border-border active:bg-bg-card transition-colors"
+                  >
+                    <div className="text-left">
+                      <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Peak hours</p>
+                      <p className="text-[15px] text-text font-mono tabular-nums mt-0.5">
+                        {formatPeakTime12(settings?.peakStartHour ?? 22, settings?.peakStartMinute ?? 0)}
+                        {' → '}
+                        {formatPeakTime12(settings?.peakEndHour ?? 6, settings?.peakEndMinute ?? 0)}
+                      </p>
+                    </div>
+                    <span className="text-[12px] text-accent flex items-center gap-1">
+                      Edit
+                      <PencilIcon />
+                    </span>
+                  </button>
+                  <p className="text-[11px] text-text-faint leading-relaxed">
+                    Some items cost more during these hours due to higher demand and staffing. Set an optional peak price per item on the Canteen page.
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+        </SettingsSection>
+
+        {/* ── 4: Alerts ──────────────────────────────────────────────────── */}
         <SettingsSection
           id="alerts"
           title="Alerts"
@@ -960,56 +1012,7 @@ export default function Settings() {
           </div>
         </SettingsSection>
 
-        {/* ── 4.55: Peak Hour Pricing (#68) ───────────────────────────────── */}
-        <SettingsSection
-          id="peak-pricing"
-          title="Peak Hour Pricing"
-          icon={<IconPeakPricing />}
-          isOpen={openSection === 'peak-pricing'}
-          onToggle={() => toggleSection('peak-pricing')}
-        >
-          <div className="mt-3 space-y-3">
-            <div className="flex items-center justify-between min-h-[44px]">
-              <div className="pr-3">
-                <p className="text-[14px] font-semibold text-text">Enable</p>
-                <p className="text-[11px] text-text-faint mt-0.5">Charge a higher price for canteen items during set hours.</p>
-              </div>
-              <Toggle
-                value={settings?.peakPricingEnabled ?? false}
-                onChange={(v) => void updateSettings({ peakPricingEnabled: v })}
-                aria-label="Toggle peak hour pricing"
-              />
-            </div>
-
-            {(settings?.peakPricingEnabled ?? false) && (
-              <>
-                <button
-                  onClick={() => setPeakSheetOpen(true)}
-                  className="w-full min-h-[44px] flex items-center justify-between px-4 py-3 rounded-xl bg-bg border border-border active:bg-bg-card transition-colors"
-                >
-                  <div className="text-left">
-                    <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Peak hours</p>
-                    <p className="text-[15px] text-text font-mono tabular-nums mt-0.5">
-                      {formatPeakTime12(settings?.peakStartHour ?? 22, settings?.peakStartMinute ?? 0)}
-                      {' → '}
-                      {formatPeakTime12(settings?.peakEndHour ?? 6, settings?.peakEndMinute ?? 0)}
-                    </p>
-                  </div>
-                  <span className="text-[12px] text-accent flex items-center gap-1">
-                    Edit
-                    <PencilIcon />
-                  </span>
-                </button>
-
-                <p className="text-[11px] text-text-faint leading-relaxed">
-                  Some items cost more during these hours due to higher demand and staffing. Set an optional peak price per item on the Canteen page.
-                </p>
-              </>
-            )}
-          </div>
-        </SettingsSection>
-
-        {/* ── 4.6: Player Hub ────────────────────────────────────────────── */}
+        {/* ── 7: Player Hub ──────────────────────────────────────────────── */}
         <SettingsSection
           id="player-hub"
           title="Player Hub"
