@@ -138,9 +138,10 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
-## 20 Jun 2026 — Crypto hardening
+## 20 Jun 2026 — Crypto hardening + config
 
 - **BUG-WEBHOOK-TIMING** (#94, fixed, a2f122a) — Razorpay webhook HMAC compared with non-constant-time `!==` → theoretical timing side-channel; switched to `crypto.timingSafeEqual`. Reported via external PR #80 (closed unmerged). See Pattern S10 — see GitHub
+- **FEAT-CANTEEN-LOWSTOCK** (#92, shipped, 8ebffe6) — Owner-configurable low-stock threshold (1–999, default 5). Settings UI added; helper + consumers already existed. Also normalised Canteen StatsRow comparator from `<` to `<=` to match Summary (silent off-by-one) — see GitHub
 
 ---
 
