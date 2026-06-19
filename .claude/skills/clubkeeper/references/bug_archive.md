@@ -138,6 +138,12 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 20 Jun 2026 — Crypto hardening
+
+- **BUG-WEBHOOK-TIMING** (#94, fixed, a2f122a) — Razorpay webhook HMAC compared with non-constant-time `!==` → theoretical timing side-channel; switched to `crypto.timingSafeEqual`. Reported via external PR #80 (closed unmerged). See Pattern S10 — see GitHub
+
+---
+
 ## 14 Jun 2026 — Bug sprint (issues #68–74)
 
 - **BUG-QS-UPI-QR** (#69, fixed, 2b83dd1) — QuickSale showed no UPI QR after UPI payment selected — see GitHub
