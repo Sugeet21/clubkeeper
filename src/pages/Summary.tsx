@@ -262,7 +262,7 @@ export default function Summary() {
 
   const dateRevenues = useLiveQuery(
     async () => {
-      const result = new Map<string, { sessionsRevenue: number; itemsRevenue: number; sessions: Session[] }>()
+      const result = new Map<string, { sessionsRevenue: number; itemsRevenue: number; walkInRevenue: number; sessions: Session[] }>()
 
       for (const [key, { start, end }] of dateWindows.entries()) {
         const sessions = await db.sessions
@@ -289,7 +289,16 @@ export default function Summary() {
 
         const itemsRevenue = allItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
 
-        result.set(key, { sessionsRevenue: completedSessionsRevenue, itemsRevenue, sessions })
+        // #93 / Pattern T6: walk-in canteen revenue per date is part of the
+        // day's total. Without this, yesterday/last-week/7d-avg deltas
+        // understate days that had walk-in sales.
+        const canteenSales = await db.canteenSales
+          .where('createdAt')
+          .between(start, end, true, true)
+          .toArray()
+        const walkInRevenue = canteenSales.reduce((sum, s) => sum + s.total, 0)
+
+        result.set(key, { sessionsRevenue: completedSessionsRevenue, itemsRevenue, walkInRevenue, sessions })
       }
 
       return result
@@ -508,7 +517,7 @@ export default function Summary() {
     const key = toDateKey(date)
     const data = dateRevenues?.get(key)
     if (!data) return 0
-    return data.sessionsRevenue + data.itemsRevenue
+    return data.sessionsRevenue + data.itemsRevenue + data.walkInRevenue
   }
 
   // For 7d avg: average the 7 days prior to viewedDate (not including viewedDate)
@@ -520,7 +529,7 @@ export default function Summary() {
       const key = toDateKey(subDays(viewedDate, i))
       const data = dateRevenues.get(key)
       if (data) {
-        sum += data.sessionsRevenue + data.itemsRevenue
+        sum += data.sessionsRevenue + data.itemsRevenue + data.walkInRevenue
         count++
       }
     }
@@ -547,13 +556,17 @@ export default function Summary() {
   // NOT wrapped in useMemo — running sessions call getElapsedMs() which must
   // recompute every useTick() render. useMemo would freeze the value between
   // DB writes (Pattern T4).
-  const { buckets: hourlyBuckets, peakHour } = !detailSessions.length
+  // #93: empty-state guard now also considers walk-in sales — if today has
+  // only Quick Sales (zero sessions), the heatmap should still show those hours.
+  const { buckets: hourlyBuckets, peakHour } = !detailSessions.length && canteenSalesForDate.length === 0
     ? { buckets: Array.from({ length: 24 }, (_, h) => ({ hour: h, revenue: 0, sessionCount: 0 })), peakHour: -1 }
-    : bucketByHour(detailSessions, detailItemsMap)
+    : bucketByHour(detailSessions, detailItemsMap, canteenSalesForDate)
 
   // ── Top tables ──────────────────────────────────────────────────────────────
   // NOT wrapped in useMemo — same Pattern T4 reason as hourlyBuckets above.
-  const topTables = rankTables(detailSessions, detailItemsMap, tables)
+  // #93: pass canteenSalesForDate so a synthetic "Walk-in Canteen" row joins
+  // the ranking when walk-in revenue > 0 (TopTablesList detects WALKIN_TABLE_ID).
+  const topTables = rankTables(detailSessions, detailItemsMap, tables, canteenSalesForDate)
 
   // ── Top canteen items ───────────────────────────────────────────────────────
   const allItems = useMemo(() => {
@@ -564,9 +577,10 @@ export default function Summary() {
     return result
   }, [detailItemsMap])
 
+  // #93: merge walk-in canteen lines into the same name-keyed ranking.
   const topCanteen = useMemo(
-    () => topCanteenItems(allItems, 3),
-    [allItems],
+    () => topCanteenItems(allItems, canteenSalesForDate, 3),
+    [allItems, canteenSalesForDate],
   )
 
   // ── Sorted session rows ─────────────────────────────────────────────────────

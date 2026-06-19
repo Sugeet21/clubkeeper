@@ -1,4 +1,4 @@
-import type { TableSummary } from '../../lib/summaryMath'
+import { WALKIN_TABLE_ID, type TableSummary } from '../../lib/summaryMath'
 import { formatDuration } from '../../lib/time'
 
 function formatINR(n: number): string {
@@ -19,6 +19,9 @@ export default function TopTablesList({ tables }: { tables: TableSummary[] }) {
       </p>
       <div className="space-y-2">
         {top.map((t, idx) => {
+          // #93: walk-in row has no duration — render a "QS" pill and a
+          // "N sales" label instead of the medal + "sess · avg" line.
+          const isWalkIn = t.tableId === WALKIN_TABLE_ID
           const avgMs =
             t.sessionCount > 0 ? Math.round(t.totalDurationMs / t.sessionCount) : 0
           return (
@@ -26,7 +29,13 @@ export default function TopTablesList({ tables }: { tables: TableSummary[] }) {
               key={t.tableId}
               className="flex items-center gap-3 bg-bg-card border border-border rounded-2xl px-4 py-3 min-h-[56px]"
             >
-              <span className="text-xl shrink-0">{MEDALS[idx]}</span>
+              {isWalkIn ? (
+                <span className="shrink-0 text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-1 rounded-md bg-accent/15 text-accent">
+                  QS
+                </span>
+              ) : (
+                <span className="text-xl shrink-0">{MEDALS[idx]}</span>
+              )}
               <span className="flex-1 text-[14px] font-semibold text-text truncate min-w-0">
                 {t.tableName}
               </span>
@@ -35,7 +44,9 @@ export default function TopTablesList({ tables }: { tables: TableSummary[] }) {
                   {formatINR(t.revenue)}
                 </p>
                 <p className="text-[11px] font-mono text-text-dim">
-                  {t.sessionCount} sess · {formatDuration(avgMs)} avg
+                  {isWalkIn
+                    ? `${t.sessionCount} sale${t.sessionCount === 1 ? '' : 's'}`
+                    : `${t.sessionCount} sess · ${formatDuration(avgMs)} avg`}
                 </p>
               </div>
             </div>

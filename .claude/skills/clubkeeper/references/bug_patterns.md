@@ -80,6 +80,29 @@ Never capture one without the others. If a new rate-card-related field is added 
 3. legacy linear + optional rounding
 **Files affected:** `src/lib/money.ts` (`calculateAmount`), `src/db/queries.ts` (`stopSession` preview calc).
 
+### Pattern T9 — Every Summary aggregation must take ALL revenue streams as explicit args (#93, 20 Jun 2026)
+**Symptom signature:** Money tiles on `/summary` (headline revenue, canteen tile, PAYMENT MODE, CASH FLOW) show ₹X,XXX and reconcile with the cash drawer. But analytical surfaces — Top Canteen Items / Top Tables / Hourly Heatmap / yesterday-vs-today delta — show smaller numbers that don't add up to the money tiles. Owner spots it as "why isn't the Quick Sale item in Top Items even though I sold it three times today?"
+**Root cause:** Revenue in ClubKeeper comes from at least two independent streams — `Session` (table time + `SessionItem` rows) AND `CanteenSale` (walk-in canteen, no session). The money tiles were updated when Quick Sale shipped (Phase 1), but four pure aggregation functions in `summaryMath.ts` (`topCanteenItems`, `bucketByHour`, `rankTables`) and the `dateRevenues` per-date Map in `Summary.tsx` were left taking only `Session[]` / `SessionItem[]`. TypeScript doesn't catch the omission because the function still type-checks; it just silently under-reports.
+**Rule:** Any new aggregation in `summaryMath.ts` or `Summary.tsx` MUST take every applicable revenue stream as an EXPLICIT parameter. Today the streams are:
+1. `Session.amount` (table time) — completed = stored, running = `calculateAmount(getElapsedMs(s))` in render body per Pattern T4.
+2. `SessionItem[]` aggregated via `itemsBySessionId` — canteen sold against a session.
+3. `CanteenSale[]` — walk-in canteen, no session, has its own `createdAt`, `total`, `paymentBreakdown`, and `items[]` lines.
+4. (Future: booking advances, refunds — add to this list when shipped.)
+
+Default-`[]` the canteen-sales arg on `summaryMath` functions so call sites that genuinely don't have them (tests, history-only screens) can omit, but new Summary code SHOULD pass the array. Empty-state guards in `Summary.tsx` must check BOTH `detailSessions.length === 0` AND `canteenSalesForDate.length === 0` before short-circuiting to zeros.
+
+**Synthetic-row pattern for `rankTables`:** walk-in revenue has no real `tableId`. Use sentinel `WALKIN_TABLE_ID = -1` (real auto-increment ids are positive) and have the consumer (`TopTablesList`) detect it to render a "QS" pill + "N sales" instead of a medal + "sess · avg".
+
+**Load-bearing deploy note:** `dateRevenues` is used by `RevenueDeltas` (yesterday / last week / 7d avg). Adding walk-in revenue to historical day totals will retroactively SHIFT delta percentages on first deploy — owner will see "yesterday was ₹X higher than I remember." This is the bug being fixed, not a regression. Flag it in the issue comment so the owner doesn't think it's a new bug.
+
+**Grep when reviewing any Summary aggregate:**
+```bash
+git grep -n "canteenSalesForDate" src/pages/Summary.tsx
+```
+If you wrote a new aggregate and it doesn't appear in that grep, it's almost certainly buggy.
+
+**Files affected (origin fix):** `src/lib/summaryMath.ts` (sig changes for `bucketByHour`, `rankTables`, `topCanteenItems`; export `WALKIN_TABLE_ID`), `src/pages/Summary.tsx` (4 wiring points), `src/pages/summary/TopTablesList.tsx` (synthetic-row render).
+
 ### Pattern T6 — Snooze must anchor to original fire time, not to user tap time
 **Symptom signature:** "I set snooze for 15 min but it took 16 min." Player gets called at wrong intervals. Drift accumulates over multiple snoozes.
 **Root cause:** `notifyAtMs = Date.now() + snoozeMs` adds the user's reaction time (seconds between alarm ringing and user tapping Snooze) onto every snooze cycle.

@@ -1,4 +1,12 @@
-import type { Session, SessionItem, GameTable } from '../types'
+import type { Session, SessionItem, GameTable, CanteenSale } from '../types'
+
+/**
+ * Sentinel tableId for the synthetic "Walk-in Canteen" row injected into
+ * `rankTables`. Real GameTable.id values are positive auto-increment ints,
+ * so -1 cannot collide. Consumers (TopTablesList) detect this value and
+ * render a "QS" pill instead of a medal/duration row.
+ */
+export const WALKIN_TABLE_ID = -1
 import { normalizeName } from './canteenMatch'
 import { getElapsedMs } from './time'
 import { calculateAmount, calculateItemsTotal } from './money'
@@ -54,6 +62,7 @@ export function computeDelta(current: number, baseline: number): RevenueDelta {
 export function bucketByHour(
   sessions: Session[],
   itemsBySessionId: Map<number, SessionItem[]>,
+  canteenSales: CanteenSale[] = [],
 ): { buckets: HourlyBucket[]; peakHour: number } {
   const buckets: HourlyBucket[] = Array.from({ length: 24 }, (_, hour) => ({
     hour,
@@ -71,6 +80,13 @@ export function bucketByHour(
     const itemsRevenue = calculateItemsTotal(items)
     buckets[hour].revenue += sessionRevenue + itemsRevenue
     buckets[hour].sessionCount += 1
+  }
+
+  // #93: walk-in canteen revenue contributes to the hour the sale was made.
+  // No sessionCount bump — these are not table sessions.
+  for (const sale of canteenSales) {
+    const hour = new Date(sale.createdAt).getHours()
+    buckets[hour].revenue += sale.total
   }
 
   let peakHour = -1
@@ -93,6 +109,7 @@ export function rankTables(
   sessions: Session[],
   itemsBySessionId: Map<number, SessionItem[]>,
   tables: GameTable[],
+  canteenSales: CanteenSale[] = [],
 ): TableSummary[] {
   const tableNameMap = new Map<number, string>()
   for (const t of tables) {
@@ -120,13 +137,27 @@ export function rankTables(
     })
   }
 
-  return [...byTable.entries()]
-    .map(([tableId, stats]) => ({
-      tableId,
-      tableName: tableNameMap.get(tableId) ?? `Table ${tableId}`,
-      ...stats,
-    }))
-    .sort((a, b) => b.revenue - a.revenue)
+  const rows: TableSummary[] = [...byTable.entries()].map(([tableId, stats]) => ({
+    tableId,
+    tableName: tableNameMap.get(tableId) ?? `Table ${tableId}`,
+    ...stats,
+  }))
+
+  // #93: synthesize a "Walk-in Canteen" row when walk-in revenue > 0.
+  // No duration concept for walk-ins — totalDurationMs stays 0 (consumer skips
+  // the avg-duration line on WALKIN_TABLE_ID).
+  const walkInRevenue = canteenSales.reduce((sum, s) => sum + s.total, 0)
+  if (walkInRevenue > 0) {
+    rows.push({
+      tableId: WALKIN_TABLE_ID,
+      tableName: 'Walk-in Canteen',
+      revenue: walkInRevenue,
+      sessionCount: canteenSales.length,
+      totalDurationMs: 0,
+    })
+  }
+
+  return rows.sort((a, b) => b.revenue - a.revenue)
 }
 
 /**
@@ -134,25 +165,33 @@ export function rankTables(
  */
 export function topCanteenItems(
   items: SessionItem[],
+  canteenSales: CanteenSale[],
   limit: number,
 ): CanteenItemSummary[] {
   const byName = new Map<string, CanteenItemSummary>()
 
-  for (const item of items) {
-    const key = normalizeName(item.name)
-    if (!key) continue
+  const addLine = (name: string, quantity: number, price: number) => {
+    const key = normalizeName(name)
+    if (!key) return
     const existing = byName.get(key)
     if (existing) {
-      existing.qty += item.quantity
-      existing.revenue += item.price * item.quantity
+      existing.qty += quantity
+      existing.revenue += price * quantity
     } else {
       byName.set(key, {
         normalizedName: key,
-        displayName: item.name,
-        qty: item.quantity,
-        revenue: item.price * item.quantity,
+        displayName: name,
+        qty: quantity,
+        revenue: price * quantity,
       })
     }
+  }
+
+  for (const item of items) addLine(item.name, item.quantity, item.price)
+  // #93: walk-in canteen lines merge into the same name-keyed ranking. Field
+  // names on CanteenSale.items match the (name, quantity, price) shape.
+  for (const sale of canteenSales) {
+    for (const line of sale.items) addLine(line.name, line.quantity, line.price)
   }
 
   return [...byName.values()]

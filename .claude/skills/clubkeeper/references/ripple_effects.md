@@ -424,7 +424,7 @@ Cross-feature ripples:
 - → [Payment Split & Payment Mode](#payment-split--payment-mode) (reuses `PaymentSplitSheet` with `total = subtotal`; PaymentSplitSheet now has its own desktop dialog cap — see that section).
 - → [UPI QR & Payment Screen](#upi-qr--payment-screen) (post-confirm QR screen, fix #69).
 - → [Wallet & Customers](#wallet--customers) (optional wallet debit).
-- → [Summary Dashboard](#summary-dashboard) (canteen revenue tile, PAYMENT MODE, piggy cashIn).
+- → [Summary Dashboard](#summary-dashboard) (canteen revenue tile, PAYMENT MODE, piggy cashIn, **topCanteenItems / bucketByHour / rankTables synthetic walk-in row / dateRevenues per-date** — #93, 20 Jun 2026).
 - → [Tables Page (Home)](#tables-page-home) (TopBar pill from Home only; same `max-w-[1400px]` + grid pattern).
 
 Last updated: 19 Jun 2026 (#91 Phase 2.5 — QuickSale desktop layout)
@@ -645,16 +645,23 @@ Invariants:
 - Largest-remainder rounding in `PaymentModeStrip.computePercents` — bar widths and tile percents read same return value.
 - Date picker pattern = Pattern U9 (opacity-0 full-size overlay over a label, NOT clip/sr-only). History.tsx date inputs have `cursor-pointer`.
 - CASH FLOW PIGGY tile shows `Math.max(0, current)` with "Piggy negative — check restock log" hint when `current < 0`.
+- **Quick Sale aggregation (#93 / Pattern T6, 20 Jun 2026):** `topCanteenItems`, `bucketByHour`, `rankTables`, and `dateRevenues` per-date totals MUST include `CanteenSale` rows. Wiring:
+  1. `bucketByHour(sessions, itemsBySessionId, canteenSales)` — walk-in revenue lands in the hour of `sale.createdAt`, no sessionCount bump.
+  2. `rankTables(sessions, itemsBySessionId, tables, canteenSales)` — synthesises one row `{ tableId: WALKIN_TABLE_ID (-1), tableName: 'Walk-in Canteen', revenue, sessionCount, totalDurationMs: 0 }` when walk-in revenue > 0. `TopTablesList` detects `WALKIN_TABLE_ID` and renders a small "QS" pill in place of the medal + a "N sales" label instead of "sess · avg".
+  3. `topCanteenItems(sessionItems, canteenSales, limit)` — both feeds merge into the same `normalizeName`-keyed map.
+  4. `dateRevenues` Map gains a `walkInRevenue` field per date; `getDateTotal` and `trailing7Avg` add it to `sessionsRevenue + itemsRevenue`. This is the load-bearing piece — yesterday/last-week/7d-avg deltas RETROACTIVELY recompute on first deploy (correct, but visibly different — flag to owner).
+  Empty-state guard in `Summary.tsx` for hourly heatmap widened: render zeros only when `detailSessions.length === 0 && canteenSalesForDate.length === 0`.
 
 Cross-feature ripples:
 - → [Sessions](#sessions) (Pattern T4 dependency).
 - → [Payment Split & Payment Mode](#payment-split--payment-mode) (strip data).
 - → [Piggy (Cash Float)](#piggy-cash-float) (CashFlowStrip).
 - → [Canteen / Stock](#canteen--stock) (LowStockStrip).
+- → [Quick Sale](#quick-sale) (4 aggregation surfaces — Pattern T6, see invariants above).
 
-See also: `bug_patterns.md` Pattern T4 (origin: BUG-022), Pattern U9 (date picker).
+See also: `bug_patterns.md` Pattern T4 (origin: BUG-022), Pattern T6 (origin: #93), Pattern U9 (date picker).
 
-Last updated: 8 Jun 2026
+Last updated: 20 Jun 2026 (#93 — Pattern T6 Quick Sale aggregation)
 
 ---
 

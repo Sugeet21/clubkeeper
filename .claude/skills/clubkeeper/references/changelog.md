@@ -2,6 +2,38 @@
 
 ---
 
+## 20 Jun 2026 — #93 Summary Quick Sale aggregation fix (Pattern T9)
+
+Money tiles on `/summary` already included walk-in Quick Sale revenue (Phase 1 wiring), but four analytical surfaces silently dropped it:
+1. **Top Canteen Items** — items only sold via Quick Sale never appeared in the top-3 ranking.
+2. **Hourly Heatmap** — hours where only Quick Sales happened showed flat bars.
+3. **Top Tables** — walk-in revenue was orphaned (it isn't bound to a table).
+4. **Yesterday / Last Week / 7d-avg deltas** — historical totals excluded past walk-ins, so deltas were self-consistent but understated. **Load-bearing piece** — once fixed, historical day totals retroactively grow on first deploy.
+
+Fix landed in one commit (per spec — piecemeal would cause delta jumps).
+
+**`src/lib/summaryMath.ts`** — three signature changes, all backward-compatible via `canteenSales: CanteenSale[] = []`:
+- `bucketByHour(sessions, itemsBySessionId, canteenSales=[])` — walk-in revenue buckets to `new Date(sale.createdAt).getHours()`. No `sessionCount` bump (walk-ins are not table sessions).
+- `rankTables(sessions, itemsBySessionId, tables, canteenSales=[])` — synthesises a single row when `walkInRevenue > 0`: `{ tableId: WALKIN_TABLE_ID, tableName: 'Walk-in Canteen', revenue, sessionCount: canteenSales.length, totalDurationMs: 0 }`. Joins the existing sort.
+- `topCanteenItems(items, canteenSales, limit)` — refactored to a single `addLine(name, qty, price)` helper that both feeds call. Same `normalizeName`-keyed merge, so a "Coke" sold once via session and twice via Quick Sale ranks as one entry with qty=3.
+- New exported sentinel `WALKIN_TABLE_ID = -1`. Real `GameTable.id` is positive auto-increment, so the sentinel cannot collide.
+
+**`src/pages/Summary.tsx`** — four wiring changes:
+- `dateRevenues` Map gains a `walkInRevenue` field per date — loaded inside the same per-date `useLiveQuery` via `db.canteenSales.where('createdAt').between(...)`.
+- `getDateTotal` and `trailing7Avg` both add `walkInRevenue` to the existing `sessionsRevenue + itemsRevenue` sum.
+- The three aggregation calls (`bucketByHour`, `rankTables`, `topCanteenItems`) now pass `canteenSalesForDate`. Pattern T4 invariant preserved — these calls still live in render body (no `useMemo` wrapping), Quick Sale data flows in via the existing `useLiveQuery`.
+- Hourly heatmap empty-state guard widened: `!detailSessions.length && canteenSalesForDate.length === 0`. Without this, a day with only Quick Sales would show flat zeros even though sales happened.
+
+**`src/pages/summary/TopTablesList.tsx`** — detect `WALKIN_TABLE_ID` and render a "QS" accent pill in place of the medal, "N sales" label instead of "sess · avg". Walk-in row keeps its real rank — if it out-earns Pool 1, it shows above Pool 1 with the QS pill in slot 1.
+
+**Pattern T9** added to `bug_patterns.md` — codifies "every Summary aggregation must take ALL revenue streams as explicit args." Includes the synthetic-row + load-bearing-delta caveats, and the grep that catches future regressions.
+
+**Owner-facing flag:** yesterday / last-week / 7d-avg deltas will recompute on first deploy. Days that had walk-in sales now show their full total. This is the bug being fixed.
+
+Build clean at 1034.89 kB (+0.72 kB). Commit: pending below.
+
+---
+
 ## 20 Jun 2026 — #92 Configurable low-stock threshold
 
 Owner-controllable cutoff for the "Low stock" badge. Old behaviour was hardcoded `qty <= 5` (with a stray `qty < 5` in one place). Customers with high-volume inventory wanted 10–20; small clubs wanted 3.
