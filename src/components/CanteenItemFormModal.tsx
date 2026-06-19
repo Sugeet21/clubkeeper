@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { Modal } from './Modal'
 import { Toggle } from './Toggle'
 import { useToastStore } from '../store/toastStore'
-import { addCanteenItem, updateCanteenItem } from '../db/queries'
+import { addCanteenItem, getSettings, updateCanteenItem } from '../db/queries'
 import { validateCanteenItemName } from '../lib/validation'
 import type { CanteenItem } from '../types'
 
@@ -17,12 +18,17 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
   const showToast = useToastStore((s) => s.show)
   const isEdit = item !== undefined
 
+  const settings = useLiveQuery(() => getSettings(), [])
+  const peakPricingEnabled = settings?.peakPricingEnabled ?? false
+
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
+  const [peakPrice, setPeakPrice] = useState('')
   const [stockEnabled, setStockEnabled] = useState(false)
   const [currentStock, setCurrentStock] = useState('')
   const [nameError, setNameError] = useState<string | undefined>()
   const [priceError, setPriceError] = useState<string | undefined>()
+  const [peakPriceError, setPeakPriceError] = useState<string | undefined>()
   const [stockError, setStockError] = useState<string | undefined>()
   const [saving, setSaving] = useState(false)
 
@@ -32,16 +38,19 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
     if (isEdit && item) {
       setName(item.name)
       setPrice(String(item.defaultPrice))
+      setPeakPrice(typeof item.peakPrice === 'number' ? String(item.peakPrice) : '')
       setStockEnabled(item.stockEnabled)
       setCurrentStock(item.currentStock !== null ? String(item.currentStock) : '')
     } else {
       setName('')
       setPrice('')
+      setPeakPrice('')
       setStockEnabled(false)
       setCurrentStock('')
     }
     setNameError(undefined)
     setPriceError(undefined)
+    setPeakPriceError(undefined)
     setStockError(undefined)
   }, [open, isEdit, item])
 
@@ -73,6 +82,18 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
       setPriceError(undefined)
     }
 
+    if (peakPricingEnabled && peakPrice.trim() !== '') {
+      const peakNum = Number(peakPrice)
+      if (!Number.isInteger(peakNum) || peakNum < 1 || peakNum > 9999) {
+        setPeakPriceError('Peak price must be a whole number between 1 and 9999')
+        ok = false
+      } else {
+        setPeakPriceError(undefined)
+      }
+    } else {
+      setPeakPriceError(undefined)
+    }
+
     if (stockEnabled) {
       const stockNum = Number(currentStock)
       if (currentStock === '' || !Number.isInteger(stockNum) || stockNum < 0) {
@@ -95,6 +116,9 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
       const trimmedName = name.trim()
       const defaultPrice = Number(price)
       const stockCount = stockEnabled ? Number(currentStock) : null
+      // Peak price: only when toggle on AND user typed a value; empty input = clear/unset.
+      const peakNum =
+        peakPricingEnabled && peakPrice.trim() !== '' ? Number(peakPrice) : undefined
 
       if (isEdit && item?.id !== undefined) {
         const patch: Partial<CanteenItem> = {}
@@ -105,6 +129,10 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
         if (stockEnabled !== item.stockEnabled || stockCount !== item.currentStock) {
           patch.currentStock = stockCount
         }
+        if (peakPricingEnabled && peakNum !== item.peakPrice) {
+          patch.peakPrice = peakNum
+        }
+        // Toggle OFF doesn't clear stored peakPrice — owner may toggle back on.
         await updateCanteenItem(item.id, patch)
         showToast('Item updated', 'success')
       } else {
@@ -113,6 +141,7 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
           defaultPrice,
           stockEnabled,
           currentStock: stockCount,
+          peakPrice: peakNum,
         })
         showToast('Item added', 'success')
       }
@@ -146,7 +175,7 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
         {/* Price */}
         <div>
           <label className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint block mb-1.5">
-            Price (₹)
+            {peakPricingEnabled ? 'Regular price (₹)' : 'Price (₹)'}
           </label>
           <input
             type="number"
@@ -160,6 +189,26 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
           />
           {priceError && <p className="text-busy text-xs mt-1 pl-1">{priceError}</p>}
         </div>
+
+        {/* Peak price — only when peak pricing is enabled in Settings */}
+        {peakPricingEnabled && (
+          <div>
+            <label className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint block mb-1.5">
+              Peak price (₹)
+            </label>
+            <input
+              type="number"
+              value={peakPrice}
+              onChange={(e) => { setPeakPrice(e.target.value); setPeakPriceError(undefined) }}
+              placeholder="Optional — leave blank to use regular price"
+              min={1}
+              max={9999}
+              inputMode="numeric"
+              className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text text-[15px] focus:border-accent outline-none placeholder:text-text-faint"
+            />
+            {peakPriceError && <p className="text-busy text-xs mt-1 pl-1">{peakPriceError}</p>}
+          </div>
+        )}
 
         {/* Track stock toggle */}
         <div className="flex items-center justify-between">

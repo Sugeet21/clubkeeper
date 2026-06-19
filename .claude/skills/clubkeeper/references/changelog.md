@@ -2,6 +2,30 @@
 
 ---
 
+## 19 Jun 2026 — Peak Hour Pricing Phase 2: Canteen card + form field (#68) — pending SHA
+
+Second slice of #68. Adds the per-item Peak price input and the active-window UI on the Canteen page. Phase 3 (AddItem/QuickSale chips with `PEAK` tag) and Phase 4 (bulk-edit modal + onboarding banner) still pending — #68 stays open.
+
+**`src/lib/peakPricing.ts`** — NEW. Exports `PeakConfig` interface, `getPeakConfig(settings)` (reads from `ClubSettings` with the v18 defaults — 22:00 → 06:00), `isInPeakWindow(now, cfg)` (cross-midnight aware; equals-start counts as inside, equals-end counts as outside), `getEffectivePrice(item, now, cfg)` (returns `peakPrice` only when peak active AND item has a positive `peakPrice`, else `defaultPrice`), `formatPeakWindow(cfg)` and `formatPeakEnd(cfg)` (12-hr AM/PM formatters). Returns `false` immediately when `cfg.enabled === false`, so callers can pass the helpers unconditionally without branching.
+
+**`src/db/queries.ts`** — `addCanteenItem` previously whitelisted fields in its `.add()` call; added a conditional spread so `peakPrice` (when present) is persisted on creation. `updateCanteenItem` already passes `Partial<CanteenItem>` through, so no change there.
+
+**`src/components/CanteenItemFormModal.tsx`** — added `peakPrice` state + validation + UI. Field is rendered **only when** `ClubSettings.peakPricingEnabled === true` (subscribed via `useLiveQuery(getSettings)`). Validation: empty input is allowed and means "no peak price for this item"; non-empty must be an integer 1–9999. Regular price label switches to "Regular price (₹)" when peak is on, "Price (₹)" otherwise. On save: `peakNum = peakPricingEnabled && peakPrice.trim() !== '' ? Number(peakPrice) : undefined`. Edit-mode patches `peakPrice` only when value differs from `item.peakPrice`. **Toggling peak OFF in Settings does NOT clear stored `peakPrice` values on existing items** — owner may toggle back on later; the stored value is just suppressed visually until peak is re-enabled.
+
+**`src/pages/Canteen.tsx`** — three additions: (1) `PriceBlock` sub-component renders the stacked two-price layout per the agreed UI plan — outside peak (or item has no `peakPrice`) → single regular price line as before; inside peak → big amber `peakPrice` on top, small "Regular ₹X" beneath; outside peak with `peakPrice` set → regular price as before but tiny "Peak ₹X" hint underneath. (2) Header pill — when `peakActive`, renders `Peak · until 6:00 AM` to the right of the `Canteen` title using `bg-paused/15 text-paused` (reuses the existing amber `paused` token rather than adding a new design token — matches the "no new colors beyond a single amber accent" rule in the issue). (3) `useEffect` 60-second tick — only registered when `peakCfg.enabled`; sets `now` to `new Date()` so the header pill auto-disappears at window end and card emphasis swaps as the window opens/closes. No tick runs at all when peak pricing is off, so the OFF path stays zero-overhead.
+
+**Edge cases verified in code:**
+- Toggle OFF anywhere → no UI change on Canteen page (no pill, no second price line, no tick interval), no field in the form modal.
+- Toggle ON + item has no `peakPrice` → regular price line as before, no second line, no PEAK hint.
+- Toggle ON + inside cross-midnight window (e.g. 02:30 with 22:00→06:00) → header pill shows `until 6:00 AM`, items with `peakPrice` show peak as primary.
+- Toggle ON + exactly equals start → counts as inside (`cur >= s`).
+- Toggle ON + exactly equals end → counts as outside (`cur < e`).
+- Pricing helpers do NOT mutate session/sale flows — Phase 3 (AddItem chip + QuickSale chip) is where peak price becomes the suggested default in checkout. Until Phase 3 ships, the per-item card shows the right price but POS still uses `defaultPrice`.
+
+Build clean (1025.36 kB, mild bundle delta from added helpers). #68 stays open.
+
+---
+
 ## 19 Jun 2026 — Peak Hour Pricing Phase 1: schema + Settings UI (#68) — pending SHA
 
 First slice of #68 (FEAT-CANTEEN-PEAK). Foundation only — no Canteen UI yet, no AddItem chip changes, no bulk-edit modal. Owner explicitly wanted phased delivery so he can verify each piece on device before the next ships.

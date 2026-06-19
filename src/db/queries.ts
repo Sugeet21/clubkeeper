@@ -853,6 +853,7 @@ export async function addCanteenItem(
     isActive: true,
     createdAt: Date.now(),
     sortOrder,
+    ...(typeof input.peakPrice === 'number' ? { peakPrice: input.peakPrice } : {}),
   })
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useToastStore } from '../store/toastStore'
@@ -6,11 +6,18 @@ import {
   getCanteenItems,
   getLowStockThreshold,
   getPiggyBalance,
+  getSettings,
   softDeleteCanteenItem,
 } from '../db/queries'
 import { Modal } from '../components/Modal'
 import { CanteenItemFormModal } from '../components/CanteenItemFormModal'
 import { RestockSheet } from '../components/RestockSheet'
+import {
+  formatPeakEnd,
+  getPeakConfig,
+  isInPeakWindow,
+  type PeakConfig,
+} from '../lib/peakPricing'
 import type { CanteenItem } from '../types'
 
 function formatINR(n: number): string {
@@ -67,15 +74,39 @@ function StatsRow({ items, threshold }: { items: CanteenItem[] | undefined; thre
   )
 }
 
+function PriceBlock({ item, peakActive }: { item: CanteenItem; peakActive: boolean }) {
+  const hasPeak = typeof item.peakPrice === 'number' && item.peakPrice > 0
+  if (!hasPeak) {
+    return <p className="text-sm text-text-dim mt-0.5">{formatINR(item.defaultPrice)}</p>
+  }
+  // Stacked layout — emphasis swaps when peak is active.
+  if (peakActive) {
+    return (
+      <div className="mt-0.5">
+        <p className="text-[15px] font-bold text-paused tabular-nums">{formatINR(item.peakPrice!)}</p>
+        <p className="text-[11px] text-text-faint tabular-nums">Regular {formatINR(item.defaultPrice)}</p>
+      </div>
+    )
+  }
+  return (
+    <div className="mt-0.5">
+      <p className="text-sm text-text-dim tabular-nums">{formatINR(item.defaultPrice)}</p>
+      <p className="text-[11px] text-text-faint tabular-nums">Peak {formatINR(item.peakPrice!)}</p>
+    </div>
+  )
+}
+
 function ListArea({
   items,
   threshold,
+  peakActive,
   onEdit,
   onDelete,
   onRestock,
 }: {
   items: CanteenItem[] | undefined
   threshold: number
+  peakActive: boolean
   onEdit: (item: CanteenItem) => void
   onDelete: (item: CanteenItem) => void
   onRestock: (item: CanteenItem) => void
@@ -122,7 +153,7 @@ function ListArea({
           <div className="flex items-center gap-3">
             <div className="flex-1 min-w-0">
               <p className="text-[17px] font-bold text-text truncate">{item.name}</p>
-              <p className="text-sm text-text-dim mt-0.5">{formatINR(item.defaultPrice)}</p>
+              <PriceBlock item={item} peakActive={peakActive} />
             </div>
 
             <StockPill item={item} threshold={threshold} />
@@ -187,6 +218,18 @@ export default function Canteen() {
   const piggy = useLiveQuery(() => getPiggyBalance(), [])
   const piggyCurrent = Math.max(0, piggy?.current ?? 0)
 
+  // Peak Hour Pricing (#68 Phase 2) — config from Settings; tick every 60s
+  // so card emphasis and header pill update live as the window opens/closes.
+  const settings = useLiveQuery(() => getSettings(), [])
+  const peakCfg: PeakConfig = getPeakConfig(settings)
+  const [now, setNow] = useState<Date>(() => new Date())
+  useEffect(() => {
+    if (!peakCfg.enabled) return
+    const id = window.setInterval(() => setNow(new Date()), 60_000)
+    return () => window.clearInterval(id)
+  }, [peakCfg.enabled])
+  const peakActive = isInPeakWindow(now, peakCfg)
+
   function openAdd() {
     setEditingItem(undefined)
     setModalOpen(true)
@@ -230,6 +273,15 @@ export default function Canteen() {
             </svg>
           </button>
           <h1 className="text-[20px] font-bold text-text">Canteen</h1>
+          {peakActive && (
+            <span
+              className="ml-1 inline-flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase tracking-widest px-2.5 py-1 rounded-full bg-paused/15 text-paused whitespace-nowrap"
+              aria-label={`Peak pricing active until ${formatPeakEnd(peakCfg)}`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-paused" aria-hidden="true" />
+              Peak · until {formatPeakEnd(peakCfg)}
+            </span>
+          )}
         </div>
 
         {/* Stats — always rendered, handles undefined inside */}
@@ -239,6 +291,7 @@ export default function Canteen() {
         <ListArea
           items={items}
           threshold={threshold}
+          peakActive={peakActive}
           onEdit={openEdit}
           onDelete={setDeletingItem}
           onRestock={setRestockItem}
