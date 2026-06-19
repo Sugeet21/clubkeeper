@@ -38,6 +38,7 @@ export default function Home() {
   const [addTableOpen, setAddTableOpen] = useState(false)
   const [orphanedOpen, setOrphanedOpen] = useState(false)
   const [endingId, setEndingId] = useState<number | null>(null)
+  const [showDisabled, setShowDisabled] = useState(false)
 
   // Alarm — checked every useTick() re-render (Pattern T1, Pattern T4)
   const alarmSession = useSessionAlarm(activeSessions)
@@ -48,26 +49,35 @@ export default function Home() {
     return map
   }, [activeSessions])
 
+  // BUG-S7: hide outOfService tables on Home by default. Filter pills + counts
+  // operate on the visible set so totals stay consistent. Owner can reveal
+  // hidden tables inline via the "Show N disabled" toggle.
+  const visibleTables = useMemo(
+    () => (showDisabled ? tables : tables.filter((t) => !t.outOfService)),
+    [tables, showDisabled],
+  )
+  const disabledCount = tables.filter((t) => t.outOfService).length
+
   const gameTypes = useMemo(
-    () => [...new Set(tables.map((t) => t.gameType))],
-    [tables],
+    () => [...new Set(visibleTables.map((t) => t.gameType))],
+    [visibleTables],
   )
 
   const pills = useMemo(
     () => [
-      { label: 'All', value: 'all' as const, count: tables.length },
+      { label: 'All', value: 'all' as const, count: visibleTables.length },
       ...gameTypes.map((gt) => ({
         label: gt.charAt(0).toUpperCase() + gt.slice(1),
         value: gt,
-        count: tables.filter((t) => t.gameType === gt).length,
+        count: visibleTables.filter((t) => t.gameType === gt).length,
       })),
     ],
-    [tables, gameTypes],
+    [visibleTables, gameTypes],
   )
 
   const filteredTables = useMemo(
-    () => tables.filter((t) => activeFilter === 'all' || t.gameType === activeFilter),
-    [tables, activeFilter],
+    () => visibleTables.filter((t) => activeFilter === 'all' || t.gameType === activeFilter),
+    [visibleTables, activeFilter],
   )
 
   const totalTables = tables.filter((t) => !t.outOfService).length
@@ -203,6 +213,19 @@ export default function Home() {
           />
         ))}
       </div>
+
+      {disabledCount > 0 && (
+        <div className="px-4 pb-6 md:col-span-2 lg:col-span-3">
+          <button
+            onClick={() => setShowDisabled((v) => !v)}
+            className="w-full min-h-[44px] py-2.5 text-[12px] font-mono uppercase tracking-widest text-text-faint border border-dashed border-border rounded-xl active:bg-bg-card transition-colors"
+          >
+            {showDisabled
+              ? `Hide ${disabledCount} disabled`
+              : `Show ${disabledCount} disabled`}
+          </button>
+        </div>
+      )}
 
       </div>
       {/* /max-w-5xl — FAB and modals are viewport-fixed, must live outside */}
