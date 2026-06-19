@@ -11,6 +11,7 @@ import {
 } from '../db/queries'
 import { Modal } from '../components/Modal'
 import { CanteenItemFormModal } from '../components/CanteenItemFormModal'
+import { BulkPeakPriceModal } from '../components/BulkPeakPriceModal'
 import { RestockSheet } from '../components/RestockSheet'
 import {
   formatPeakEnd,
@@ -209,6 +210,24 @@ export default function Canteen() {
   const [deletingItem, setDeletingItem] = useState<CanteenItem | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [restockItem, setRestockItem] = useState<CanteenItem | null>(null)
+  // #68 Phase 4 — bulk peak-price editor + one-time onboarding banner
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const PEAK_ONBOARDING_KEY = 'ck_peak_onboarding_seen'
+  const [peakOnboardingDismissed, setPeakOnboardingDismissed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(PEAK_ONBOARDING_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  function dismissPeakOnboarding() {
+    setPeakOnboardingDismissed(true)
+    try {
+      localStorage.setItem(PEAK_ONBOARDING_KEY, '1')
+    } catch {
+      // ignore quota / private-mode errors — banner just shows next visit
+    }
+  }
 
   // undefined = still loading; [] = loaded, empty; [...] = loaded, has items
   const items = useLiveQuery<CanteenItem[] | undefined>(() => getCanteenItems(false), [])
@@ -282,7 +301,68 @@ export default function Canteen() {
               Peak · until {formatPeakEnd(peakCfg)}
             </span>
           )}
+          {/* Bulk peak prices button — only when peak pricing is enabled
+              and there's at least one item to edit. Sits to the right of
+              the title row so it stays one tap away after onboarding. */}
+          {peakCfg.enabled && (items?.length ?? 0) > 0 && (
+            <button
+              type="button"
+              onClick={() => setBulkOpen(true)}
+              className="ml-auto min-h-[36px] px-3 bg-bg-card border border-border rounded-full text-text-dim text-[12px] font-semibold whitespace-nowrap active:scale-95 transition-transform"
+              aria-label="Bulk-edit peak prices"
+            >
+              Bulk peak prices
+            </button>
+          )}
         </div>
+
+        {/* Onboarding banner — shown once when peak pricing is on, items exist,
+            and owner hasn't dismissed it yet. localStorage flag is per-browser
+            by design (matches the install-banner convention). */}
+        {peakCfg.enabled &&
+          (items?.length ?? 0) > 0 &&
+          !peakOnboardingDismissed && (
+            <div className="bg-paused/10 border border-paused/30 rounded-2xl px-4 py-3 mb-3 flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] text-text font-semibold leading-snug">
+                  Set peak prices for all items at once?
+                </p>
+                <p className="text-[12px] text-text-dim mt-0.5 leading-snug">
+                  Skip this and edit items one-by-one if you prefer.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      dismissPeakOnboarding()
+                      setBulkOpen(true)
+                    }}
+                    className="min-h-[36px] px-3 bg-paused text-bg rounded-xl text-[12px] font-bold active:scale-95 transition-transform"
+                  >
+                    Open bulk editor
+                  </button>
+                  <button
+                    type="button"
+                    onClick={dismissPeakOnboarding}
+                    className="min-h-[36px] px-3 bg-bg-card border border-border text-text-dim rounded-xl text-[12px] font-semibold"
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={dismissPeakOnboarding}
+                className="min-w-[36px] min-h-[36px] -mr-1 -mt-1 flex items-center justify-center text-text-faint"
+                aria-label="Dismiss banner"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          )}
 
         {/* Stats — always rendered, handles undefined inside */}
         <StatsRow items={items} threshold={threshold} />
@@ -314,6 +394,13 @@ export default function Canteen() {
         onClose={() => setModalOpen(false)}
         item={editingItem}
         existingItems={allItems ?? []}
+      />
+
+      {/* Bulk peak-price editor (#68 Phase 4) */}
+      <BulkPeakPriceModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        items={items ?? []}
       />
 
       {/* Restock bottom sheet */}

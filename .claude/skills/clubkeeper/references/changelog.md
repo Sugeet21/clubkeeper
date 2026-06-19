@@ -2,6 +2,38 @@
 
 ---
 
+## 19 Jun 2026 — Peak Hour Pricing Phase 4: bulk-edit modal + onboarding banner (#68) — pending SHA
+
+Final slice of #68. Feature is now end-to-end and #68 ready to close pending owner verification.
+
+**`src/db/queries.ts`** — NEW `bulkSetCanteenItemPeakPrices(patches)`. Single Dexie tx over `db.canteenItems`. Validates each non-undefined price as integer 1–9999 BEFORE opening the tx (cleaner abort path). Uses `db.canteenItems.put()` not `.update()` — `.update(id, { peakPrice: undefined })` would leave the key untouched (Dexie semantics: undefined = "don't change"), but `put()` rewrites the whole row. To clear a peak price we destructure the row, drop the `peakPrice` key, and put the rest. So rows with no peak price are literally indistinguishable from rows that never had one (matters for backup/export round-trip).
+
+**`src/components/BulkPeakPriceModal.tsx`** — NEW. Shared `<Modal>` (so it inherits desktop centered-dialog behaviour). Three-column grid `[name | regular ₹ | peak ₹ input]` with a sticky header row. Body scrolls inside `max-h-[55vh]`. Draft state is a `Map<id, string>` re-initialised from current `peakPrice` every time the modal opens. Empty input = clear. Validation runs on Save; bad rows mark their input red + show a tiny error under it but don't block saving the valid rows… wait — they DO block. Save aborts if any row is invalid. Owner has to fix or clear bad rows first. Only changed rows are sent to `bulkSetCanteenItemPeakPrices` (diffs against `item.peakPrice`). Toast: "Updated peak prices on N items" / "No changes to save" / error message on throw.
+
+**`src/pages/Canteen.tsx`** — three additions:
+1. **Permanent "Bulk peak prices" pill button** in the page header row, right-aligned with `ml-auto`. Visible only when `peakCfg.enabled` AND items exist. Sits next to the active-window pill when both are showing.
+2. **One-time onboarding banner** below the header. Trigger condition: `peakCfg.enabled === true` AND items exist AND `localStorage('ck_peak_onboarding_seen') !== '1'`. Amber-tinted `bg-paused/10 border-paused/30` (reuses existing token, same as the Peak header pill — no new design colors). Two CTAs: **"Open bulk editor"** (dismisses + opens modal) and **"Not now"** (just dismisses). Also a small X close button in the top-right of the banner. Dismissal is per-browser by design (matches the project's existing install-banner convention). State is initialised once at mount via `useState(() => localStorage.getItem(...))`; banner doesn't re-render based on a live query, so toggling peak OFF then ON does NOT revive a previously-dismissed banner — exactly the "one-time hint" semantics we want.
+3. **Mounted `<BulkPeakPriceModal>`** below `CanteenItemFormModal`.
+
+**Decisions captured during build:**
+- **localStorage flag vs Dexie boolean** — chose localStorage. Owner doesn't need cross-device persistence for a one-time hint; the existing `pwa-install-banner-dismissed` pattern in the codebase uses the same convention.
+- **Banner trigger: "first time toggle is ON + items exist" vs "until all items have peak prices"** — chose first-time only. The "nag until set" version would annoy clubs that intentionally only price *some* items at peak (the issue spec explicitly supports per-item opt-in via empty `peakPrice`). One-time hint, then the permanent button is right there.
+- **Quick Add row in AddItemBottomSheet stays NOT peak-aware** — decision from Phase 3 carries over. Quick Add is a "use the price you just used" surface.
+- **Peak pricing scope is canteen-only** — no session/rate-card flow ever sees this. Confirmed during Phase 3, restated here because Phase 4 closes the feature: there is no "peak hour table rate" follow-up implied.
+
+**Edge cases verified in code:**
+- Owner toggles peak ON → banner shows. Clicks "Open bulk editor" → modal opens, banner gone forever on this browser.
+- Owner toggles peak ON → dismisses with X → toggles peak OFF → toggles peak ON again. Banner does NOT come back (localStorage flag persists).
+- Owner has 0 canteen items, toggles peak ON. Banner does NOT show (gated on `items.length > 0`). Permanent button also hidden.
+- Owner opens bulk editor with empty input on every row → "No changes to save" toast, modal closes.
+- Owner enters a non-integer or out-of-range value → row turns red, error pill appears, Save blocked until fixed.
+- Owner clears an input (empty string) → peak price for that row is wiped on save (`put()` without the key).
+- Bulk save while peak is currently active → Canteen page card emphasis updates live via the existing 60s tick once Dexie change propagates.
+
+Build clean (1032.81 kB, +6.16 kB over Phase 3). #68 feature-complete pending owner verification.
+
+---
+
 ## 19 Jun 2026 — Peak Hour Pricing Phase 3: AddItem + QuickSale chips (#68) — pending SHA
 
 Third slice of #68. POS surfaces now follow peak pricing — owner sees the peak ₹ + a `PEAK` tag on the chip during the window, and the session item / canteen sale is created at the peak price.

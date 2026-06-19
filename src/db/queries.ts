@@ -909,6 +909,42 @@ export async function softDeleteCanteenItem(id: number): Promise<void> {
   await db.canteenItems.update(id, { isActive: false })
 }
 
+/**
+ * Bulk-set peak prices across multiple canteen items in a single atomic tx.
+ * (#68 Phase 4 — used by BulkPeakPriceModal.)
+ *
+ * Pass `peakPrice: undefined` (or omit) to clear the field on an item.
+ * Validation: any non-undefined value must be an integer 1-9999.
+ * Uses .put() (not .update()) so undefined genuinely removes the key
+ * from the stored row, not just "leave unchanged".
+ */
+export async function bulkSetCanteenItemPeakPrices(
+  patches: { id: number; peakPrice?: number }[],
+): Promise<void> {
+  // Pre-validate before opening the tx so a bad row aborts cleanly.
+  for (const p of patches) {
+    if (p.peakPrice !== undefined) {
+      if (!Number.isInteger(p.peakPrice) || p.peakPrice < 1 || p.peakPrice > 9999) {
+        throw new Error(`Peak price for item ${p.id} must be a whole number between 1 and 9999`)
+      }
+    }
+  }
+  await db.transaction('rw', db.canteenItems, async () => {
+    for (const p of patches) {
+      const row = await db.canteenItems.get(p.id)
+      if (!row) continue
+      if (p.peakPrice === undefined) {
+        // Strip the key entirely so the row matches "never had a peak price".
+        const { peakPrice: _strip, ...rest } = row
+        void _strip
+        await db.canteenItems.put(rest as CanteenItem)
+      } else {
+        await db.canteenItems.put({ ...row, peakPrice: p.peakPrice })
+      }
+    }
+  })
+}
+
 export async function decrementCanteenItemStock(
   id: number,
   quantity: number,
