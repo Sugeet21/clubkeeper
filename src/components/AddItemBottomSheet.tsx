@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useSessionItems, useRecentItems } from '../hooks/useLiveData'
+import { useSessionItems, useRecentItems, useSettings } from '../hooks/useLiveData'
 import { addSessionItem, addOrIncrementSessionItem, updateSessionItem, deleteSessionItem, restoreSessionItem, getCanteenItems, getLowStockThreshold, InsufficientStockError } from '../db/queries'
 import { db } from '../db/database'
 import { useToastStore } from '../store/toastStore'
 import { validateItemName } from '../lib/validation'
 import { normalizeName, findMatchingCanteenItem, findCanteenItemByName } from '../lib/canteenMatch'
+import { getEffectivePrice, getPeakConfig, isInPeakWindow } from '../lib/peakPricing'
 import type { SessionItem, CanteenItem } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -99,7 +100,19 @@ export function AddItemBottomSheet({
   const items = useSessionItems(sessionId)
   const recentItems = useRecentItems(8)
   const canteenItems = useLiveQuery(() => getCanteenItems(false), [], [] as CanteenItem[])
+  const settings = useSettings()
   const { show: showToast } = useToastStore()
+
+  // Peak Hour Pricing (#68 Phase 3) — re-evaluate every 60s while sheet is open
+  // so chips swap automatically as the window opens/closes mid-session.
+  const peakCfg = getPeakConfig(settings)
+  const [peakNow, setPeakNow] = useState<Date>(() => new Date())
+  useEffect(() => {
+    if (!open || !peakCfg.enabled) return
+    const id = window.setInterval(() => setPeakNow(new Date()), 60_000)
+    return () => window.clearInterval(id)
+  }, [open, peakCfg.enabled])
+  const peakActive = isInPeakWindow(peakNow, peakCfg)
 
   const [editingId, setEditingId] = useState<number | null>(null)
   const [name, setName] = useState('')
@@ -204,7 +217,8 @@ export function AddItemBottomSheet({
     setSubmitting(true)
     setError(null)
     try {
-      const priceNum = ci.defaultPrice
+      // Peak Hour Pricing — use peak price when window is active AND item has one.
+      const priceNum = getEffectivePrice(ci, peakNow, peakCfg)
       const qtyNum = 1
       const itemName = ci.name
       if (ci.stockEnabled && ci.id !== undefined) {
@@ -446,6 +460,8 @@ export function AddItemBottomSheet({
                   <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
                     {(canteenItems ?? []).map((ci) => {
                       const outOfStock = ci.stockEnabled && ci.currentStock === 0
+                      const effectivePrice = getEffectivePrice(ci, peakNow, peakCfg)
+                      const showPeakTag = peakActive && typeof ci.peakPrice === 'number' && ci.peakPrice > 0
                       return (
                         <button
                           key={ci.id}
@@ -458,11 +474,16 @@ export function AddItemBottomSheet({
                               : 'bg-bg-card border-border text-text active:scale-95 transition-transform'
                           }`}
                         >
-                          <span className="font-medium whitespace-nowrap">
+                          <span className="font-medium whitespace-nowrap inline-flex items-center gap-1.5">
                             {ci.name}{' '}
-                            <span className="font-mono text-text-dim text-xs">
-                              ₹{ci.defaultPrice.toLocaleString('en-IN')}
+                            <span className={`font-mono text-xs ${showPeakTag ? 'text-paused font-bold' : 'text-text-dim'}`}>
+                              ₹{effectivePrice.toLocaleString('en-IN')}
                             </span>
+                            {showPeakTag && (
+                              <span className="text-[9px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-paused/15 text-paused leading-none">
+                                Peak
+                              </span>
+                            )}
                           </span>
                           {outOfStock && (
                             <span className="text-[10px] font-mono text-busy leading-none mt-0.5">

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { getCanteenItems, createCanteenSale, CanteenSaleStockError } from '../db/queries'
@@ -6,6 +6,7 @@ import { useToastStore } from '../store/toastStore'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
 import { useSettings } from '../hooks/useLiveData'
+import { getEffectivePrice, getPeakConfig, isInPeakWindow } from '../lib/peakPricing'
 import type { CanteenItem } from '../types'
 
 interface CartLine {
@@ -27,6 +28,19 @@ export default function QuickSale() {
   // After a successful sale with upi > 0, store the UPI amount to show the QR screen.
   const [pendingUpiAmount, setPendingUpiAmount] = useState<number | null>(null)
 
+  // Peak Hour Pricing (#68 Phase 3) — re-evaluate every 60s so chips swap
+  // automatically as the window opens/closes. Cart lines locked to the price
+  // captured at addToCart time — owner sees what they confirmed, even if the
+  // window flips mid-checkout.
+  const peakCfg = getPeakConfig(settings)
+  const [peakNow, setPeakNow] = useState<Date>(() => new Date())
+  useEffect(() => {
+    if (!peakCfg.enabled) return
+    const id = window.setInterval(() => setPeakNow(new Date()), 60_000)
+    return () => window.clearInterval(id)
+  }, [peakCfg.enabled])
+  const peakActive = isInPeakWindow(peakNow, peakCfg)
+
   function addToCart(item: CanteenItem) {
     if (item.id === undefined) return
     const stockEnabled = item.stockEnabled === true
@@ -35,6 +49,7 @@ export default function QuickSale() {
       showToast('Out of stock — restock first')
       return
     }
+    const effectivePrice = getEffectivePrice(item, peakNow, peakCfg)
     setCart((prev) => {
       const next = new Map(prev)
       const existing = next.get(item.id!)
@@ -44,10 +59,11 @@ export default function QuickSale() {
         showToast(`Only ${currentStock} in stock`)
         return prev
       }
+      // Existing line keeps its captured price; only new lines pick up current effective price.
       next.set(item.id!, {
         canteenItemId: item.id!,
         name: item.name,
-        price: item.defaultPrice,
+        price: existing?.price ?? effectivePrice,
         quantity: nextQty,
         stockEnabled,
       })
@@ -231,6 +247,8 @@ export default function QuickSale() {
                 item={item}
                 onTap={() => addToCart(item)}
                 cartQty={cart.get(item.id!)?.quantity ?? 0}
+                peakActive={peakActive}
+                effectivePrice={getEffectivePrice(item, peakNow, peakCfg)}
               />
             ))}
           </div>
@@ -334,14 +352,19 @@ function ItemCard({
   item,
   onTap,
   cartQty,
+  peakActive,
+  effectivePrice,
 }: {
   item: CanteenItem
   onTap: () => void
   cartQty: number
+  peakActive: boolean
+  effectivePrice: number
 }) {
   const stockEnabled = item.stockEnabled === true
   const stock = item.currentStock ?? 0
   const outOfStock = stockEnabled && stock <= 0
+  const showPeakTag = peakActive && typeof item.peakPrice === 'number' && item.peakPrice > 0
   return (
     <button
       onClick={onTap}
@@ -354,7 +377,16 @@ function ItemCard({
     >
       <div className="flex-1 min-w-0">
         <p className="text-text text-[15px] font-semibold truncate">{item.name}</p>
-        <p className="text-text-dim text-xs mt-0.5">₹{item.defaultPrice.toLocaleString('en-IN')}</p>
+        <p className="text-xs mt-0.5 flex items-center gap-1.5">
+          <span className={showPeakTag ? 'text-paused font-bold tabular-nums' : 'text-text-dim tabular-nums'}>
+            ₹{effectivePrice.toLocaleString('en-IN')}
+          </span>
+          {showPeakTag && (
+            <span className="text-[9px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-paused/15 text-paused leading-none">
+              Peak
+            </span>
+          )}
+        </p>
       </div>
       {stockEnabled && (
         <span

@@ -2,6 +2,34 @@
 
 ---
 
+## 19 Jun 2026 — Peak Hour Pricing Phase 3: AddItem + QuickSale chips (#68) — pending SHA
+
+Third slice of #68. POS surfaces now follow peak pricing — owner sees the peak ₹ + a `PEAK` tag on the chip during the window, and the session item / canteen sale is created at the peak price.
+
+**`src/components/AddItemBottomSheet.tsx`** — `useSettings` subscription + `getPeakConfig` + a 60s tick that only registers when the sheet is open AND `peakPricingEnabled` (no overhead the rest of the time). `handleCanteenChipTap` now calls `getEffectivePrice(ci, peakNow, peakCfg)` instead of using `ci.defaultPrice` directly — same stock-decrement path, same transaction, just the captured price changes. Chip UI: when peak is active AND item has a `peakPrice`, the inline ₹ amount turns amber bold and a small `PEAK` pill appears next to it (matches the Canteen card amber accent — reuses `bg-paused/15 text-paused`). Out-of-stock state takes priority over peak styling. **Decision (owner-confirmed):** Quick Add chips (recent-items row) are NOT peak-aware — they keep their "use the price you just used" semantics. Only the master canteen list reflects peak. Manual freeform entry is also unchanged — owner types the price they want.
+
+**`src/pages/QuickSale.tsx`** — same pattern: `getPeakConfig(settings)`, 60s tick gated on `peakCfg.enabled`. `addToCart` resolves `effectivePrice = getEffectivePrice(item, peakNow, peakCfg)` at tap time. **Cart line price is captured at first tap** — subsequent quantity bumps use the already-stored `existing.price`, so a cart built at 5:59 AM during peak doesn't flip back to regular when the clock crosses 6:00 AM mid-checkout. This matches what the owner saw on screen when they tapped Add — the captured price wins. `ItemCard` gains two props (`peakActive`, `effectivePrice`) so it doesn't recompute peak per render; main component decides once per tick. Card shows amber ₹ + `PEAK` pill when active. Cart row, sticky subtotal, and `PaymentSplitSheet` all read the cart's captured `price * quantity` — no further wiring needed because the entire downstream flow was already price-from-cart.
+
+**What did NOT change (and intentionally so):**
+- `createCanteenSale` and `runCanteenAddTransaction` — they take a `price` argument; we just pass a different value. Stock decrement, atomic tx, and the `paymentBreakdown` invariants are untouched.
+- `PaymentSplitSheet` — sees the new total, no peak awareness needed.
+- Session tier billing (`Session.rateSnapshot`) — peak pricing is canteen-only by design (#68 scope locks this in).
+- The Quick Add chip row in `AddItemBottomSheet` and the manual freeform form — kept as last-used / owner-typed.
+
+**Edge cases that work in code:**
+- Peak toggle OFF → no chip styling, no PEAK tag, no tick, no price change. Identical to pre-#68 POS.
+- Peak ON + item has no `peakPrice` → chip shows `defaultPrice`, no PEAK tag (just like before).
+- Peak ON + inside window + item has `peakPrice` → chip shows peak ₹ + PEAK tag, line written at peak ₹.
+- Peak ON + currently equals end-minute (`cur === e`) → counts as outside (helpers do `cur < e`), chip flips back to regular without a refresh.
+- Cart built inside window then window ends → cart lines keep captured peak price (intentional — what owner confirmed on screen wins).
+- Stock-tracked + out-of-stock → disabled state and copy unchanged, peak styling suppressed.
+
+Phase 4 (bulk-edit modal + first-time onboarding banner) is the last remaining slice. #68 stays open.
+
+Build clean (1026.65 kB, +1.29 kB over Phase 2). #68 still open.
+
+---
+
 ## 19 Jun 2026 — Peak Hour Pricing Phase 2: Canteen card + form field (#68) — pending SHA
 
 Second slice of #68. Adds the per-item Peak price input and the active-window UI on the Canteen page. Phase 3 (AddItem/QuickSale chips with `PEAK` tag) and Phase 4 (bulk-edit modal + onboarding banner) still pending — #68 stays open.
