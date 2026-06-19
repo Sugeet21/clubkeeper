@@ -623,7 +623,7 @@ export default function Settings() {
               value={upiId}
               onChange={(e) => { setUpiId(e.target.value); setUpiError(null) }}
               onBlur={handleUpiBlur}
-              placeholder="e.g. 7758969291@axl"
+              placeholder="e.g. example@upi"
               className={`w-full bg-bg border rounded-2xl px-4 py-3.5 text-text text-[14px] font-mono focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint ${
                 upiError ? 'border-busy focus:border-busy' : 'border-border focus:border-accent'
               }`}
