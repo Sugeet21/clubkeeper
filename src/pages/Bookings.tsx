@@ -170,7 +170,7 @@ export default function Bookings() {
 
   return (
     <div className="min-h-screen bg-bg pb-20">
-      <div className="max-w-md mx-auto px-4">
+      <div className="max-w-[1400px] mx-auto px-4">
         <TopBar />
 
         {/* Header + pending pill */}
@@ -211,8 +211,9 @@ export default function Bookings() {
           </div>
         )}
 
-        {/* Agenda — one block per day */}
-        <div className="mt-4 flex flex-col gap-4">
+        {/* Agenda — one block per day. Stacks on mobile, 2-col grid on tablet+,
+            3-col on laptop so the 7-day window fits nicely. */}
+        <div className="mt-4 flex flex-col gap-4 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4">
           {days.map(({ date, isToday }) => {
             const dayKey = date.getTime()
             const list = bookingsByDay.get(dayKey) ?? []

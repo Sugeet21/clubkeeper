@@ -2,6 +2,31 @@
 
 ---
 
+## 19 Jun 2026 — Desktop responsiveness Phase 2: Canteen + shared Modal width cap + Bookings (#91) — pending SHA
+
+Second batch of #91. Three coordinated changes:
+
+**1. `src/pages/Canteen.tsx`** — content wrapped in `max-w-[1400px] mx-auto px-5` (the outer wrapper replaces the page's old `<div className="px-5">`; `px-5` stays so card padding doesn't shift on mobile). Item list grid is now `space-y-3 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3` (1/2/3 cols across mobile/tablet/laptop) — same breakpoint pattern as Tables. FAB and `<CanteenItemFormModal>` / `<RestockSheet>` / delete-confirm `<Modal>` all stay OUTSIDE the wrapper so they viewport-anchor on desktop. `RestockSheet` is its own component (not the shared `<Modal>`), so the cap below does NOT apply to it.
+
+**2. `src/components/Modal.tsx`** — shared `<Modal>` no longer renders as a full-width bottom sheet on desktop. On mobile (<768px) the layout is unchanged (`fixed bottom-0 left-0 right-0`, slide-up-from-bottom feel). At `md:` and up, it becomes a centered dialog: `md:bottom-auto md:left-1/2 md:top-1/2 md:right-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-[min(560px,calc(100vw-2rem))] md:rounded-3xl md:border md:max-h-[85vh]`. **This affects every `<Modal>` consumer in the app at once** — Canteen Add/delete-confirm, TableFormModal, SessionDetail (stop confirm, edit start, edit notify, move table), Settings (clear/reset/cancel-subscription/clean-names), Home orphaned-sessions, BackEntryModal, etc. Bottom-sheet components that DON'T use the shared `<Modal>` (`RestockSheet`, `PaymentSplitSheet`, `PaymentBottomSheet`) keep their bottom-sheet behavior on every viewport — they own their own translateY/positioning and are explicitly excluded per ripple_effects.md Shared UI section.
+
+**3. `src/pages/Bookings.tsx`** — container went from `max-w-md mx-auto px-4` (448px hard cap → "phone column on a laptop", per screenshot 340) to `max-w-[1400px] mx-auto px-4`. The agenda block was a single `flex flex-col gap-4` stack; it's now `flex flex-col gap-4 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4` so the 7-day window fits in 3 rows × 3 cols (3+3+1) on laptop instead of stacking forever. PendingBookingsModal stays outside the wrapper (and benefits from the shared-Modal desktop cap above).
+
+**Why bundled as one commit:** the shared-Modal change is what makes the Canteen Add modal feel right on desktop — fixing Canteen page alone wouldn't have closed the loop. Bookings was the same fundamental bug (an explicit `max-w-md` hard cap), so worth shipping together while the desktop-responsiveness model is fresh.
+
+**Sizing rule stays locked from Phase 1:**
+- Container `max-w-[1400px] mx-auto`
+- Item/agenda grid `md:grid-cols-2 lg:grid-cols-3`
+- FAB + modals always OUTSIDE the centered wrapper
+
+**Remaining under #91:**
+- Settings (`/settings`) — collapsible-section layout, likely the trickiest (full-width form fields for a 7-digit UPI ID look absurd on desktop)
+- Wallet topup success screen — 3 stretched buttons per screenshot 334
+
+Build clean (1070.58 kB, +0.05 kB over Phase 1). #91 stays open until owner verifies Phase 1 + Phase 2 on real device (laptop + phone) AND the remaining 2 pages ship.
+
+---
+
 ## 18 Jun 2026 — Desktop / laptop responsiveness, Phase 1: Tables page (#91) — commit f50942a
 
 First page of the desktop-responsiveness initiative. Driven by paying-customer feedback that on a 1920px laptop screen, ClubKeeper looked like a mobile layout stretched edge-to-edge — table rows spanning full width, "FREE" pills floating ~1500px from the table name, two Settings entry points on Tables (top-right gear AND bottom-nav). All five reported pages (Tables, Bookings, Settings, Wallet topup success, Canteen + canteen-add modal) tracked under one parent issue #91; this commit ships Phase 1 only.

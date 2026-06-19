@@ -40,8 +40,10 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
         className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
       />
-      {/* Sheet — fixed to bottom, above scrim (z-50). flex-col so header/footer pin and middle scrolls. */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 bg-bg-elevated rounded-t-3xl border-t border-border flex flex-col max-h-[92vh]">
+      {/* Sheet — mobile: bottom sheet (bottom-0 full width, rounded-t).
+          Desktop (md:): centered dialog, capped at 560px, rounded on all sides.
+          flex-col so header/footer pin and middle scrolls. */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 bg-bg-elevated rounded-t-3xl border-t border-border flex flex-col max-h-[92vh] md:bottom-auto md:left-1/2 md:top-1/2 md:right-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-[min(560px,calc(100vw-2rem))] md:rounded-3xl md:border md:max-h-[85vh]">
         {/* Pinned header — shrink-0 */}
         <div className="shrink-0 px-5 pt-5 pb-3">
           <div className="w-10 h-1 bg-border-bright rounded-full mx-auto mb-4" />

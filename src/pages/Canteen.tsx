@@ -112,7 +112,7 @@ function ListArea({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3">
       {items.map((item) => (
         <div
           key={item.id}
@@ -213,7 +213,11 @@ export default function Canteen() {
 
   return (
     <div className="bg-bg min-h-screen pb-24">
-      <div className="px-5">
+      {/* Desktop container — caps content at 1400px and centers it.
+          Mobile (<768px) unaffected. FAB and modals live outside this wrapper
+          so they stay viewport-anchored on desktop. See ripple_effects.md
+          → Tables Page (Home) for the established pattern. */}
+      <div className="max-w-[1400px] mx-auto px-5">
         {/* Header — always rendered */}
         <div className="flex items-center gap-3 pt-4 pb-2">
           <button

@@ -327,16 +327,19 @@ Invariants:
 - Locked decision: no auto-save freeform to canteen master list (would let staff typos pollute).
 - `RestockSheet`: Piggy chip DISABLED when `cost > piggyBalance`. If user had Piggy selected and cost rose past piggy, `effectiveSource` snaps to Other on confirm. `stockEnabled=false` caveat shown.
 - Stock can only grow via restock. `recordStockPurchase` single flat tx: insert StockPurchase + (if `stockEnabled=true`) `currentStock += qty`.
+- **Desktop layout (#91 Phase 2, 19 Jun 2026):** `Canteen.tsx` content is wrapped in `<div className="max-w-[1400px] mx-auto px-5">` (the wrapper REPLACES the page's old `<div className="px-5">`; `px-5` stays so card padding doesn't shift on mobile). Item list grid is `space-y-3 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3`. FAB and modals (`CanteenItemFormModal`, `RestockSheet`, delete-confirm) live OUTSIDE the wrapper — never move them inside, they'd anchor to the container right edge instead of the viewport on desktop. **`CanteenItemFormModal` is a shared `<Modal>`** so it inherits the desktop centered-dialog cap from Shared UI. **`RestockSheet` is its own component** — it stays a bottom-sheet on every viewport.
 
 Cross-feature ripples:
 - → [Session Items (POS)](#session-items-pos) (Pattern D7, stock sync on edit/delete/undo).
 - → [Back Entries](#back-entries) (Phase 2 items: aggregate stock check, Pattern D7).
 - → [Quick Sale](#quick-sale) (`createCanteenSale` aggregates qty per item; Pattern D7).
 - → [Piggy (Cash Float)](#piggy-cash-float) (`recordStockPurchase`, source=piggy enforcement).
+- → [Shared UI & Theme](#shared-ui--theme) (`CanteenItemFormModal` is a `<Modal>` consumer — desktop cap applies).
+- → [Tables Page (Home)](#tables-page-home) (same `max-w-[1400px]` + grid + FAB-outside pattern under #91).
 
 See also: `bug_patterns.md` Pattern D7 (nested tx), Pattern F7 (inline error vs toast), `decisions_active.md` (no auto-save freeform).
 
-Last updated: 8 Jun 2026
+Last updated: 19 Jun 2026 (#91 Phase 2 — desktop layout + Modal cap)
 
 ---
 
@@ -680,8 +683,9 @@ Invariants:
 - Modal scrim is `fixed inset-0 z-40`; sheet is `fixed bottom-0 left-0 right-0 z-50`. Independent fixed layers — do NOT nest in a shared container (scrim intercepts clicks, BUG-012).
 - Modal `useEffect` with `[open]` dep sets `document.body.style.overflow = 'hidden'`; restores on close/unmount.
 - Modal Escape key listener uses `[open, onClose]` dep — wrap `onClose` in `useCallback` at the call site if needed.
-- `PaymentBottomSheet` is NOT a `<Modal>` (own translateY slide-up).
-- Modal consumers: TableFormModal (passes `footer`), SessionDetail (stop confirm, edit start, edit notify), Settings (clear, reset, cancel sub, clean names), Home (orphaned sessions), Canteen (soft-delete confirm).
+- **Desktop Modal cap (#91 Phase 2, 19 Jun 2026):** at `md:` and up the sheet becomes a centered dialog: `md:bottom-auto md:left-1/2 md:top-1/2 md:right-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-[min(560px,calc(100vw-2rem))] md:rounded-3xl md:border md:max-h-[85vh]`. Mobile (<768px) unchanged — still bottom-sheet. **Affects every `<Modal>` consumer at once** — verify any new modal still feels right on desktop. Bottom-sheet components that DON'T use shared `<Modal>` (`RestockSheet`, `PaymentSplitSheet`, `PaymentBottomSheet`) are NOT affected and keep their bottom-sheet behavior on every viewport — they own their own positioning.
+- `PaymentBottomSheet`, `PaymentSplitSheet`, `RestockSheet` are NOT `<Modal>` (own translateY slide-up). Adding new bottom-sheet behavior? Decide upfront: shared `<Modal>` (gets the desktop centered-dialog treatment for free) OR own component (true bottom-sheet on every viewport). Don't mix.
+- Modal consumers: TableFormModal (passes `footer`), SessionDetail (stop confirm, edit start, edit notify, move table), Settings (clear, reset, cancel sub, clean names), Home (orphaned sessions), Canteen (soft-delete confirm + CanteenItemFormModal), BackEntryModal, PendingTopupsModal, PendingBookingsModal.
 - `<BottomNav>` rendered persistently in App.tsx; all pages need `pb-24+`. Adding a tab = new Route in App.tsx.
 - Tailwind v3.4 only — never v4.
 - Dark theme only; palette locked.
@@ -692,7 +696,7 @@ Cross-feature ripples:
 - → Many. Most modals are used by Sessions, Settings, Tables, Canteen. Verify each on `<Modal>` change.
 - → [Subscription & Funnel](#subscription--funnel) (`PaymentBottomSheet` has its own escape paths — see that section).
 
-See also: `bug_patterns.md` Pattern M4 (scroll), `references/design_system.md`.
+See also: `bug_patterns.md` Pattern M4 (scroll), `references/design_system.md`, [Tables Page (Home)](#tables-page-home) and Canteen/Bookings sections for the wider desktop-responsiveness pattern (max-w-[1400px] + grid + FAB-outside).
 
 Last updated: 9 Jun 2026
 
@@ -1141,10 +1145,14 @@ Cross-feature ripples:
 - → [Import / Export / Reset](#import--export--reset) — every new Dexie store ripples here per `data_model.md` "Forward-compatibility rule".
 - → [Routing & Cross-cutting](#routing--cross-cutting) — `/bookings` registered as private (behind `RequireAccess`). PUBLIC_PATHS unchanged (booking screen lives under `/c/:slug`).
 - → [Auth & Access Guard](#auth--access-guard) — `BookingRealtimeBridge` gated identically to `TopupRealtimeBridge` (`dbReady && session && subscriptionLoaded && !isPlayerHubPath`).
+- → [Shared UI & Theme](#shared-ui--theme) — `PendingBookingsModal` is a shared `<Modal>` consumer; desktop centered-dialog cap applies under #91 Phase 2.
+- → [Tables Page (Home)](#tables-page-home) — same `max-w-[1400px]` + grid + FAB-outside pattern under #91.
+
+**Bookings page desktop layout (#91 Phase 2, 19 Jun 2026):** `src/pages/Bookings.tsx` outer container went from `max-w-md mx-auto px-4` (448px — looked like a phone column on laptop, per screenshot 340) to `max-w-[1400px] mx-auto px-4`. Agenda day-cards container went from `flex flex-col gap-4` to `flex flex-col gap-4 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-4` so the 7-day window fits as 3×3+1 on laptop. PendingBookingsModal stays outside the wrapper. If anyone widens the 7-day window or changes the day-card structure, verify it still flows on the desktop grid.
 
 See also: `bug_patterns.md` Pattern P2 (slug-targeted mirror), Pattern S6 (realtime publication), Pattern A6/A7/A8 (Bridge guards), Pattern P1 (player doesn't recompute owner-derived values), Pattern T4 (live-query DB-static, current-time in render), Pattern W1 (workflow/deploy validation before debugging local-vs-prod). Decisions: D-PlayerHub-1 (Supabase-first), D-2026-06-11 (client-side owner update via RLS).
 
-Last updated: 18 Jun 2026 (P1e-2 player cancel + reconcile refund + no-show sweep shipped — Phase 1 of #84 code-complete, pending owner verification of all four sub-phases on device)
+Last updated: 19 Jun 2026 (#91 Phase 2 — Bookings desktop layout)
 
 ---
 
