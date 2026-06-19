@@ -178,6 +178,10 @@ export default function QuickSale() {
 
   return (
     <div className="bg-bg min-h-screen flex flex-col">
+      {/* Desktop container — caps content at 1400px and centers it.
+          Mobile (<768px) unaffected. The sticky bottom bar lives OUTSIDE
+          this wrapper so it spans the full viewport width on every breakpoint. */}
+      <div className="w-full max-w-[1400px] mx-auto">
       {/* Header */}
       <div
         className="px-5 pt-4 pb-3 flex items-center gap-3"
@@ -220,7 +224,7 @@ export default function QuickSale() {
             </button>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-2">
             {items.map((item) => (
               <ItemCard
                 key={item.id}
@@ -239,7 +243,7 @@ export default function QuickSale() {
           <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint mb-2">
             Cart
           </p>
-          <div className="space-y-2">
+          <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-2">
             {cartLines.map((line) => (
               <div
                 key={line.canteenItemId}
@@ -279,30 +283,37 @@ export default function QuickSale() {
         </div>
       )}
 
-      {/* Sticky bottom bar */}
+      </div>
+      {/* /max-w-[1400px] — sticky bottom bar is full-width by design */}
+
+      {/* Sticky bottom bar — band spans full viewport for visual weight,
+          but inner content caps at 1400px so subtotal/button align with the
+          items list above. */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-40 bg-bg border-t border-border px-5 pt-3"
+        className="fixed bottom-0 left-0 right-0 z-40 bg-bg border-t border-border pt-3"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
       >
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint">
-            Subtotal
-          </p>
-          <p className="text-accent font-mono font-bold text-xl tabular-nums">
-            ₹{subtotal.toLocaleString('en-IN')}
-          </p>
+        <div className="w-full max-w-[1400px] mx-auto px-5">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint">
+              Subtotal
+            </p>
+            <p className="text-accent font-mono font-bold text-xl tabular-nums">
+              ₹{subtotal.toLocaleString('en-IN')}
+            </p>
+          </div>
+          <button
+            onClick={() => setPaymentOpen(true)}
+            disabled={cartLines.length === 0}
+            className={
+              cartLines.length > 0
+                ? 'w-full bg-accent text-bg font-bold py-4 rounded-2xl min-h-[48px]'
+                : 'w-full bg-bg-card text-text-faint border border-border font-semibold py-4 rounded-2xl min-h-[48px] opacity-50 cursor-not-allowed'
+            }
+          >
+            Continue to Payment
+          </button>
         </div>
-        <button
-          onClick={() => setPaymentOpen(true)}
-          disabled={cartLines.length === 0}
-          className={
-            cartLines.length > 0
-              ? 'w-full bg-accent text-bg font-bold py-4 rounded-2xl min-h-[48px]'
-              : 'w-full bg-bg-card text-text-faint border border-border font-semibold py-4 rounded-2xl min-h-[48px] opacity-50 cursor-not-allowed'
-          }
-        >
-          Continue to Payment
-        </button>
       </div>
 
       {/* Payment sheet — reuses Phase 2 PaymentSplitSheet */}

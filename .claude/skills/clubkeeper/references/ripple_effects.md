@@ -361,16 +361,17 @@ Invariants:
 - Out-of-stock cards `opacity-60` + tap blocked + toast.
 - Out-of-scope (v1): free-text items (every line MUST match a `CanteenItem.id`), discount, edit/refund/void.
 - `customerId` only persisted on `CanteenSale` when `wallet > 0`.
+- **Desktop layout (#91 Phase 2.5, 19 Jun 2026):** an inner `<div className="w-full max-w-[1400px] mx-auto">` wrapper surrounds header + items + cart + empty-cart hint. Items grid is `space-y-2 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-2`. Cart strip uses the same grid pattern. The sticky bottom bar's BAND spans full viewport (`fixed bottom-0 left-0 right-0`) but its INNER content is wrapped in `<div className="w-full max-w-[1400px] mx-auto px-5">` so Subtotal + Continue button align with the items list. `px-5` moved from the band onto the inner wrapper. **FAB-outside / band-edge-to-edge / inner-content-capped** is the de-facto sticky-CTA pattern for #91 — if Settings or Wallet-topup pages need a sticky bar, mirror this.
 
 Cross-feature ripples:
 - → [Canteen / Stock](#canteen--stock) (qty aggregation + decrement).
-- → [Payment Split & Payment Mode](#payment-split--payment-mode) (reuses `PaymentSplitSheet` with `total = subtotal`).
+- → [Payment Split & Payment Mode](#payment-split--payment-mode) (reuses `PaymentSplitSheet` with `total = subtotal`; PaymentSplitSheet now has its own desktop dialog cap — see that section).
 - → [UPI QR & Payment Screen](#upi-qr--payment-screen) (post-confirm QR screen, fix #69).
 - → [Wallet & Customers](#wallet--customers) (optional wallet debit).
 - → [Summary Dashboard](#summary-dashboard) (canteen revenue tile, PAYMENT MODE, piggy cashIn).
-- → [Tables Page (Home)](#tables-page-home) (TopBar pill from Home only).
+- → [Tables Page (Home)](#tables-page-home) (TopBar pill from Home only; same `max-w-[1400px]` + grid pattern).
 
-Last updated: 14 Jun 2026
+Last updated: 19 Jun 2026 (#91 Phase 2.5 — QuickSale desktop layout)
 
 ---
 
@@ -400,6 +401,7 @@ Invariants:
 - `total` prop = grand total. Caller responsible: sessions = `session.amount + Σ items`; QuickSale = `subtotal`.
 - Customer linking is sheet-local. No `Session.customerId`. Durable link = `WalletTransaction.referenceId`.
 - **Pattern T4** for PAYMENT MODE: running sessions EXCLUDED (no breakdown yet). Headline `totalRevenue` includes them via render-body `runningRevenueToday`. PAYMENT MODE math stays in `useMemo` (not `useLiveQuery`) since source data is DB-static.
+- **Desktop sheet cap (#91 Phase 2.5, 19 Jun 2026):** at `md:` and up the sheet becomes a centered dialog. Main sheet: `md:bottom-auto md:left-1/2 md:top-1/2 md:right-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-[min(560px,calc(100vw-2rem))] md:rounded-3xl md:border md:max-h-[85vh]`. Inner customer-link picker: same class set with `md:w-[min(520px,calc(100vw-2rem))] md:max-h-[75vh]`. Mobile (<768px) unchanged — both still slide up from `bottom-0` as bottom sheets. **Exception to the "PaymentBottomSheet / PaymentSplitSheet / RestockSheet keep bottom-sheet on every viewport" rule** — PaymentSplitSheet is now the only one of those three that follows the centered-dialog pattern on desktop. Documented at Shared UI & Theme.
 
 Cross-feature ripples:
 - → [Sessions](#sessions) (pause-first flow).
@@ -407,10 +409,11 @@ Cross-feature ripples:
 - → [Wallet & Customers](#wallet--customers) (`WalletTransaction` write on `wallet > 0`).
 - → [Piggy (Cash Float)](#piggy-cash-float) (cashIn aggregation from `paymentBreakdown.cash`).
 - → [Summary Dashboard](#summary-dashboard) (strip + percent rounding).
+- → [Shared UI & Theme](#shared-ui--theme) (PaymentSplitSheet desktop-dialog exception documented there).
 
 See also: `bug_patterns.md` Pattern M3, Pattern P4, Pattern T4.
 
-Last updated: 14 Jun 2026
+Last updated: 19 Jun 2026 (#91 Phase 2.5 — PaymentSplitSheet desktop dialog cap)
 
 ---
 
@@ -684,7 +687,7 @@ Invariants:
 - Modal `useEffect` with `[open]` dep sets `document.body.style.overflow = 'hidden'`; restores on close/unmount.
 - Modal Escape key listener uses `[open, onClose]` dep — wrap `onClose` in `useCallback` at the call site if needed.
 - **Desktop Modal cap (#91 Phase 2, 19 Jun 2026):** at `md:` and up the sheet becomes a centered dialog: `md:bottom-auto md:left-1/2 md:top-1/2 md:right-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-[min(560px,calc(100vw-2rem))] md:rounded-3xl md:border md:max-h-[85vh]`. Mobile (<768px) unchanged — still bottom-sheet. **Affects every `<Modal>` consumer at once** — verify any new modal still feels right on desktop. Bottom-sheet components that DON'T use shared `<Modal>` (`RestockSheet`, `PaymentSplitSheet`, `PaymentBottomSheet`) are NOT affected and keep their bottom-sheet behavior on every viewport — they own their own positioning.
-- `PaymentBottomSheet`, `PaymentSplitSheet`, `RestockSheet` are NOT `<Modal>` (own translateY slide-up). Adding new bottom-sheet behavior? Decide upfront: shared `<Modal>` (gets the desktop centered-dialog treatment for free) OR own component (true bottom-sheet on every viewport). Don't mix.
+- `PaymentBottomSheet`, `PaymentSplitSheet`, `RestockSheet` are NOT `<Modal>` (own translateY / fixed-bottom slide-up). Adding new bottom-sheet behavior? Decide upfront: shared `<Modal>` (gets the desktop centered-dialog treatment for free) OR own component. **`PaymentSplitSheet` is now an exception (Phase 2.5, #91, 19 Jun 2026): it ALSO becomes a centered dialog at `md:` and up** — same class set as shared `<Modal>` was given in Phase 2 (`md:bottom-auto md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-3xl md:border`). Main sheet caps at `md:w-[min(560px,calc(100vw-2rem))]`, inner customer-link picker at `md:w-[min(520px,calc(100vw-2rem))]`. `PaymentBottomSheet` (Subscribe page Razorpay sheet) and `RestockSheet` remain true bottom-sheets on every viewport.
 - Modal consumers: TableFormModal (passes `footer`), SessionDetail (stop confirm, edit start, edit notify, move table), Settings (clear, reset, cancel sub, clean names), Home (orphaned sessions), Canteen (soft-delete confirm + CanteenItemFormModal), BackEntryModal, PendingTopupsModal, PendingBookingsModal.
 - `<BottomNav>` rendered persistently in App.tsx; all pages need `pb-24+`. Adding a tab = new Route in App.tsx.
 - Tailwind v3.4 only — never v4.

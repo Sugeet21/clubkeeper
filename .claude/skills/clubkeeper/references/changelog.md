@@ -2,7 +2,21 @@
 
 ---
 
-## 19 Jun 2026 — Desktop responsiveness Phase 2: Canteen + shared Modal width cap + Bookings (#91) — pending SHA
+## 19 Jun 2026 — Desktop responsiveness Phase 2.5: QuickSale + PaymentSplitSheet (#91) — pending SHA
+
+Owner ran `/quick-sale` on his laptop after Phase 2 and reported the page was still broken — items stretched edge-to-edge with the qty stepper floating ~1900px from the item name (screenshot 341), and `PaymentSplitSheet` opened as an edge-to-edge full-screen sheet with the cash/UPI/wallet `−` and `+` buttons pinned to far sides (screenshot 342). QuickSale wasn't touched in Phase 2; PaymentSplitSheet is its own bottom-sheet (not the shared `<Modal>`) so it didn't inherit the Phase 2 desktop-dialog cap. This phase patches both.
+
+**`src/pages/QuickSale.tsx`** — added an inner `<div className="w-full max-w-[1400px] mx-auto">` wrapper around header, items grid, cart, and empty-cart hint. The page's outer `<div className="bg-bg min-h-screen flex flex-col">` is preserved so the body still owns full-height + scrim coverage. **Items grid** went from `space-y-2` to `space-y-2 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-2`. **Cart strip** got the same treatment so cart rows stack 1 col on mobile and 2/3 col on desktop (`space-y-2 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-2`). **Sticky bottom bar** — the `fixed bottom-0 left-0 right-0` band still spans the full viewport (visual weight + scrim across the bottom), but its **inner content** is wrapped in `<div className="w-full max-w-[1400px] mx-auto px-5">` so Subtotal + Continue button align with the items list above instead of being pinned to the screen edges. `px-5` removed from the outer band and moved inside the cap to keep the band edge-to-edge.
+
+**`src/components/PaymentSplitSheet.tsx`** — sheet at line 169 (main payment sheet) and line 477 (inner customer-link picker) both gained the same `md:` desktop-dialog class set used by shared `<Modal>` in Phase 2: `md:bottom-auto md:left-1/2 md:top-1/2 md:right-auto md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-3xl md:border`. Main sheet caps at `md:w-[min(560px,calc(100vw-2rem))] md:max-h-[85vh]`; customer-link picker caps at `md:w-[min(520px,calc(100vw-2rem))] md:max-h-[75vh]` (slightly narrower because it's a focused pick action). Mobile (<768px) unchanged — both still slide up from `bottom-0` as bottom sheets. The earlier Shared UI invariant in ripple_effects.md ("PaymentBottomSheet, PaymentSplitSheet, RestockSheet keep their bottom-sheet behaviour on every viewport") needed amending — **PaymentSplitSheet now follows the centered-dialog rule on desktop** while keeping bottom-sheet on mobile. RestockSheet and PaymentBottomSheet are not updated in this phase.
+
+**Decision note carried in skill:** the items/cart grid breakpoint cascade (`md:grid-cols-2 lg:grid-cols-3`) is now used by **four** pages — Tables, Canteen, Bookings, QuickSale. Treat this as the de-facto card-grid pattern for #91 going forward (Settings + Wallet topup will likely use the same).
+
+Build clean (1071.29 kB, +0.71 kB over Phase 2). #91 stays open.
+
+---
+
+## 19 Jun 2026 — Desktop responsiveness Phase 2: Canteen + shared Modal width cap + Bookings (#91) — commit 793dde0
 
 Second batch of #91. Three coordinated changes:
 

@@ -164,9 +164,11 @@ export function PaymentSplitSheet({
         className="fixed inset-0 z-[60] bg-black/60"
         onClick={() => !submitting && onCancel()}
       />
-      {/* Sheet */}
+      {/* Sheet — mobile: bottom-anchored slide-up. Desktop (md:+): centered
+          dialog capped at 560px, all four corners rounded. Mirrors the
+          shared <Modal> desktop pattern shipped in Phase 2 (#91). */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-[70] bg-bg-card rounded-t-3xl border-t border-border max-h-[92vh] flex flex-col"
+        className="fixed bottom-0 left-0 right-0 z-[70] bg-bg-card rounded-t-3xl border-t border-border max-h-[92vh] flex flex-col md:bottom-auto md:left-1/2 md:top-1/2 md:right-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-[min(560px,calc(100vw-2rem))] md:rounded-3xl md:border md:max-h-[85vh]"
         style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}
       >
         {/* Header */}
@@ -472,7 +474,7 @@ function CustomerPickerModal({ onCancel, onPick }: CustomerPickerModalProps) {
     <>
       <div className="fixed inset-0 z-[80] bg-black/70" onClick={onCancel} />
       <div
-        className="fixed bottom-0 left-0 right-0 z-[90] bg-bg-card rounded-t-3xl border-t border-border max-h-[80vh] flex flex-col"
+        className="fixed bottom-0 left-0 right-0 z-[90] bg-bg-card rounded-t-3xl border-t border-border max-h-[80vh] flex flex-col md:bottom-auto md:left-1/2 md:top-1/2 md:right-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-[min(520px,calc(100vw-2rem))] md:rounded-3xl md:border md:max-h-[75vh]"
         style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}
       >
         <div className="shrink-0 px-5 pt-5 pb-3 border-b border-border">
