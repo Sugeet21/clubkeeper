@@ -34,6 +34,7 @@ If you're changing... → Read sections...
 | `createBackEntry`, `BackEntryModal`, overlap detection | [Back Entries](#back-entries) |
 | `SessionItem`, `AddItemBottomSheet`, item add/edit/delete + stock sync | [Session Items (POS)](#session-items-pos) |
 | `CanteenItem`, stock decrement, `RestockSheet`, `lowStockThreshold`, `canteenMatch.ts` | [Canteen / Stock](#canteen--stock) |
+| `peakPrice`, `peakPricingEnabled`, peak window hours/minutes, `PeakWindowBottomSheet`, time-of-day chip pricing | [Peak Hour Pricing](#peak-hour-pricing) |
 | `/quick-sale`, `createCanteenSale`, `CanteenSale` | [Quick Sale](#quick-sale) |
 | `PaymentSplitSheet`, `recordSessionPaymentBreakdown`, `paymentBreakdown`, Summary PAYMENT MODE | [Payment Split & Payment Mode](#payment-split--payment-mode) |
 | `getPiggyBalance`, `StockPurchase`, `recordStockPurchase`, `/piggy`, CASH FLOW strip | [Piggy (Cash Float)](#piggy-cash-float) |
@@ -78,6 +79,7 @@ Invariants:
 - `ClubSettings.legacyAdjustmentsBackfilled?` is the v6 audit flag — read-only after migration.
 - v13 `.upgrade()` items-revenue gap: `paymentBreakdown.cash` understates pre-v13 sessions (used `session.amount` alone, not grand total). Tracked, deferred.
 - Renaming a table = existing users' data is gone. Use soft-delete + new-name migration instead.
+- **Current version: v18.** v18 (19 Jun 2026) adds Peak Hour Pricing optional fields — `CanteenItem.peakPrice?` and `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`. Additive only, no `.upgrade()` callback, no index changes (schema string identical to v17). All defaults applied at read time.
 
 Cross-feature ripples:
 - → [Import / Export / Reset](#import--export--reset): adding a Dexie table requires updates in `CURRENT_SCHEMA_VERSION`, `getAllDataForExport`, `importEverythingFromFile`, AND `resetEverything` (Pattern: three-way drift causes silent data loss — see #78, #81).
@@ -85,7 +87,7 @@ Cross-feature ripples:
 
 See also: `bug_patterns.md` (Dexie patterns), full Dexie version history in `SKILL.md`.
 
-Last updated: 14 Jun 2026
+Last updated: 19 Jun 2026 (v18 — Peak Hour Pricing additive fields)
 
 ---
 
@@ -305,7 +307,7 @@ Last updated: 8 Jun 2026
 Owns: canteen item master list, stock decrement/restock, low-stock UI, item matching.
 
 Files in scope:
-- `src/types/index.ts` — `CanteenItem { id, name, defaultPrice, stockEnabled, currentStock, isActive, createdAt, sortOrder }`; `ClubSettings.lowStockThreshold?`
+- `src/types/index.ts` — `CanteenItem { id, name, defaultPrice, stockEnabled, currentStock, isActive, createdAt, sortOrder, peakPrice? }`; `ClubSettings.lowStockThreshold?`, `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`
 - `src/db/database.ts` — v8 adds `canteenItems: '++id, name, isActive, sortOrder'`
 - `src/db/queries.ts` — `getCanteenItems(includeInactive)`, `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`, `decrementCanteenItemStock` (standalone-only — see Pattern D7), `getLowStockThreshold` (with `?? 5` fallback)
 - `src/db/seed.ts` — `DEFAULT_SETTINGS.lowStockThreshold` (default 5)
@@ -340,6 +342,58 @@ Cross-feature ripples:
 See also: `bug_patterns.md` Pattern D7 (nested tx), Pattern F7 (inline error vs toast), `decisions_active.md` (no auto-save freeform).
 
 Last updated: 19 Jun 2026 (#91 Phase 2 — desktop layout + Modal cap)
+
+---
+
+## Peak Hour Pricing
+
+Owns: time-of-day pricing for canteen items (#68). Framing locked as neutral time-based pricing — never tied in UI copy to specific product categories. Phase 1 (schema + Settings UI) shipped 19 Jun 2026; Phases 2–4 (Canteen UI, AddItem/QuickSale chips, bulk-edit) deferred.
+
+Files in scope (Phase 1):
+- `src/types/index.ts` — `CanteenItem.peakPrice?` (optional, undefined = no peak price for this item); `ClubSettings.peakPricingEnabled?` (master toggle, undefined/false = off), `peakStartHour?` (0-23, default 22), `peakStartMinute?` (0-59, default 0), `peakEndHour?` (0-23, default 6), `peakEndMinute?` (0-59, default 0)
+- `src/db/database.ts` — v18 adds peak fields; additive only, no `.upgrade()` block, no new indexes, schema string identical to v17
+- `src/db/queries.ts` — `CURRENT_SCHEMA_VERSION = 18`; new `ClubKeeperBackupV18` interface; `ClubKeeperBackupV17`/`V16` aliased to V18 (structural superset); `getAllDataForExport()` return type updated. Import/export wiring unchanged — purely additive optional fields flow through `bulkAdd` automatically.
+- `src/components/PeakWindowBottomSheet.tsx` — bottom-sheet picker. Start + End time as paired `<select>` dropdowns (hour 0-23 displayed 12-hr AM/PM; minute in 5-min steps). Live preview with duration and "crosses midnight" tag. Save disabled when start === end. Stays a bottom-sheet on every viewport (per canonical exclusion list — small picker sheets don't promote to desktop centered dialog).
+- `src/pages/Settings.tsx` — new collapsible section `id="peak-pricing"`, slotted between Piggy (4.5) and Player Hub (4.6). **Compact layout** — toggle row + inline read-only row showing `Peak hours · 10:00 PM → 06:00 AM [Edit]`. Tap `[Edit]` opens `PeakWindowBottomSheet`. Inline row + helper text render only when toggle is ON. Local `IconPeakPricing` + `formatPeakTime12()` helper (promote to `src/lib/peakPricing.ts` in Phase 2 when more callers appear). New state: `peakSheetOpen`.
+
+Files reserved for later phases (NOT yet created — do not assume they exist):
+- `src/lib/peakPricing.ts` — Phase 2. Planned exports: `isInPeakWindow(now, start, end)` with cross-midnight handling, `getEffectivePrice(item, now, settings)`, `formatPeakWindow(settings)`.
+- `src/components/BulkPeakPriceModal.tsx` — Phase 4. Two-column list (Reg + Peak inputs) for setting peak prices on every item at once.
+
+Cross-midnight semantics (must be preserved across all phases):
+```ts
+function isInPeakWindow(now, start, end) {
+  const cur = now.getHours()*60 + now.getMinutes()
+  const s = start.h*60 + start.m
+  const e = end.h*60 + end.m
+  return s > e ? (cur >= s || cur < e) : (cur >= s && cur < e)
+}
+```
+Start inclusive, end exclusive. `s > e` means the window wraps past midnight (e.g. 22:00 → 06:00).
+
+Invariants (apply to all phases):
+- **Two principles enforced everywhere:** (1) when toggle is OFF, UI is 100% identical to today across every page — zero new elements; (2) no new icons or colours beyond a single amber/orange accent for the "Peak" pill/tag.
+- **No `peakPrice` set on an item** → item never uses peak pricing, no second-line UI, no `PEAK` tag. Phase 2+ must respect this.
+- Default values when peak fields are undefined: enabled=false, start=22:00, end=06:00. Read-time fallbacks live in `Settings.tsx` for now; centralise in `lib/peakPricing.ts` in Phase 2.
+- Owner can always override the suggested price per add (existing AddItemBottomSheet/QuickSale behaviour — must not be broken when Phase 3 lands).
+- Framing copy: helper text shown to owner uses *"higher demand and staffing"* as the justification. Never mention specific product categories (tobacco, alcohol, etc.) in any UI string.
+
+Cross-feature ripples:
+- → [Canteen / Stock](#canteen--stock) (CanteenItem gains optional `peakPrice` — Phase 2 will add per-item form field + two-price card layout).
+- → [Schema & Migrations](#schema--migrations) (Dexie v18 — additive, all defaults at read time, no migration callback).
+- → [Settings](#settings) (new collapsible section card; uses existing `SettingsSection`/`Toggle` primitives — no new section-card pattern).
+- → [Import / Export / Reset](#import--export--reset) (purely additive optional fields — no changes needed to importer; round-trip self-test counts rows only).
+- → [Quick Sale](#quick-sale) (Phase 3: chip shows peak price + `PEAK` tag during window).
+- → [Session Items (POS)](#session-items-pos) (Phase 3: `AddItemBottomSheet` chip same treatment).
+
+Pending phases (do NOT ship as one commit — owner wants phased delivery):
+- Phase 2: `lib/peakPricing.ts` + `CanteenItemFormModal` Peak price field + Canteen page stacked two-price card + active-window header pill.
+- Phase 3: `AddItemBottomSheet` + `QuickSale` TOD-aware chips with `PEAK` tag.
+- Phase 4: `BulkPeakPriceModal` + first-time onboarding banner on Canteen page.
+
+See also: `changelog.md` (19 Jun 2026 entry), GitHub #68 (full UI plan + edge cases), GitHub #92 (related — configurable low-stock threshold can share the v18 Dexie bump if not yet implemented).
+
+Last updated: 19 Jun 2026 (Phase 1 — schema + Settings UI)
 
 ---
 

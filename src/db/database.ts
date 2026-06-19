@@ -325,6 +325,28 @@ export class ClubKeeperDB extends Dexie {
       stockPurchases: 'id, createdAt, canteenItemId, source',
       bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
     })
+    // Version 18: Peak Hour Pricing (#68) — additive only, no .upgrade() block.
+    // Adds optional fields:
+    //   CanteenItem.peakPrice?: number               (undefined = no peak price for this item)
+    //   ClubSettings.peakPricingEnabled?: boolean    (undefined/false = feature off, default)
+    //   ClubSettings.peakStartHour?: number          (0-23, default 22)
+    //   ClubSettings.peakStartMinute?: number        (0-59, default 0)
+    //   ClubSettings.peakEndHour?: number            (0-23, default 6)
+    //   ClubSettings.peakEndMinute?: number          (0-59, default 0)
+    // No new indexes — peakPrice is read alongside the item, never queried.
+    // Schema string identical to v17 — no index changes needed.
+    this.version(18).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+      bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
+    })
   }
 }
 

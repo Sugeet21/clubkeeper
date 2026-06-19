@@ -2,6 +2,31 @@
 
 ---
 
+## 19 Jun 2026 — Peak Hour Pricing Phase 1: schema + Settings UI (#68) — pending SHA
+
+First slice of #68 (FEAT-CANTEEN-PEAK). Foundation only — no Canteen UI yet, no AddItem chip changes, no bulk-edit modal. Owner explicitly wanted phased delivery so he can verify each piece on device before the next ships.
+
+**Framing locked in design (carried into all future UI):** the feature is presented as neutral **time-based pricing** (the Uber/Swiggy/BookMyShow model). Never tied in UI copy to any specific product category. Justification text: *"Some items cost more during these hours due to higher demand and staffing."*
+
+**`src/types/index.ts`** — added `CanteenItem.peakPrice?: number` (optional, undefined = item never uses peak pricing) and five optional `ClubSettings` fields: `peakPricingEnabled?: boolean` (master switch, undefined/false = off), `peakStartHour?: number` (0-23, default 22), `peakStartMinute?: number` (0-59, default 0), `peakEndHour?: number` (0-23, default 6), `peakEndMinute?: number` (0-59, default 0). Minute granularity included so owners can pick e.g. 22:30 → 03:15.
+
+**`src/db/database.ts`** — bumped to **Dexie v18**. Additive only — no `.upgrade()` callback needed, no index changes (schema string identical to v17). All v18 fields are optional; legacy rows read undefined and fall back to the defaults at read time.
+
+**`src/db/queries.ts`** — `CURRENT_SCHEMA_VERSION` bumped to 18. New `ClubKeeperBackupV18` interface; `ClubKeeperBackupV17` + `ClubKeeperBackupV16` aliased to it for forward compatibility (structural typing — V18 is a superset of V17 because no field shapes changed). `getAllDataForExport()` return type updated to `Promise<ClubKeeperBackupV18>`. **Import/export wiring needed zero further changes** — `importEverythingFromFile` calls `bulkAdd()` which preserves whatever optional fields are present in the JSON; `getAllDataForExport` dumps full table contents. Round-trip self-test counts rows only, not fields, so no edits there either. **Pattern D10 ripple is minimal for purely-additive optional fields** — only schema version bump + backup interface needed updating.
+
+**`src/components/PeakWindowBottomSheet.tsx`** — NEW component. Standard bottom-sheet (matches `RestockSheet` / `PaymentBottomSheet` style — `fixed bottom-0`, slide-up, dim scrim). Start time + End time pickers: each is a pair of `<select>` dropdowns for hour (0-23 displayed as 12-hr AM/PM) and minute (5-minute steps). Live preview block shows `10:00 PM → 06:00 AM` + duration + a "crosses midnight" tag when the window wraps. Save button disabled when start equals end. Stays a bottom-sheet on all viewports per the canonical exclusion list (small picker sheets don't promote to centered desktop dialog).
+
+**`src/pages/Settings.tsx`** — new collapsible section card `id="peak-pricing"`, slotted between Piggy (4.5) and Player Hub (4.6). Layout matches the **Compact** option from the agreed UI plan: toggle row at top + inline read-only row showing `Peak hours · 10:00 PM → 06:00 AM [Edit]`. Tapping `[Edit]` opens the bottom-sheet. The inline row + helper text only render when the toggle is ON — so a club that never enables peak pricing sees just the bare toggle, matching the "if OFF then UI is identical to today" principle. New `IconPeakPricing` (clock-with-hand glyph, 20×20, stroke-2, currentColor — same convention as other section icons). New `formatPeakTime12()` helper (kept local to Settings; promoted to `src/lib/peakPricing.ts` in Phase 2 when more callers appear).
+
+**Phase 2 / 3 / 4 (deferred — separate commits):**
+- Phase 2: `lib/peakPricing.ts` (`isInPeakWindow`, `getEffectivePrice`), per-item Peak price field in `CanteenItemFormModal`, two-price stacked layout on Canteen item cards, active-window header pill.
+- Phase 3: `AddItemBottomSheet` + `QuickSale` TOD-aware chips with `PEAK` tag.
+- Phase 4: bulk-edit modal + first-time onboarding banner.
+
+Build clean. #68 stays open.
+
+---
+
 ## 19 Jun 2026 — Desktop responsiveness Phase 2.5: QuickSale + PaymentSplitSheet (#91) — pending SHA
 
 Owner ran `/quick-sale` on his laptop after Phase 2 and reported the page was still broken — items stretched edge-to-edge with the qty stepper floating ~1900px from the item name (screenshot 341), and `PaymentSplitSheet` opened as an edge-to-edge full-screen sheet with the cash/UPI/wallet `−` and `+` buttons pinned to far sides (screenshot 342). QuickSale wasn't touched in Phase 2; PaymentSplitSheet is its own bottom-sheet (not the shared `<Modal>`) so it didn't inherit the Phase 2 desktop-dialog cap. This phase patches both.

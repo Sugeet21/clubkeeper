@@ -7,6 +7,7 @@ import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport,
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
 import { Toggle } from '../components/Toggle'
+import { PeakWindowBottomSheet } from '../components/PeakWindowBottomSheet'
 import { useToastStore } from '../store/toastStore'
 import { useAuthStore } from '../store/authStore'
 import { validatePlayerName, validateUpiId } from '../lib/validation'
@@ -124,6 +125,22 @@ function IconAlerts() {
   )
 }
 
+function IconPeakPricing() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  )
+}
+
+function formatPeakTime12(h: number, m: number): string {
+  const period = h >= 12 ? 'PM' : 'AM'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  const mm = m.toString().padStart(2, '0')
+  return `${h12}:${mm} ${period}`
+}
+
 // ─── Collapsible Section Card ─────────────────────────────────────────────────
 
 function SettingsSection({
@@ -231,6 +248,9 @@ export default function Settings() {
   // Piggy live balance — used by the Piggy settings section
   const piggy = useLiveQuery(() => getPiggyBalance(), [])
   const piggyStartedAt = settings?.piggyStartedAt
+
+  // Peak Hour Pricing bottom-sheet (#68)
+  const [peakSheetOpen, setPeakSheetOpen] = useState(false)
 
   // Single open section — only one open at a time
   const [openSection, setOpenSection] = useState<string>('club-info')
@@ -874,6 +894,55 @@ export default function Settings() {
           </div>
         </SettingsSection>
 
+        {/* ── 4.55: Peak Hour Pricing (#68) ───────────────────────────────── */}
+        <SettingsSection
+          id="peak-pricing"
+          title="Peak Hour Pricing"
+          icon={<IconPeakPricing />}
+          isOpen={openSection === 'peak-pricing'}
+          onToggle={() => toggleSection('peak-pricing')}
+        >
+          <div className="mt-3 space-y-3">
+            <div className="flex items-center justify-between min-h-[44px]">
+              <div className="pr-3">
+                <p className="text-[14px] font-semibold text-text">Enable</p>
+                <p className="text-[11px] text-text-faint mt-0.5">Charge a higher price for canteen items during set hours.</p>
+              </div>
+              <Toggle
+                value={settings?.peakPricingEnabled ?? false}
+                onChange={(v) => void updateSettings({ peakPricingEnabled: v })}
+                aria-label="Toggle peak hour pricing"
+              />
+            </div>
+
+            {(settings?.peakPricingEnabled ?? false) && (
+              <>
+                <button
+                  onClick={() => setPeakSheetOpen(true)}
+                  className="w-full min-h-[44px] flex items-center justify-between px-4 py-3 rounded-xl bg-bg border border-border active:bg-bg-card transition-colors"
+                >
+                  <div className="text-left">
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Peak hours</p>
+                    <p className="text-[15px] text-text font-mono tabular-nums mt-0.5">
+                      {formatPeakTime12(settings?.peakStartHour ?? 22, settings?.peakStartMinute ?? 0)}
+                      {' → '}
+                      {formatPeakTime12(settings?.peakEndHour ?? 6, settings?.peakEndMinute ?? 0)}
+                    </p>
+                  </div>
+                  <span className="text-[12px] text-accent flex items-center gap-1">
+                    Edit
+                    <PencilIcon />
+                  </span>
+                </button>
+
+                <p className="text-[11px] text-text-faint leading-relaxed">
+                  Some items cost more during these hours due to higher demand and staffing. Set an optional peak price per item on the Canteen page.
+                </p>
+              </>
+            )}
+          </div>
+        </SettingsSection>
+
         {/* ── 4.6: Player Hub ────────────────────────────────────────────── */}
         <SettingsSection
           id="player-hub"
@@ -1067,6 +1136,25 @@ export default function Settings() {
         onClose={() => setTableModal({ open: false })}
         table={tableModal.table}
         existingTables={tables}
+      />
+
+      {/* ── Peak Hour window picker (#68) ───────────────────────────────── */}
+      <PeakWindowBottomSheet
+        open={peakSheetOpen}
+        initialStartHour={settings?.peakStartHour ?? 22}
+        initialStartMinute={settings?.peakStartMinute ?? 0}
+        initialEndHour={settings?.peakEndHour ?? 6}
+        initialEndMinute={settings?.peakEndMinute ?? 0}
+        onCancel={() => setPeakSheetOpen(false)}
+        onSave={({ startHour, startMinute, endHour, endMinute }) => {
+          void updateSettings({
+            peakStartHour: startHour,
+            peakStartMinute: startMinute,
+            peakEndHour: endHour,
+            peakEndMinute: endMinute,
+          })
+          setPeakSheetOpen(false)
+        }}
       />
 
       {/* ── Clean invalid names modal ───────────────────────────────────── */}

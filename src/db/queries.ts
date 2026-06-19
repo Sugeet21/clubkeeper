@@ -23,10 +23,10 @@ import type { Booking } from '../types/booking'
  * Current Dexie schema version. Mirror of `this.version(N)` in `database.ts`.
  * Used by export/import to gate forward-compatibility. Bump when database.ts bumps.
  */
-export const CURRENT_SCHEMA_VERSION = 17
+export const CURRENT_SCHEMA_VERSION = 18
 
-export interface ClubKeeperBackupV17 {
-  schemaVersion: 17
+export interface ClubKeeperBackupV18 {
+  schemaVersion: 18
   exportedAt: number
   tables: GameTable[]
   sessions: Session[]
@@ -40,11 +40,11 @@ export interface ClubKeeperBackupV17 {
   bookings: Booking[]
 }
 
-// Kept exported under the old name for any downstream code that hasn't been
-// updated yet — TS structural typing means the V17 superset is assignable
-// where V16 was required (every V16 field is still present). Will be removed
-// once all call sites import V17 directly.
-export type ClubKeeperBackupV16 = ClubKeeperBackupV17
+// Kept exported under the old names for any downstream code that hasn't been
+// updated yet — TS structural typing means the V18 superset is assignable
+// where V16/V17 were required (no field shapes changed; only optional fields added).
+export type ClubKeeperBackupV17 = ClubKeeperBackupV18
+export type ClubKeeperBackupV16 = ClubKeeperBackupV18
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -529,7 +529,7 @@ export async function resetEverything(): Promise<void> {
   await seedIfEmpty()
 }
 
-export async function getAllDataForExport(): Promise<ClubKeeperBackupV17> {
+export async function getAllDataForExport(): Promise<ClubKeeperBackupV18> {
   const [
     tables,
     sessions,

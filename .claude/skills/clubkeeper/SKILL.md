@@ -80,7 +80,7 @@ Read MULTIPLE files when the question spans domains.
 
 One entry per module. Overwrite in place when status changes — never append a second entry for the same module. For phase-by-phase history, build sizes, commit SHAs, and dates, see `changelog.md` and `git log`.
 
-- **Desktop responsiveness (#91)** — Tables, Canteen, Bookings, shared `<Modal>`, QuickSale, PaymentSplitSheet shipped. Settings page + Wallet topup success screen still mobile-only. Pending owner verification on laptop + phone.
+- **Desktop responsiveness (#91)** — Verified by owner. Tables, Canteen, Bookings, shared `<Modal>`, QuickSale, PaymentSplitSheet desktop-responsive. Settings page + Wallet topup success screen still mobile-only.
 - **Advance booking (#84)** — Phase 1 code-complete end-to-end: owner-side surfaces, player flow at `/c/<slug>/book`, session linkage + advance-as-prepaid, cancellation, no-show sweep. Pending owner E2E verification.
 - **Pricing visibility (#84 Phase 0)** — Player Hub shows collapsible "View pricing" card. Gated on `acceptsPricingDisplay` + `tables_json` populated.
 - **Player Hub + topups** — Owner slug + accept-topups toggle live. Player `/c/:slug` form → UPI → "I've paid" polling. Realtime channel `topup_intents_{clubId}` with 30s polling fallback. Pending count in `topupInbox` Zustand store. `/poster/:slug` auto-prints.
@@ -88,6 +88,7 @@ One entry per module. Overwrite in place when status changes — never append a 
 - **Engagement** — Welcome bonus, streak bonus, dormancy nudges, BringBackList. All off by default; configured in `PlayerHubSettings`.
 - **Wallet / prepaid credit** — Customers, walletTransactions, top-ups, manual adjustments, walk-in codes, WhatsApp receipts. Refund UI still pending (Phase 3).
 - **Canteen management + POS stock sync** — Item CRUD, stock pills, RestockSheet, all 6 add/mutate paths sync stock atomically inside one flat tx. Freeform rows never touch stock.
+- **Peak Hour Pricing (#68)** — Phase 1 shipped: Dexie v18 schema + Settings toggle/window picker with `PeakWindowBottomSheet`. Phases 2–4 (Canteen card layout, AddItem/QuickSale chips with `PEAK` tag, bulk-edit modal + onboarding banner) pending. Pending owner verification on laptop + phone.
 - **Quick Sale (`/quick-sale`)** — Walk-in canteen sales with PaymentSplitSheet. `createCanteenSale` single flat tx with stock check.
 - **Split payments + PAYMENT MODE + Piggy** — `Session.paymentBreakdown`, PaymentSplitSheet shared across SessionDetail + QuickSale, PAYMENT MODE + CASH FLOW summary strips, `/piggy` page, RestockSheet sources Piggy/Other. Mandatory payment capture (no "Skip"). v13 backfill caveat — items revenue missing from `paymentBreakdown.cash` for pre-v13 sessions; defer until owner notices.
 - **Table Move (Phase 1)** — Move running/paused session to another empty same-game-type, same-rate table. Single continuous bill. No cross-type, no per-segment billing, no undo.
@@ -130,7 +131,7 @@ Things that BLOCK something if forgotten. Delete the line the moment it's resolv
 
 ## Dexie schema — current
 
-**Current version: v17** — adds `bookings` store + `Booking` type + `ClubSettings.acceptsBookings?/bookingAdvanceAmount?`.
+**Current version: v18** — adds Peak Hour Pricing (#68) optional fields: `CanteenItem.peakPrice?` and `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`. Additive only, no `.upgrade()`, no index changes.
 
 Full version history (v1–v17) lives in `changelog.md`. When bumping the version, also update `CURRENT_SCHEMA_VERSION` in `queries.ts`, the backup interface alias, `getAllDataForExport` + `importEverythingFromFile` + `resetEverything` + `importExportRoundTrip` (Pattern D10).
 

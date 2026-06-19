@@ -172,6 +172,12 @@ export interface ClubSettings {
   // v17: advance booking (Phase 1 of #84)
   acceptsBookings?: boolean       // mirrors Supabase clubs.accepts_bookings; treat missing as false
   bookingAdvanceAmount?: number   // ₹; default 100; range 0–10000
+  // v18: Peak Hour Pricing (#68). All optional, undefined = feature off.
+  peakPricingEnabled?: boolean    // master toggle; default false
+  peakStartHour?: number          // 0-23, default 22 (10 PM)
+  peakStartMinute?: number        // 0-59, default 0
+  peakEndHour?: number            // 0-23, default 6 (6 AM)
+  peakEndMinute?: number          // 0-59, default 0
 }
 
 export interface CanteenItem {
@@ -183,6 +189,7 @@ export interface CanteenItem {
   isActive: boolean      // soft-delete pattern
   createdAt: number
   sortOrder: number
+  peakPrice?: number     // v18: optional peak-hour price, integer rupees, 1-9999. Undefined = item never uses peak pricing.
 }
 
 export interface SessionItem {
