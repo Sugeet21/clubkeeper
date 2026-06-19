@@ -599,14 +599,9 @@ export default function Settings() {
             />
           </div>
 
-          {/* Currency — read-only */}
-          <div className="mb-3">
-            <label className="block text-[11px] font-mono uppercase tracking-widest text-text-faint mb-1.5">
-              Currency
-            </label>
-            <div className="w-full px-4 py-3.5 bg-bg border border-border rounded-2xl text-text-faint text-[15px] min-h-[44px] flex items-center">
-              ₹ Indian Rupee
-            </div>
+          {/* Currency — compact read-only one-liner (BUG-S4). INR-only per decisions_active.md */}
+          <div className="mb-3 text-[13px] text-text-faint">
+            Currency: <span className="text-text-dim">₹ Indian Rupee</span>
           </div>
 
           {/* UPI ID */}
