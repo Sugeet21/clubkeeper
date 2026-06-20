@@ -13,7 +13,8 @@ Eight Settings-related issues filed (#95–#102). Six fixed in one PR; #97 (BUG-
 - `675486f` — refactor(supabase): all clubs-row mirrors go through `mirrorToSupabaseBySlug`. New `src/lib/mirrorToSupabase.ts`. Refactored `syncCoinConfig`, `syncTablesJsonBySlug`, `syncBookingConfigBySlug`, `updateClubNameRemote` (signature changed: now takes slug), `updateAcceptsTopups` (same). Promotes Pattern P2 from descriptive to prescriptive via **Pattern S11**.
 - `079dc35` — feat(settings): dedicated Canteen section (closes #99). New collapsible inserted between Tables and Alerts. Holds low-stock (moved from Club Info) + peak-pricing (moved from its own top-level section). Updated `decisions_active.md` lines 59 + 73 in place per Rule G.
 - `8962127` — fix(home): hide outOfService tables by default (closes #101). Opt-in "Show N disabled" toggle at bottom of /tables grid. Filter pills + counts operate on visible set.
-- `<this commit>` — skill self-update: Patterns U10 + S11 added to `bug_patterns.md`. SaveIndicator + mirrorToSupabase entries added to `ripple_effects.md`. Rule H added to `SKILL.md`.
+- `aca99f6` — skill self-update: Patterns U10 + S11 added to `bug_patterns.md`. SaveIndicator + mirrorToSupabase entries added to `ripple_effects.md`. Rule H added to `SKILL.md`.
+- `61d4c9f` — fix(player-hub): toggles re-sync from Dexie on every settings change (closes #97). Read-side bug — `useState(settings?.X)` never resynced when Dexie's useLiveQuery resolved late, and the mount-effect clobbered local state with Supabase on every remount. Introduced **Pattern R3** (local useState mirrors must have a re-sync useEffect).
 
 **Investigations (no code change, comments posted on the issues):**
 - #97 (BUG-S3 Accept Bookings toggle desync) — toggle is in `PlayerHubSettings.tsx:472`, already Supabase-first via `syncBookingConfigBySlug`, mount-effect hydration in place. Cannot reproduce. Issue stays open pending DevTools network log from owner.
