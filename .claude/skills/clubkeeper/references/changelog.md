@@ -2,6 +2,17 @@
 
 ---
 
+## 20 Jun 2026 — Settings drift class eliminated (#97 architectural fix)
+
+Re-opened #97 after the read-side patch (`61d4c9f`, Pattern R3) was deemed surface-level — three sources of truth (local `useState`, Dexie via `useLiveQuery`, Supabase via `getOwnerClub()`) raced on every settings field, guaranteeing the bug would recur on each new toggle.
+
+- New `src/hooks/useDexieSetting.ts` — single-field read/write hook over `useSettings()` + `updateSettings()`. Dexie-authoritative; Supabase mirroring stays in the caller because different fields mirror through different RPCs (some Supabase-first by design).
+- `src/pages/PlayerHubSettings.tsx` — refactored `acceptsTopups`, `acceptsBookings`, and the `bookingAdvanceAmount` typing buffer to use the hook. Deleted the two `useState` mirrors, the three sync `useEffect`s, the `topupsLoaded`/`bookingsLoaded` flags, and the `getOwnerClub()` backfill effect. Optimistic-revert dropped from the toggle handlers — the hook's `useLiveQuery` reflects Dexie's true state on every render. Coins fields intentionally left untouched (atomic multi-field saves + seeding logic in `handleToggleCoins`/`handleSaveRates`; the per-field hook would split the atomic write).
+- Grep across `src/` for `useState(settings?` and `useState(...settings.` returned **zero hits**, so no follow-up audit issue needed.
+- Skill: **Pattern R4** added to `bug_patterns.md` (Dexie & Offline state section, generalises Pattern R3 from one symptom to the bug class). Settings entry in `ripple_effects.md` updated to require `useDexieSetting` for any new ClubSettings field. **Critical Rule 14** added to `SKILL.md`.
+
+---
+
 ## 20 Jun 2026 — Settings cleanup pass (Issues #95, #96, #98, #99, #101, #102)
 
 Eight Settings-related issues filed (#95–#102). Six fixed in one PR; #97 (BUG-S3 Accept Bookings desync) and #100 (BUG-S6 time rounding) closed with "cannot reproduce" investigations — current code already implements the patterns the issues cite.

@@ -708,10 +708,11 @@ Files in scope:
 - `src/types/index.ts` — `ClubSettings` interface
 - `src/db/queries.ts` — `getSettings`, `updateSettings`
 - `src/db/seed.ts` — defaults
+- `src/hooks/useDexieSetting.ts` — read/write hook for any single ClubSettings field. Dexie-authoritative; caller mirrors to Supabase.
 - `sessionStorage['ck_settings_section']` — UI persistence key; cleared on tab close. Safe to read/write.
 
 Invariants:
-- When adding a new setting: (1) add to `ClubSettings`; (2) add default to `seed.ts`; (3) add UI toggle/input; (4) **plumb into the action that reads it** — most bugs land here (e.g. Prompt 7 rounding); (5) add test in `test_status.md`.
+- When adding a new setting: (1) add to `ClubSettings`; (2) add default to `seed.ts`; (3) **consume it via `useDexieSetting('field', fallback)` — never `useState(settings?.field ??)` + sync effect** (Pattern R4, #97); (4) add UI toggle/input; (5) **plumb into the action that reads it** — most bugs land here (e.g. Prompt 7 rounding); (6) if the field has a public/player-side counterpart, mirror to Supabase in the caller before/after the hook's `setValue`; (7) add test in `test_status.md`.
 - Section IDs: if you rename one, `sessionStorage` becomes stale (harmless — no section auto-opens that session).
 - Adding a new section: add an `id` here and a `<SettingsSection>` block.
 - UPI ID save: saves `undefined` (not empty string) when cleared.

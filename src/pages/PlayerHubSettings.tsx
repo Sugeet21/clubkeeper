@@ -6,8 +6,9 @@ import { CoinTiersEditor } from '../components/CoinTiersEditor'
 import { EngagementConfigCard } from '../components/EngagementConfigCard'
 import { updateSettings } from '../db/queries'
 import { generateSlug, validateSlug, isSlugAvailable } from '../lib/slug'
-import { upsertClub, updateAcceptsTopups, getOwnerClub, syncCoinConfig, syncTablesJsonBySlug, syncBookingConfigBySlug } from '../lib/playerHubApi'
+import { upsertClub, updateAcceptsTopups, syncCoinConfig, syncTablesJsonBySlug, syncBookingConfigBySlug } from '../lib/playerHubApi'
 import { getAllTables } from '../db/queries'
+import { useDexieSetting } from '../hooks/useDexieSetting'
 import { useToastStore } from '../store/toastStore'
 import { DEFAULT_COIN_CONFIG, resolveCoinConfig } from '../lib/coins'
 import type { ClubSettings, CoinTier } from '../types'
@@ -78,16 +79,20 @@ export function PlayerHubSettings({ settings }: Props) {
   const [slugError, setSlugError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [acceptsTopups, setAcceptsTopups] = useState(settings?.acceptsTopups ?? true)
+  // Pattern R4: Dexie is the single source of truth for settings toggles.
+  // No useState mirror, no sync useEffect — see src/hooks/useDexieSetting.ts.
+  const [acceptsTopups, setAcceptsTopupsDexie] = useDexieSetting('acceptsTopups', true)
   const [toggling, setToggling] = useState(false)
-  const [topupsLoaded, setTopupsLoaded] = useState(false)
   // ── Booking opt-in + advance (Phase 1 of #84) ────────────────────────────
-  const [acceptsBookings, setAcceptsBookings] = useState(settings?.acceptsBookings ?? false)
+  const [acceptsBookings, setAcceptsBookingsDexie] = useDexieSetting('acceptsBookings', false)
   const [bookingTogglingState, setBookingTogglingState] = useState(false)
-  const [bookingsLoaded, setBookingsLoaded] = useState(false)
-  const [advanceDraft, setAdvanceDraft] = useState(String(settings?.bookingAdvanceAmount ?? 100))
+  const [bookingAdvance, setBookingAdvance] = useDexieSetting('bookingAdvanceAmount', 100)
+  // Typing-buffer variant of Pattern R4: keep a local draft for in-progress
+  // editing, re-sync it whenever Dexie's authoritative value changes.
+  const [advanceDraft, setAdvanceDraft] = useState(String(bookingAdvance))
   const [advanceError, setAdvanceError] = useState<string | null>(null)
   const [advanceSaving, setAdvanceSaving] = useState(false)
+  useEffect(() => { setAdvanceDraft(String(bookingAdvance)) }, [bookingAdvance])
 
   // ── ClubCoins local state ─────────────────────────────────────────────────
   const coinConfig = resolveCoinConfig(settings ?? {})
@@ -174,56 +179,6 @@ export function PlayerHubSettings({ settings }: Props) {
       showToast('Failed to save.')
     }
   }
-
-  // ── Sync local toggle state from Dexie (single source of truth on read).
-  // Without this, the useState initializer on lines 81/85 captures whatever
-  // `settings` was on first render (often undefined while Dexie's useLiveQuery
-  // is still resolving) and never re-syncs when the real value arrives.
-  // After this effect, navigating away and back to /settings always shows the
-  // current Dexie value. Pattern S4 (read-side variant): Dexie is authoritative
-  // for owner-side UI state. Supabase is the mirror, not the source.
-  useEffect(() => {
-    if (settings?.acceptsTopups !== undefined) setAcceptsTopups(settings.acceptsTopups)
-  }, [settings?.acceptsTopups])
-  useEffect(() => {
-    if (settings?.acceptsBookings !== undefined) setAcceptsBookings(settings.acceptsBookings)
-  }, [settings?.acceptsBookings])
-  useEffect(() => {
-    if (settings?.bookingAdvanceAmount !== undefined) {
-      setAdvanceDraft(String(settings.bookingAdvanceAmount))
-    }
-  }, [settings?.bookingAdvanceAmount])
-
-  // ── First-time backfill: if Dexie has no value yet (fresh device, owner
-  // already set things up on another browser), seed Dexie from Supabase ONCE.
-  // Never overwrites a Dexie value that already exists — the sync effects
-  // above are the only thing allowed to write to local toggle state after
-  // the initial backfill.
-  useEffect(() => {
-    if (!settings?.slug || (topupsLoaded && bookingsLoaded)) return
-    getOwnerClub()
-      .then((club) => {
-        if (!club) {
-          setTopupsLoaded(true); setBookingsLoaded(true)
-          return
-        }
-        const dexieTopupsMissing = settings?.acceptsTopups === undefined
-        const dexieBookingsMissing =
-          settings?.acceptsBookings === undefined || settings?.bookingAdvanceAmount === undefined
-
-        if (dexieTopupsMissing) {
-          void updateSettings({ acceptsTopups: club.acceptsTopups })
-        }
-        if (dexieBookingsMissing) {
-          void updateSettings({
-            acceptsBookings: club.acceptsBookings,
-            bookingAdvanceAmount: club.bookingAdvanceAmount,
-          })
-        }
-        setTopupsLoaded(true); setBookingsLoaded(true)
-      })
-      .catch(() => { setTopupsLoaded(true); setBookingsLoaded(true) })
-  }, [settings?.slug, topupsLoaded, bookingsLoaded, settings?.acceptsTopups, settings?.acceptsBookings, settings?.bookingAdvanceAmount])
 
   // ── v17 self-heal: re-mirror tables_json once per session ────────────────
   // Phase 0 mirrored tables_json WITHOUT a per-table `id` field. Phase 1
@@ -312,47 +267,41 @@ export function PlayerHubSettings({ settings }: Props) {
 
   const handleToggleTopups = useCallback(async (val: boolean) => {
     setToggling(true)
-    setAcceptsTopups(val)
     try {
       // Supabase first — if it fails, Dexie is never written, so no desync.
       const slug = settings?.slug
       if (!slug) throw new Error('Set up Player Hub first.')
       await updateAcceptsTopups(slug, val)
-      await updateSettings({ acceptsTopups: val })
+      await setAcceptsTopupsDexie(val)
     } catch {
-      // Revert optimistic UI update
-      setAcceptsTopups(!val)
       showToast('Failed to update. Try again.')
     } finally {
       setToggling(false)
     }
-  }, [showToast])
+  }, [settings?.slug, setAcceptsTopupsDexie, showToast])
 
   // ── Accept-bookings toggle (Supabase-first, mirrors topup pattern, Pattern R2) ──
   const handleToggleBookings = useCallback(async (val: boolean) => {
     const currentSlug = settings?.slug
     if (!currentSlug) return
     setBookingTogglingState(true)
-    setAcceptsBookings(val)
     try {
       // Use the current advance value so Supabase mirror stays in sync. Read
-      // from settings rather than the draft (which may be mid-edit).
-      const currentAdvance = settings?.bookingAdvanceAmount ?? 100
-      await syncBookingConfigBySlug(currentSlug, val, currentAdvance)
-      await updateSettings({ acceptsBookings: val })
+      // from Dexie (authoritative) rather than the typing draft.
+      await syncBookingConfigBySlug(currentSlug, val, bookingAdvance)
+      await setAcceptsBookingsDexie(val)
     } catch {
-      setAcceptsBookings(!val)
       showToast('Failed to update. Try again.')
     } finally {
       setBookingTogglingState(false)
     }
-  }, [settings?.slug, settings?.bookingAdvanceAmount, showToast])
+  }, [settings?.slug, bookingAdvance, setAcceptsBookingsDexie, showToast])
 
   // ── Advance amount — onBlur commits via debounced save ───────────────────
   const handleAdvanceBlur = useCallback(async () => {
     const trimmed = advanceDraft.trim()
     if (trimmed === '') {
-      setAdvanceDraft(String(settings?.bookingAdvanceAmount ?? 100))
+      setAdvanceDraft(String(bookingAdvance))
       setAdvanceError(null)
       return
     }
@@ -370,15 +319,14 @@ export function PlayerHubSettings({ settings }: Props) {
       if (currentSlug) {
         await syncBookingConfigBySlug(currentSlug, acceptsBookings, n)
       }
-      await updateSettings({ bookingAdvanceAmount: n })
-      setAdvanceDraft(String(n))
+      await setBookingAdvance(n)
     } catch {
       setAdvanceError('Save failed. Try again.')
       // Don't blow away the draft — let owner retry the same value.
     } finally {
       setAdvanceSaving(false)
     }
-  }, [advanceDraft, acceptsBookings, settings?.slug, settings?.bookingAdvanceAmount])
+  }, [advanceDraft, acceptsBookings, settings?.slug, bookingAdvance, setBookingAdvance])
 
   const slug = settings?.slug
   const locked = settings?.slugLocked

@@ -348,6 +348,14 @@ await db.transaction('rw', db.canteenItems, db.sessionItems, async () => {
 ### Pattern D5 — Button labels must match behavior
 **Rule:** If "Delete" doesn't actually delete (it soft-deletes), call it "Disable". Context-aware labels are fine ("Enable Table" when editing a disabled one). Inherited misnomers from earlier prompts must be renamed.
 
+### Pattern R4 — Never `useState` a value that lives in Dexie settings (#97, 20 Jun 2026)
+**Symptom signature:** A settings toggle (Accept Bookings, Accept Topups, etc.) is flipped ON in Settings. Owner navigates to `/tables` (or any other route) and back to Settings — the toggle has reverted to its prior state, even though Dexie still holds the new value. May also appear as a stale value after hard refresh, or as cross-toggle drift when more than one settings field is mirrored locally.
+**Root cause:** The component mirrors a ClubSettings field into local `useState` and then "re-syncs" via `useEffect` when the prop arrives. Three sources of truth coexist — `useState`, Dexie via `useLiveQuery`, and (often) Supabase via `getOwnerClub()` — and they race. The local mirror captures whatever `settings` was on first render (frequently `undefined` while `useLiveQuery` is still resolving), the sync effect papers over it most of the time, and the Supabase backfill effect occasionally overwrites a fresh value. Pattern R3 already documented the read-side fix for this specific symptom on the booking toggle; Pattern R4 generalises: the entire `useState`-mirror approach is the bug class.
+**Rule:** Settings values are read via `useDexieSetting('fieldName', fallback)` only. No `useState` mirror of any ClubSettings field. No sync `useEffect`. No `getOwnerClub()` backfill effect in render-tree components — device-init handles initial seeding.
+**Typing-buffer variant:** for numeric/text inputs the user can clear and retype, keep a local string `useState` for the typing buffer, but source the authoritative number from `useDexieSetting` and re-sync the draft via a one-line effect (`useEffect(() => { setDraft(String(value)) }, [value])`). Commit on blur after parse/validate.
+**Files affected:** `src/hooks/useDexieSetting.ts` (new — the hook), `src/pages/PlayerHubSettings.tsx` (refactored for `acceptsTopups`, `acceptsBookings`, `bookingAdvanceAmount`). Coins fields intentionally untouched — atomic multi-field saves + seeding logic make per-field hooks the wrong shape there; see scoping note in PR.
+**Caller responsibility:** the hook does not mirror to Supabase. Different settings fields mirror through different RPCs (`updateAcceptsTopups`, `syncBookingConfigBySlug`, `syncCoinConfig`, `mirrorSettingsToSupabase`, …) and several deliberately mirror BEFORE the Dexie write so a failed remote call never produces a desynced local toggle. Wrap `setValue` with the appropriate mirror in the call site.
+
 ---
 
 ## Auth & Session (Supabase, OAuth)
