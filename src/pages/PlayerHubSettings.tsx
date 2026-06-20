@@ -101,9 +101,7 @@ export function PlayerHubSettings({ settings }: Props) {
   const [minutesPerCoin, setMinutesPerCoin] = useState(coinConfig.minutesPerCoin)
   const [rupeesPerCoin, setRupeesPerCoin] = useState(coinConfig.rupeesPerCoin)
   const [coinExpiryDays, setCoinExpiryDays] = useState(coinConfig.coinExpiryDays)
-  const [coinRedemptionModes, setCoinRedemptionModes] = useState<'time' | 'canteen' | 'both'>(
-    settings?.coinRedemptionModes ?? 'both',
-  )
+  const [coinRedemptionModes, setCoinRedemptionModes] = useState<'time' | 'canteen' | 'both'>(settings?.coinRedemptionModes ?? 'both') // allow-settings-useState: coins atomic multi-field save (Pattern R4 §Exceptions); seeded by handleToggleCoins, batched by handleSaveRates
   const [coinSaving, setCoinSaving] = useState(false)
   const [editingRates, setEditingRates] = useState(false)
 

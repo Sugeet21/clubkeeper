@@ -119,6 +119,45 @@ useEffect(() => { db.tables.toArray().then(setTables); }, []);
 - Inline SVG icons (no icon library), stroke="currentColor"
 - Touch targets minimum 44×44px
 
+## Settings reads — `useDexieSetting` is mandatory
+
+Any field on `ClubSettings` is read through `useDexieSetting('field', fallback)`, never via `useState(settings?.field ?? default)` paired with a sync `useEffect`, and never via a direct Supabase read on mount (`getOwnerClub()` inside a render-tree component). Dexie is the source of truth on this device (Critical Rule 2); Supabase is the mirror, not a parallel reader. The hook (`src/hooks/useDexieSetting.ts`) wraps `useSettings()` (live `useLiveQuery(db.settings.get(1))`) and `updateSettings()`, so the value is reactive across the whole tree with no race between three sources.
+
+The three allowed shapes — copy these exactly:
+
+**(a) Boolean toggle**
+```ts
+const [acceptsBookings, setAcceptsBookings] = useDexieSetting('acceptsBookings', false)
+// Toggle handler:
+await syncBookingConfigBySlug(slug, val, advance)  // mirror first if Supabase-first
+await setAcceptsBookings(val)
+```
+
+**(b) Enum / select**
+```ts
+const [mode, setMode] = useDexieSetting('coinRedemptionModes', 'both')
+// onChange:
+await setMode(nextVal)
+```
+
+**(c) Typing buffer (numeric / text input)**
+Reference implementation: `src/pages/PlayerHubSettings.tsx` (`bookingAdvance` + `advanceDraft`).
+```ts
+const [bookingAdvance, setBookingAdvance] = useDexieSetting('bookingAdvanceAmount', 100)
+const [draft, setDraft] = useState(String(bookingAdvance))
+useEffect(() => { setDraft(String(bookingAdvance)) }, [bookingAdvance])
+// onBlur: parse + validate, then call setBookingAdvance(n) OR setDraft(String(bookingAdvance)) to revert.
+```
+The draft is the only legitimate `useState` over a settings value — it exists because the user can clear the field mid-type and an authoritative-only read would yank the empty string back to the previous number. Dexie still owns the persisted value; the draft is UI-only.
+
+What NOT to do:
+- `const [x, setX] = useState(settings?.field ?? default)` followed by a sync `useEffect` — captures `undefined` on first render and races against the live query. This is the bug class.
+- `getOwnerClub()` (or any Supabase reader) inside a `useEffect` that writes into local component state on mount. Device-init handles the one-time backfill; render-tree components must not re-implement it.
+- Per-field `loaded` flags (`topupsLoaded`, `bookingsLoaded`, …) that gate UI on "Supabase read finished" — Dexie is already there.
+- A second `useState` mirror "just for performance" — `useLiveQuery` is already memoised.
+
+Failure mode and root-cause detail: see `bug_patterns.md` Pattern R4 (#97, 20 Jun 2026). Enforcement: `npm run check:settings` (runs in `prebuild`) fails the build on the anti-pattern; the `checklists/new_settings_field.md` template must be filled before adding any new field.
+
 ## Future Architecture (When Adding Cloud Sync)
 
 When Sugeet decides to add auth + cloud sync:

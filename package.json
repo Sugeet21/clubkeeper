@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "check:settings": "node scripts/check-settings-pattern.mjs",
+    "prebuild": "npm run check:settings",
     "build": "tsc && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

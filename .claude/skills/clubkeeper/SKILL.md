@@ -47,6 +47,7 @@ Sugeet's biggest fear: a fix in one file creates bugs in 3 other files because t
 12. **TopBar has NO gear icon.** Settings is reachable ONLY via bottom-nav. Do not re-add a gear to TopBar under any circumstance.
 13. **Desktop modal behaviour:** shared `<Modal>` becomes a centered dialog at `md:` and up. `PaymentSplitSheet` is the ONLY non-shared bottom-sheet that also goes centered on desktop. `RestockSheet` and `PaymentBottomSheet` stay true bottom-sheets on every viewport. Container cap for centered desktop pages is `max-w-[1400px] mx-auto` (NOT `max-w-5xl` — rejected by owner as "most of the space is empty"). FAB and modals stay OUTSIDE the centered wrapper.
 14. **Settings values are read via `useDexieSetting` only.** No `useState` mirror of any ClubSettings field. No `useEffect` re-sync of a settings prop into local state. Dexie is the single source of truth on this device; the typing-buffer variant of Pattern R4 is the only legitimate local `useState` over a settings value. See `bug_patterns.md` Pattern R4 (#97, 20 Jun 2026).
+15. **Adding or touching any ClubSettings field requires reading `checklists/new_settings_field.md` first** and pasting the filled checklist into the PR/commit description. No exceptions. Enforced by `npm run check:settings` (runs in `prebuild`).
 
 ## Routing — read these references on demand
 
@@ -54,6 +55,7 @@ Sugeet's biggest fear: a fix in one file creates bugs in 3 other files because t
 |---|---|
 | **ANY code change** | **`ripple_effects.md` (mandatory first)** |
 | **About to touch a known-bug area** | **`bug_patterns.md` (mandatory for that area)** |
+| **About to add/touch a ClubSettings field** | **`checklists/new_settings_field.md` (mandatory)** |
 | Architecture, file structure, library choices | `architecture.md` |
 | Colors, typography, spacing, components | `design_system.md` |
 | Database schema, types, queries | `data_model.md` |

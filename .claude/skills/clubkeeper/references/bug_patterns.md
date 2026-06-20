@@ -355,6 +355,10 @@ await db.transaction('rw', db.canteenItems, db.sessionItems, async () => {
 **Typing-buffer variant:** for numeric/text inputs the user can clear and retype, keep a local string `useState` for the typing buffer, but source the authoritative number from `useDexieSetting` and re-sync the draft via a one-line effect (`useEffect(() => { setDraft(String(value)) }, [value])`). Commit on blur after parse/validate.
 **Files affected:** `src/hooks/useDexieSetting.ts` (new — the hook), `src/pages/PlayerHubSettings.tsx` (refactored for `acceptsTopups`, `acceptsBookings`, `bookingAdvanceAmount`). Coins fields intentionally untouched — atomic multi-field saves + seeding logic make per-field hooks the wrong shape there; see scoping note in PR.
 **Caller responsibility:** the hook does not mirror to Supabase. Different settings fields mirror through different RPCs (`updateAcceptsTopups`, `syncBookingConfigBySlug`, `syncCoinConfig`, `mirrorSettingsToSupabase`, …) and several deliberately mirror BEFORE the Dexie write so a failed remote call never produces a desynced local toggle. Wrap `setValue` with the appropriate mirror in the call site.
+**Enforcement:**
+- Lint: `npm run check:settings` (runs in `prebuild`). Fails the build on `useState(settings?.X)` and `useState(settings.X)` patterns. Script lives at `scripts/check-settings-pattern.mjs`.
+- Process: `checklists/new_settings_field.md` must be filled and pasted into the PR description for any new ClubSettings field.
+- Exception escape hatch: `// allow-settings-useState: <reason>` on the same line. Use ONLY for atomic multi-field saves (coins). New uses require a comment-justification a human can review in PR. Currently used at exactly one site: the `coinRedemptionModes` initializer in `PlayerHubSettings.tsx`, batched into Dexie via `handleSaveRates` together with `minutesPerCoin`, `rupeesPerCoin`, and `coinExpiryDays`.
 
 ---
 
