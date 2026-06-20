@@ -175,34 +175,55 @@ export function PlayerHubSettings({ settings }: Props) {
     }
   }
 
-  // ── Load accepts_topups + accepts_bookings from Supabase on mount if slug
-  // already exists. Both guarded with their own "loaded" flag so a remount
-  // doesn't override a just-saved toggle. Single getOwnerClub() round-trip
-  // serves both — cheaper than two.
+  // ── Sync local toggle state from Dexie (single source of truth on read).
+  // Without this, the useState initializer on lines 81/85 captures whatever
+  // `settings` was on first render (often undefined while Dexie's useLiveQuery
+  // is still resolving) and never re-syncs when the real value arrives.
+  // After this effect, navigating away and back to /settings always shows the
+  // current Dexie value. Pattern S4 (read-side variant): Dexie is authoritative
+  // for owner-side UI state. Supabase is the mirror, not the source.
+  useEffect(() => {
+    if (settings?.acceptsTopups !== undefined) setAcceptsTopups(settings.acceptsTopups)
+  }, [settings?.acceptsTopups])
+  useEffect(() => {
+    if (settings?.acceptsBookings !== undefined) setAcceptsBookings(settings.acceptsBookings)
+  }, [settings?.acceptsBookings])
+  useEffect(() => {
+    if (settings?.bookingAdvanceAmount !== undefined) {
+      setAdvanceDraft(String(settings.bookingAdvanceAmount))
+    }
+  }, [settings?.bookingAdvanceAmount])
+
+  // ── First-time backfill: if Dexie has no value yet (fresh device, owner
+  // already set things up on another browser), seed Dexie from Supabase ONCE.
+  // Never overwrites a Dexie value that already exists — the sync effects
+  // above are the only thing allowed to write to local toggle state after
+  // the initial backfill.
   useEffect(() => {
     if (!settings?.slug || (topupsLoaded && bookingsLoaded)) return
     getOwnerClub()
       .then((club) => {
-        if (club) {
-          if (!topupsLoaded) setAcceptsTopups(club.acceptsTopups)
-          if (!bookingsLoaded) {
-            setAcceptsBookings(club.acceptsBookings)
-            setAdvanceDraft(String(club.bookingAdvanceAmount))
-            // Mirror to Dexie if the local value is missing so the toggle in
-            // TopBar / Bookings stays consistent on reload.
-            if (settings?.acceptsBookings === undefined || settings?.bookingAdvanceAmount === undefined) {
-              void updateSettings({
-                acceptsBookings: club.acceptsBookings,
-                bookingAdvanceAmount: club.bookingAdvanceAmount,
-              })
-            }
-          }
+        if (!club) {
+          setTopupsLoaded(true); setBookingsLoaded(true)
+          return
         }
-        setTopupsLoaded(true)
-        setBookingsLoaded(true)
+        const dexieTopupsMissing = settings?.acceptsTopups === undefined
+        const dexieBookingsMissing =
+          settings?.acceptsBookings === undefined || settings?.bookingAdvanceAmount === undefined
+
+        if (dexieTopupsMissing) {
+          void updateSettings({ acceptsTopups: club.acceptsTopups })
+        }
+        if (dexieBookingsMissing) {
+          void updateSettings({
+            acceptsBookings: club.acceptsBookings,
+            bookingAdvanceAmount: club.bookingAdvanceAmount,
+          })
+        }
+        setTopupsLoaded(true); setBookingsLoaded(true)
       })
       .catch(() => { setTopupsLoaded(true); setBookingsLoaded(true) })
-  }, [settings?.slug, topupsLoaded, bookingsLoaded, settings?.acceptsBookings, settings?.bookingAdvanceAmount])
+  }, [settings?.slug, topupsLoaded, bookingsLoaded, settings?.acceptsTopups, settings?.acceptsBookings, settings?.bookingAdvanceAmount])
 
   // ── v17 self-heal: re-mirror tables_json once per session ────────────────
   // Phase 0 mirrored tables_json WITHOUT a per-table `id` field. Phase 1
