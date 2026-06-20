@@ -2,6 +2,22 @@
 
 ---
 
+## 20 Jun 2026 — Settings drift prevention layer (#97 enforcement)
+
+Follow-up to the architectural fix below — the hook was the cure; this commit makes the bug class structurally unreintroducible.
+
+- `b18220f` — chore(settings): lock in useDexieSetting as the only path for ClubSettings reads.
+- `scripts/check-settings-pattern.mjs` — new line-by-line scanner of `src/**/*.{ts,tsx}` flagging `useState(settings?.X)` / `useState(settings.X)`. Skips `useDexieSetting.ts` and any line carrying `// allow-settings-useState: <reason>`. Exit 1 with file:line + snippet on hit.
+- `package.json` — `check:settings` script + `prebuild` hook so `npm run build` fails fast on regressions. Verified by scratch-line test: exit 1 with snippet, exit 0 once removed.
+- `architecture.md` — new "Settings reads — `useDexieSetting` is mandatory" section with the three allowed shapes (toggle / select / typing buffer) and an explicit don't-do list.
+- `checklists/new_settings_field.md` — new mandatory pre-write checklist; SKILL.md routing table cites it.
+- **SKILL.md** — **Critical Rule 15** added: any ClubSettings field touch requires filling the checklist.
+- **bug_patterns.md** Pattern R4 — gains an Enforcement section listing the lint, the checklist, and the `// allow-settings-useState:` escape hatch. The coins `coinRedemptionModes` initializer in `PlayerHubSettings.tsx` is the single existing escape-hatch site (atomic multi-field save with `handleSaveRates`); reformatted to one line + annotated. No behavior change.
+
+Issue #97 closed by owner after verifying toggle persistence, Dexie row alignment, and `npm run build` running the guard.
+
+---
+
 ## 20 Jun 2026 — Settings drift class eliminated (#97 architectural fix)
 
 Re-opened #97 after the read-side patch (`61d4c9f`, Pattern R3) was deemed surface-level — three sources of truth (local `useState`, Dexie via `useLiveQuery`, Supabase via `getOwnerClub()`) raced on every settings field, guaranteeing the bug would recur on each new toggle.

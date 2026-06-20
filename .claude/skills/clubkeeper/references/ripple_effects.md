@@ -709,6 +709,8 @@ Files in scope:
 - `src/db/queries.ts` — `getSettings`, `updateSettings`
 - `src/db/seed.ts` — defaults
 - `src/hooks/useDexieSetting.ts` — read/write hook for any single ClubSettings field. Dexie-authoritative; caller mirrors to Supabase.
+- `scripts/check-settings-pattern.mjs` — lint guard enforcing Pattern R4. Runs in `prebuild` (so `npm run build` fails fast on `useState(settings?.X)` / `useState(settings.X)`). Single allow-comment escape: `// allow-settings-useState: <reason>`. If you rename/move this script, update the `prebuild` and `check:settings` entries in `package.json`. If you add a new field shape Pattern R4 cannot express, extend the script's anti-pattern regex list rather than disabling the lint.
+- `.claude/skills/clubkeeper/references/checklists/new_settings_field.md` — mandatory pre-write checklist. SKILL.md routing table cites it; Critical Rule 15 requires it filled in the PR description.
 - `sessionStorage['ck_settings_section']` — UI persistence key; cleared on tab close. Safe to read/write.
 
 Invariants:
