@@ -2,6 +2,33 @@
 
 ---
 
+## 20 Jun 2026 — Settings cleanup pass (Issues #95, #96, #98, #99, #101, #102)
+
+Eight Settings-related issues filed (#95–#102). Six fixed in one PR; #97 (BUG-S3 Accept Bookings desync) and #100 (BUG-S6 time rounding) closed with "cannot reproduce" investigations — current code already implements the patterns the issues cite.
+
+**Commits (in order):**
+- `fa24b9c` — fix(settings): UPI placeholder uses `example@upi` (closes #95). One-line privacy fix.
+- `4da92b6` — fix(settings): currency one-liner (closes #98). Disabled input replaced with compact read-only text.
+- `531b3a6` — feat(settings): SaveIndicator for UPI + Club Name (closes #96, #102). New `src/components/SaveIndicator.tsx` + `useSaveIndicator()` hook. State machine: idle → saving → saved (1.5s auto-reset) → idle, OR → error. Introduces **Pattern U10**.
+- `675486f` — refactor(supabase): all clubs-row mirrors go through `mirrorToSupabaseBySlug`. New `src/lib/mirrorToSupabase.ts`. Refactored `syncCoinConfig`, `syncTablesJsonBySlug`, `syncBookingConfigBySlug`, `updateClubNameRemote` (signature changed: now takes slug), `updateAcceptsTopups` (same). Promotes Pattern P2 from descriptive to prescriptive via **Pattern S11**.
+- `079dc35` — feat(settings): dedicated Canteen section (closes #99). New collapsible inserted between Tables and Alerts. Holds low-stock (moved from Club Info) + peak-pricing (moved from its own top-level section). Updated `decisions_active.md` lines 59 + 73 in place per Rule G.
+- `8962127` — fix(home): hide outOfService tables by default (closes #101). Opt-in "Show N disabled" toggle at bottom of /tables grid. Filter pills + counts operate on visible set.
+- `<this commit>` — skill self-update: Patterns U10 + S11 added to `bug_patterns.md`. SaveIndicator + mirrorToSupabase entries added to `ripple_effects.md`. Rule H added to `SKILL.md`.
+
+**Investigations (no code change, comments posted on the issues):**
+- #97 (BUG-S3 Accept Bookings toggle desync) — toggle is in `PlayerHubSettings.tsx:472`, already Supabase-first via `syncBookingConfigBySlug`, mount-effect hydration in place. Cannot reproduce. Issue stays open pending DevTools network log from owner.
+- #100 (BUG-S6 Time rounding not applied) — `stopSession` + `confirmPaymentAndStop` + `pauseForPayment` all call `applyRounding(rawElapsedMs, settings.rounding)` and persist `roundedDurationMs`. Rate-card carve-out is intentional and documented. Field name is `settings.rounding`, not `settings.timeRounding`. Cannot reproduce. Issue stays open pending repro on a per-minute table.
+
+**New patterns introduced:**
+- **U10** — Save actions must show visible state (SaveIndicator).
+- **S11** — All Dexie↔Supabase clubs-row mirrors go through `mirrorToSupabaseBySlug()`.
+
+**New rule:** Rule H — Settings.tsx pre-flight is mandatory (added to `SKILL.md`).
+
+**Decisions updated:** `decisions_active.md` line 59 (low-stock UI location → Canteen section), line 73 (Settings ordering rewritten).
+
+---
+
 ## 20 Jun 2026 — #93 Summary Quick Sale aggregation fix (Pattern T9)
 
 Money tiles on `/summary` already included walk-in Quick Sale revenue (Phase 1 wiring), but four analytical surfaces silently dropped it:

@@ -704,7 +704,7 @@ Last updated: 18 Jun 2026 (#91 — desktop responsiveness Phase 1)
 Owns: `/settings` collapsible sections, ClubSettings consumption, plumbing of new settings.
 
 Files in scope:
-- `src/pages/Settings.tsx` — `openSection: string` state (one open at a time; `''` = closed). `SettingsSection` (inline, not exported). Animation via `grid-rows-[1fr/0fr] opacity-100/0`. Sections: `club-info` (default open), `tables`, `alerts`, `subscription`, `data`, `about`, `account`. Also: Piggy section between Subscription and Data & Backup; Player Hub section.
+- `src/pages/Settings.tsx` — `openSection: string` state (one open at a time; `''` = closed). `SettingsSection` (inline, not exported). Animation via `grid-rows-[1fr/0fr] opacity-100/0`. Sections in order: `club-info` (default open, holds name + currency one-liner + UPI + time-rounding), `tables`, `canteen` (low-stock + peak pricing — BUG-S5), `alerts`, `subscription`, `piggy`, `player-hub`, `data`, `about`, `account`. Club Name + UPI Save use `SaveIndicator` (Pattern U10).
 - `src/types/index.ts` — `ClubSettings` interface
 - `src/db/queries.ts` — `getSettings`, `updateSettings`
 - `src/db/seed.ts` — defaults
@@ -726,6 +726,50 @@ Cross-feature ripples:
 - → [Player Hub](#player-hub) (`PlayerHubSettings` slug, Accept topups toggle).
 - → [Piggy (Cash Float)](#piggy-cash-float) (Piggy section).
 - → [Import / Export / Reset](#import--export--reset) (Data & Backup section).
+
+---
+
+## SaveIndicator (Pattern U10)
+
+Owns: visible state machine for save actions across all Settings save sites.
+
+Files in scope:
+- `src/components/SaveIndicator.tsx` — exports `<SaveIndicator state error />` + `useSaveIndicator()` hook returning `{state, error, run(fn)}`. State machine: idle → saving → saved (1.5s auto-reset) → idle, OR idle → saving → error.
+
+Invariants:
+- Every save site (button click OR save-on-blur) MUST use `useSaveIndicator().run(async () => { ... })`. Never silently mutate Dexie/Supabase without the indicator.
+- Disabled buttons use neutral grey (`disabled:bg-bg disabled:text-text-faint disabled:border disabled:border-border`), NEVER faded primary colour.
+- Auto-reset timer is cleared on unmount via the hook's `useEffect` cleanup — safe in modals that close mid-save.
+
+Consumers (must list every one):
+- `src/pages/Settings.tsx` — `clubNameSave` (Club Name onBlur) + `upiSave` (UPI Save button).
+
+Cross-feature ripples:
+- → [Settings](#settings) (current consumers).
+- When adding a new save site anywhere: import `SaveIndicator` + `useSaveIndicator` here, follow Pattern U10. Update this list.
+
+---
+
+## Supabase mirror helper (Pattern S11)
+
+Owns: single path for all writes to the Supabase `clubs` row from owner-side code.
+
+Files in scope:
+- `src/lib/mirrorToSupabase.ts` — exports `mirrorToSupabaseBySlug(label, slug, columns)` returning typed `MirrorResult`. Auto-injects `updated_at`. Routes by `.eq('slug', slug)`, verifies with `.select('id')`, warns on zero-row matches and slug_missing.
+
+Invariants:
+- Never write `.update({...}).eq(...)` against the `clubs` table directly in feature code. Always go through the helper.
+- Helper does NOT swallow errors — returns `{ok: false, reason, detail}`. Quality callers should surface the failure (toast); fire-and-forget callers may discard the result, but the warning still logs.
+- `slug_missing` is treated as a non-error (skip + warn), so the helper is safe to call when the owner hasn't set up Player Hub yet.
+
+Consumers (must list every one):
+- `src/lib/playerHubApi.ts` — `syncCoinConfig`, `syncTablesJsonBySlug`, `syncBookingConfigBySlug`, `updateClubNameRemote` (slug + clubName), `updateAcceptsTopups` (slug + accepts).
+- `src/pages/Settings.tsx` — calls `updateClubNameRemote(slug, name)` from Club Name onBlur via SaveIndicator.
+- `src/pages/PlayerHubSettings.tsx` — calls `updateAcceptsTopups(slug, val)` from topup toggle handler.
+
+Cross-feature ripples:
+- When adding any new column on `clubs` table that needs to be mirrored from Dexie: extend whichever `playerHubApi.ts` function is closest, or add a new one that calls `mirrorToSupabaseBySlug`. Never inline a direct `.update().eq()` call.
+- topup_intents / booking_intents tables are routed by `intent.id` (not slug) — those are owner-side state changes, NOT mirrors, and don't go through this helper.
 
 See also: `decisions_active.md` (collapsible UX choice).
 
