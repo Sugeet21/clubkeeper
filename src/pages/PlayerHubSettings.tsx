@@ -215,27 +215,52 @@ export function PlayerHubSettings({ settings }: Props) {
   }, [setupOpen, settings?.slug, settings?.clubName])
 
   // ── Debounced uniqueness check ────────────────────────────────────────────
+  // Pattern: clear stale validation error AND the spinner on every keystroke,
+  // not just when the async check resolves. Without this, an earlier "Must be
+  // at least 3 characters" error sticks after the user types a valid slug,
+  // and the Save gate (which AND's `slugError` + `checking`) stays disabled
+  // even when the current value is fine.
   useEffect(() => {
-    if (!slugDraft) return
+    if (!slugDraft) {
+      setSlugError(null)
+      setChecking(false)
+      return
+    }
     const err = validateSlug(slugDraft)
-    if (err) { setSlugError(err); return }
-
+    if (err) {
+      setSlugError(err)
+      setChecking(false)
+      return
+    }
+    setSlugError(null)
     setChecking(true)
+
+    let cancelled = false
     const t = setTimeout(async () => {
       try {
-        const available = await isSlugAvailable(slugDraft)
+        // Fail-open on hang: if the availability check doesn't resolve in 5s
+        // (owner auth lock, RLS, offline), treat as available — the server's
+        // unique constraint will reject duplicates at upsert time.
+        const available = await Promise.race([
+          isSlugAvailable(slugDraft),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 5000)),
+        ])
+        if (cancelled) return
         if (!available && slugDraft !== settings?.slug) {
           setSlugError(`"${slugDraft}" is taken. Try "${slugDraft}-2"?`)
         } else {
           setSlugError(null)
         }
       } catch {
-        setSlugError(null)
+        if (!cancelled) setSlugError(null)
       } finally {
-        setChecking(false)
+        if (!cancelled) setChecking(false)
       }
     }, 300)
-    return () => clearTimeout(t)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
   }, [slugDraft, settings?.slug])
 
   const handleSaveSlug = useCallback(async () => {
