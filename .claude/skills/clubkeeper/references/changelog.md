@@ -2,9 +2,18 @@
 
 ---
 
+## 21 Jun 2026 — Player Hub slug input validation gate (#105)
+
+- `1ee1372` — fix(player-hub): slug input validation gate (Pattern R4 + fail-open availability).
+- `src/pages/PlayerHubSettings.tsx` — debounced slug-validation effect now clears `slugError` synchronously the moment `validateSlug` passes, and resets both `slugError` and `checking` on empty input. Previously the sync-pass branch left a stale "Must be at least 3 characters" error in place, and an empty-input early-return leaked prior state — the Save gate ANDs `slugError` + `checking`, so Save stayed permanently disabled even when the typed value was fine. `isSlugAvailable` is now raced against a 5s fail-open timeout so a hung owner-client query (auth lock, offline) can no longer strand `checking=true` forever; the server's unique constraint on `clubs.slug` remains the authoritative dedup. Local `cancelled` flag prevents stale-closure setState on effect re-runs.
+- `94b3e3b` — `bug_patterns.md` adds **Pattern F8 — Validation effect must clear stale error on the pass branch**. Rule: synchronously clear the error in the sync-pass branch, reset state on empty input, race availability checks with a fail-open timeout, cancel via a local flag. `ripple_effects.md` Player Hub section gains the slug-modal validation invariant alongside the existing two-client rule. Confirmed by owner.
+
+---
+
 ## 21 Jun 2026 — upsertClub writes slug on update path (#104)
 
-- `src/lib/playerHubApi.ts` — `upsertClub` now spreads a shared `clubFields` object into both the insert and update branches. Previously the update branch silently omitted `slug`, turning the column write-once: re-running slug setup left `clubs.slug` stale, `/c/<new-slug>` 404'd, and every downstream `mirrorToSupabaseBySlug` call matched zero rows silently. Fix is single-source-of-truth payload; only `owner_id` (insert) and `updated_at` (update) live outside the shared object. Pending owner verification.
+- `68bc9a9` — fix(player-hub): upsertClub now writes slug on update path [Pattern X].
+- `src/lib/playerHubApi.ts` — `upsertClub` now spreads a shared `clubFields` object into both the insert and update branches. Previously the update branch silently omitted `slug`, turning the column write-once: re-running slug setup left `clubs.slug` stale, `/c/<new-slug>` 404'd, and every downstream `mirrorToSupabaseBySlug` call matched zero rows silently. Fix is single-source-of-truth payload; only `owner_id` (insert) and `updated_at` (update) live outside the shared object. Confirmed by owner.
 - `bug_patterns.md` — new **Pattern X — Upsert payload drift between insert and update branches**. Rule: any upsert MUST build a shared payload object covering every caller-owned column and spread it into both branches; branch-specific fields stay in their branch with a comment if they intentionally differ.
 - `ripple_effects.md` — Player Hub section gains the upsert payload-sync invariant alongside the existing P2 anti-pattern.
 
