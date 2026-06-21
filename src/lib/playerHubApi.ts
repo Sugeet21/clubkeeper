@@ -142,25 +142,27 @@ export async function upsertClub(payload: {
     .select('id')
     .maybeSingle()
 
+  // Pattern X — shared payload for upsert. Insert and update branches MUST
+  // write the same set of caller-owned columns. Historically the update
+  // branch silently omitted `slug` (#104), turning slug into a write-once
+  // column and breaking every downstream mirrorToSupabaseBySlug call.
+  const clubFields = {
+    slug: payload.slug,
+    club_name: payload.clubName,
+    upi_id: payload.upiId ?? null,
+    accepts_topups: payload.acceptsTopups ?? true,
+  }
+
   if (existing) {
     const { error } = await supabase
       .from('clubs')
-      .update({
-        club_name: payload.clubName,
-        upi_id: payload.upiId ?? null,
-        accepts_topups: payload.acceptsTopups ?? true,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ ...clubFields, updated_at: new Date().toISOString() })
       .eq('id', existing.id)
     if (error) throw error
   } else {
-    const { error } = await supabase.from('clubs').insert({
-      slug: payload.slug,
-      club_name: payload.clubName,
-      upi_id: payload.upiId ?? null,
-      accepts_topups: payload.acceptsTopups ?? true,
-      owner_id: user.id,
-    })
+    const { error } = await supabase
+      .from('clubs')
+      .insert({ ...clubFields, owner_id: user.id })
     if (error) throw error
   }
 }

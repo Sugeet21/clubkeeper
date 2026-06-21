@@ -784,6 +784,22 @@ Never change `status` values or webhook behavior to encode this distinction — 
 
 Frontend sends `{ tier, cycle }` only — never timestamps, flags, or scenario intent. `trial_ends_at` is NEVER overwritten if the existing value is in the future and still valid. Scenario is logged to console + stored in Razorpay `notes` for dashboard debugging. Supabase update errors after a successful Razorpay create are logged but not thrown — webhook reconciles DB state when `subscription.authenticated` fires.
 
+### Pattern X — Upsert payload drift between insert and update branches (#104, 21 Jun 2026)
+**Symptom signature:** A column is set correctly on the first write (insert branch of an upsert), but never updates afterwards. Downstream code that routes by that column starts silently matching zero rows. No error surfaces — the local Dexie write succeeds, the UI reports success, only the Supabase source of truth is wrong. Bug surfaces days later when a second device, the public-facing surface, or a `mirrorToSupabaseBySlug` zero-row warning exposes the divergence.
+**Root cause:** Hand-rolled upsert functions with a `if (existing) { .update({...}) } else { .insert({...}) }` shape, where the two object literals were edited at different times. New columns get appended to one branch (usually `insert`) but not the other. The column becomes effectively write-once. #104 was exactly this: `upsertClub` insert included `slug`, update omitted it; re-running setup left the Supabase `clubs.slug` permanently stale.
+**Rule:** Any upsert function MUST build a single shared payload object containing every caller-owned column, then spread it into both branches:
+```ts
+const fields = { col_a: payload.a, col_b: payload.b, ... }
+if (existing) {
+  await supabase.from(t).update({ ...fields, updated_at: now }).eq('id', existing.id)
+} else {
+  await supabase.from(t).insert({ ...fields, owner_id: user.id })
+}
+```
+Branch-specific fields (`updated_at`, `owner_id`, server-defaulted columns) stay in their branch; everything caller-supplied goes in `fields`. If the two branches must legitimately differ on a caller-owned column, leave a one-line comment explaining why — silence here is the failure mode.
+**Where else this rule applies in this repo:** Today `upsertClub` is the only hand-rolled upsert against `clubs`. All other clubs-row writes go through `mirrorToSupabaseBySlug` (Pattern S11), which only updates and so cannot drift. If any new upsert is added — for `customers`, `topup_intents`, etc. — apply this pattern at write time, not retroactively after a bug report.
+**Files affected:** `src/lib/playerHubApi.ts` (`upsertClub`).
+
 ### Pattern S11 — All Dexie↔Supabase clubs-row mirrors go through `mirrorToSupabaseBySlug()` (20 Jun 2026)
 **Symptom signature:** A new Settings field is mirrored to Supabase via a hand-rolled `.update(...).eq('id', club.id)` or `.not('id', 'is', null)` call. Falls into Pattern P2 (silent fail from id-routing through a stale `getOwnerClub()`) or Pattern S4-style write-order desync within weeks. Sometimes the symptom is invisible — the update silently matches zero rows because RLS narrowed before the write — and the owner only notices when a second device reads the stale row.
 **Rule:** Never write `.update({...}).eq(...)` against the `clubs` table directly in feature code. Always go through `src/lib/mirrorToSupabase.ts → mirrorToSupabaseBySlug(label, slug, columns)`. The helper enforces slug routing (not id), post-write `.select('id')` verification, structured warning log on zero-row matches, and returns a typed `MirrorResult` that quality callers can branch on (`if (!result.ok) showToast(...)`). Fire-and-forget callers can ignore the return, but the warning still lands in the console.

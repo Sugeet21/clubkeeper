@@ -995,6 +995,7 @@ Invariants:
 - Card rendered ONLY when `clubInfo.acceptsPricingDisplay === true` AND `clubInfo.tablesJson.length > 0`. NO empty-state fallback for players.
 - Public page: no Dexie, no auth.
 - **Anti-pattern (Pattern P2):** Do NOT route owner-side mirror writes through `getOwnerClub() → .eq('id', club.id)`. `getOwnerClub` uses `.maybeSingle()` with no filter and can silently return null on transient auth states — mirror early-exits, catch swallows the signal. ALWAYS target by slug.
+- **Upsert payload sync invariant (Pattern X, #104):** `upsertClub` in `src/lib/playerHubApi.ts` is the ONLY hand-rolled upsert against `clubs`. Insert and update branches MUST share a single `clubFields` payload object — caller-owned columns (`slug`, `club_name`, `upi_id`, `accepts_topups`) go through the spread; only branch-specific fields (`owner_id` on insert, `updated_at` on update) stay outside. Adding a new caller-owned column to one branch and not the other turns it write-once and breaks every downstream `mirrorToSupabaseBySlug` call silently.
 - NEVER bypass the RPC — anon does NOT have direct table read grants.
 - Pre-migration safe — fallbacks (`?? []`, `?? true`) keep `/c/<slug>` working. If you remove either fallback, you crash the page for clubs whose migration hasn't run.
 - NEVER block the Dexie write on the Supabase mirror. Pattern matches `syncCoinConfig` — Dexie is authoritative.

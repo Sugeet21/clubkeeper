@@ -2,6 +2,14 @@
 
 ---
 
+## 21 Jun 2026 — upsertClub writes slug on update path (#104)
+
+- `src/lib/playerHubApi.ts` — `upsertClub` now spreads a shared `clubFields` object into both the insert and update branches. Previously the update branch silently omitted `slug`, turning the column write-once: re-running slug setup left `clubs.slug` stale, `/c/<new-slug>` 404'd, and every downstream `mirrorToSupabaseBySlug` call matched zero rows silently. Fix is single-source-of-truth payload; only `owner_id` (insert) and `updated_at` (update) live outside the shared object. Pending owner verification.
+- `bug_patterns.md` — new **Pattern X — Upsert payload drift between insert and update branches**. Rule: any upsert MUST build a shared payload object covering every caller-owned column and spread it into both branches; branch-specific fields stay in their branch with a comment if they intentionally differ.
+- `ripple_effects.md` — Player Hub section gains the upsert payload-sync invariant alongside the existing P2 anti-pattern.
+
+---
+
 ## 20 Jun 2026 — Settings drift prevention layer (#97 enforcement)
 
 Follow-up to the architectural fix below — the hook was the cure; this commit makes the bug class structurally unreintroducible.
