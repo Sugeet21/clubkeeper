@@ -169,6 +169,17 @@ Never hard-code these fallback chains inline in components. Centralize in the he
 ### Pattern F6 — Truncate every text display
 **Rule:** Every text rendered from user input needs `truncate min-w-0 flex-1` (or similar). Without `min-w-0`, flex children won't shrink. Without `truncate`, long strings break layout in Home cards, SessionDetail, suggestion chips, everywhere.
 
+### Pattern F8 — Validation effect must clear stale error on the pass branch (#105, 21 Jun 2026)
+**Symptom signature:** A debounced validation effect like "must be at least N chars / unique / valid regex" shows a stale error after the user has typed past the failing condition. The Save button stays disabled because its `disabled` prop AND's `slugError` (or equivalent) with `checking`. Often paired with an in-flight spinner that never stops.
+**Root cause:** The effect's structure looks like `if (syncErr) { setError(syncErr); return } ... start async check`. When `syncErr` was non-null on the previous run, `setError` was called; when it goes null on the next run, the code path that schedules the async check never resets it back to `null` synchronously. The async branch eventually clears it — but only if the async call resolves. If the async check is on the wrong Supabase client (owner client behind an auth lock — see two-client rule in `ripple_effects.md` § Player Hub), or the user is offline, the promise hangs, `checking` stays `true`, and Save is permanently disabled even though the value is fine.
+**Rule:**
+1. Synchronously call `setError(null)` BEFORE scheduling the async check, in the same branch that determines the input is sync-valid. Don't rely on the async resolution to clear stale state.
+2. On empty-input early-return, also reset `checking` and `error`. Bailing without resetting leaks the prior state.
+3. Wrap any cross-network availability check in `Promise.race([check, timeout])`. Pick the safe default for the timeout branch — for slug uniqueness, fail-open (treat as available) and let the server's unique constraint be authoritative. For destructive paths, fail-closed.
+4. Use a local `cancelled` flag in the async branch so a re-run doesn't setState on a stale closure.
+**Files:** `src/pages/PlayerHubSettings.tsx` — slug setup modal effect.
+**Test traces to keep:** input goes `"" → "ab" → "abc" → "helloworld" → ""`. Error must be `null → "Must be at least 3 characters" → null → null → null`. Save disabled at every step except `"abc"` / `"helloworld"` (assuming availability ok).
+
 ---
 
 ## Dexie & Offline state mutations
