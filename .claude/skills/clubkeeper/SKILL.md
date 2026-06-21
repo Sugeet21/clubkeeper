@@ -54,6 +54,7 @@ Sugeet's biggest fear: a fix in one file creates bugs in 3 other files because t
 | Topic | File |
 |---|---|
 | **ANY code change** | **`ripple_effects.md` (mandatory first)** |
+| **ANY src/ code change** | **`references/session_loop.md` (mandatory 4-phase loop)** |
 | **About to touch a known-bug area** | **`bug_patterns.md` (mandatory for that area)** |
 | **About to add/touch a ClubSettings field** | **`checklists/new_settings_field.md` (mandatory)** |
 | Architecture, file structure, library choices | `architecture.md` |
@@ -238,3 +239,16 @@ Settings.tsx has had recurring bugs across toggles, save indicators, persistence
 3. **State in your reply WHICH patterns apply to the requested change, BEFORE writing code.** No exceptions, even for one-line edits.
 4. Commit message MUST cite the patterns when relevant. Example: `fix(settings): accept-bookings persistence (Pattern S4 + S11)`. This makes pattern recurrence searchable in `git log`.
 5. Any NEW save site MUST go through `useSaveIndicator()` + `<SaveIndicator>`. Any NEW clubs-row mirror MUST go through `mirrorToSupabaseBySlug()`.
+
+### Rule I: Every coding session follows the 4-phase loop
+
+Every change to `src/` MUST follow `references/session_loop.md` — Phase 1 GROUND → Phase 2 PLAN → Phase 3 EXECUTE → Phase 4 CLOSE.
+
+1. **State the phase explicitly** before each major tool call. Example: `Phase 1 — GROUND. Reading ripple_effects.md for the canteen module...`
+2. **Each phase has a gate.** If the gate fails, stop and fix before proceeding — do NOT push through.
+3. **Phase 1 is non-negotiable.** No code is written until ripples, patterns, and the files-to-touch list are stated in the reply.
+4. **`npm run build` runs per logical chunk in Phase 3**, not only at the end. TS errors = stop, re-ground, do not patch around.
+5. **Phase 4 closes the loop with the Rule E checklist + git log check.** A session where `src/` changed but no skill files did is an open session, not a closed one.
+6. **Abbreviated loop (Phase 1 + 3 only)** is allowed ONLY for typo/comment/skill-markdown/revert work. Everything else, including "one-line fixes," runs the full loop. Pattern R4 came from a one-line fix.
+
+This rule exists because rules without gates get skipped — BUG-S1 through BUG-S8 and Pattern R4 all happened with the existing rules in place. The loop turns rules into checkpoints.
