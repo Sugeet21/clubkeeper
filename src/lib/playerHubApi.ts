@@ -44,6 +44,13 @@ export async function getClubPublicInfo(slug: string): Promise<ClubPublicInfo | 
     // so /c/<slug> never crashes for an un-migrated club.
     acceptsBookings: (row.accepts_bookings as boolean | null) ?? false,
     bookingAdvanceAmount: (row.booking_advance_amount as number | null) ?? 100,
+    // v19 (#106) — pre-migration safe: rows from a Supabase project that
+    // hasn't run 20260622 yet return undefined for these. BookingScreen reads
+    // null-or-undefined open/close as "not configured" and surfaces a
+    // configuration-pending state to the player. NO hardcoded fallback.
+    bookingOpenMinutes: (row.booking_open_minutes as number | null) ?? null,
+    bookingCloseMinutes: (row.booking_close_minutes as number | null) ?? null,
+    bookingAdvancePerSlot: (row.booking_advance_per_slot as number | null) ?? 50,
   }
 }
 
@@ -323,6 +330,9 @@ export async function submitBookingIntent(payload: {
     const msg = error.message ?? ''
     if (msg.includes('club_not_found')) throw new Error('club_not_found')
     if (msg.includes('bookings_disabled')) throw new Error('bookings_disabled')
+    if (msg.includes('hours_not_set')) throw new Error('hours_not_set')
+    if (msg.includes('outside_hours')) throw new Error('outside_hours')
+    if (msg.includes('advance_mismatch')) throw new Error('advance_mismatch')
     if (msg.includes('slot_in_past')) throw new Error('slot_in_past')
     if (msg.includes('slot_taken')) throw new Error('slot_taken')
     if (msg.includes('rate_limited')) throw new Error('rate_limited')
@@ -476,16 +486,33 @@ export async function rejectBookingIntent(intentId: string): Promise<void> {
   if (error) throw error
 }
 
-// Fire-and-forget: mirror booking config (accepts_bookings + advance amount) to
-// the Supabase clubs row. Targets by slug — Pattern P2 — never via getOwnerClub.
-// Errors are warn-only; Dexie is authoritative for owner-side reads.
+// Fire-and-forget: mirror booking config to the Supabase clubs row. Targets
+// by slug — Pattern P2 — never via getOwnerClub. Errors are warn-only; Dexie
+// is authoritative for owner-side reads.
+//
+// All fields optional — only those defined in the call are forwarded. The
+// helper auto-injects updated_at and verifies with .select('id') (Pattern S11).
+// `bookingAdvanceAmount` is accepted for legacy callers but DEPRECATED — new UI
+// writes only the per-slot field; the legacy column stays on the row untouched.
+export interface BookingConfigPatch {
+  acceptsBookings?: boolean
+  bookingOpenMinutes?: number | null
+  bookingCloseMinutes?: number | null
+  bookingAdvancePerSlot?: number
+  /** @deprecated 22 Jun 2026 — replaced by bookingAdvancePerSlot (#106). */
+  bookingAdvanceAmount?: number
+}
+
 export async function syncBookingConfigBySlug(
   slug: string,
-  acceptsBookings: boolean,
-  bookingAdvanceAmount: number,
+  patch: BookingConfigPatch,
 ): Promise<void> {
-  await mirrorToSupabaseBySlug('syncBookingConfigBySlug', slug, {
-    accepts_bookings: acceptsBookings,
-    booking_advance_amount: bookingAdvanceAmount,
-  })
+  const cols: Record<string, unknown> = {}
+  if (patch.acceptsBookings !== undefined) cols.accepts_bookings = patch.acceptsBookings
+  if (patch.bookingOpenMinutes !== undefined) cols.booking_open_minutes = patch.bookingOpenMinutes
+  if (patch.bookingCloseMinutes !== undefined) cols.booking_close_minutes = patch.bookingCloseMinutes
+  if (patch.bookingAdvancePerSlot !== undefined) cols.booking_advance_per_slot = patch.bookingAdvancePerSlot
+  if (patch.bookingAdvanceAmount !== undefined) cols.booking_advance_amount = patch.bookingAdvanceAmount
+  if (Object.keys(cols).length === 0) return
+  await mirrorToSupabaseBySlug('syncBookingConfigBySlug', slug, cols)
 }

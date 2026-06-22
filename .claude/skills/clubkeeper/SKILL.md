@@ -85,7 +85,7 @@ Read MULTIPLE files when the question spans domains.
 One entry per module. Overwrite in place when status changes — never append a second entry for the same module. For phase-by-phase history, build sizes, commit SHAs, and dates, see `changelog.md` and `git log`.
 
 - **Desktop responsiveness (#91)** — Verified by owner. Tables, Canteen, Bookings, shared `<Modal>`, QuickSale, PaymentSplitSheet desktop-responsive. Settings page + Wallet topup success screen still mobile-only.
-- **Advance booking (#84)** — Phase 1 code-complete end-to-end: owner-side surfaces, player flow at `/c/<slug>/book`, session linkage + advance-as-prepaid, cancellation, no-show sweep. Pending owner E2E verification.
+- **Advance booking (#84, #106)** — Operating hours per-club; advance per-30-min-slot (default ₹50). Bookings toggle gated on hours set. Pending owner E2E verification.
 - **Pricing visibility (#84 Phase 0)** — Player Hub shows collapsible "View pricing" card. Gated on `acceptsPricingDisplay` + `tables_json` populated.
 - **Player Hub + topups** — Owner slug + accept-topups toggle live. Player `/c/:slug` form → UPI → "I've paid" polling. Realtime channel `topup_intents_{clubId}` with 30s polling fallback. Pending count in `topupInbox` Zustand store. `/poster/:slug` auto-prints.
 - **ClubCoins** — Off by default. Tiered earn on topup, configurable redemption, FIFO expiry sweep every 4h (`ExpirySweepRunner` in `App.tsx`).
@@ -112,6 +112,7 @@ One entry per module. Overwrite in place when status changes — never append a 
 
 Things that BLOCK something if forgotten. Delete the line the moment it's resolved.
 
+- **Migration: `supabase/migrations/20260622_booking_hours_and_per_slot_advance.sql`** — per-club operating hours + per-30-min-slot advance + drop+recreate `get_club_public_info` + `submit_booking_intent` (#106). Until run, BookingScreen falls back to "Bookings not configured yet" state (NO hardcoded hours fallback). Owner UI also stays gated because Dexie hours fields default to undefined.
 - **Migration: `supabase/migrations/20260618_booking_cancel.sql`** — adds `cancel_booking_intent` RPC. Until run, player Cancel button surfaces generic "Could not cancel" error. Owner-side reconcile + no-show sweep work without it.
 - **Migration: `supabase/migrations/20260619_booked_slots_rpc.sql`** — anon `get_booked_slots` RPC for #90. Until run, player time picker shows everything available.
 - **Migration: `supabase/migrations/20260616_pricing_visibility.sql`** — adds `tables_json` + `accepts_pricing_display` + RPC update. Player Hub pricing card stays hidden until run AND owner re-saves a table.
@@ -136,7 +137,7 @@ Things that BLOCK something if forgotten. Delete the line the moment it's resolv
 
 ## Dexie schema — current
 
-**Current version: v18** — adds Peak Hour Pricing (#68) optional fields: `CanteenItem.peakPrice?` and `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`. Additive only, no `.upgrade()`, no index changes.
+**Current version: v19** — adds per-club operating hours + per-30-min-slot advance (#106) as optional `ClubSettings.bookingOpenMinutes?/bookingCloseMinutes?/bookingAdvancePerSlot?`. `bookingAdvanceAmount` retained as @deprecated for back-compat. Additive only, no `.upgrade()`, no index changes (schema string identical to v18).
 
 Full version history (v1–v17) lives in `changelog.md`. When bumping the version, also update `CURRENT_SCHEMA_VERSION` in `queries.ts`, the backup interface alias, `getAllDataForExport` + `importEverythingFromFile` + `resetEverything` + `importExportRoundTrip` (Pattern D10).
 

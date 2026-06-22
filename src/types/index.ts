@@ -171,7 +171,13 @@ export interface ClubSettings {
   nudgeTemplate?: string
   // v17: advance booking (Phase 1 of #84)
   acceptsBookings?: boolean       // mirrors Supabase clubs.accepts_bookings; treat missing as false
+  /** @deprecated 22 Jun 2026 — replaced by bookingAdvancePerSlot. Retained for
+   *  Dexie/Supabase column compatibility. Do not read for new computation. */
   bookingAdvanceAmount?: number   // ₹; default 100; range 0–10000
+  // v19: per-club operating hours + per-30-min-slot advance (#106)
+  bookingOpenMinutes?: number     // 0–1439; minutes since local midnight. undefined until owner sets.
+  bookingCloseMinutes?: number    // 1–2880; > bookingOpenMinutes. Value > 1440 = next-day close.
+  bookingAdvancePerSlot?: number  // 0–2000; default 50. Final advance = ceil(durationMin/30) * this.
   // v18: Peak Hour Pricing (#68). All optional, undefined = feature off.
   peakPricingEnabled?: boolean    // master toggle; default false
   peakStartHour?: number          // 0-23, default 22 (10 PM)

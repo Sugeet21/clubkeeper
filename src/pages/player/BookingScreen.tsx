@@ -31,8 +31,6 @@ const GAME_LABELS: Record<string, string> = {
 
 const FALLBACK_DURATION_MINS = [30, 60, 90, 120]
 const SLOT_STEP_MIN = 30
-const DEFAULT_DAY_START_HOUR = 8
-const DEFAULT_DAY_END_HOUR = 24   // exclusive; last slot 23:30
 const NEXT_DAY_COUNT = 7
 
 function formatRupees(n: number): string {
@@ -94,20 +92,28 @@ function buildNextDays(): { date: Date; label: ReturnType<typeof formatDateChip>
 }
 
 /**
- * Time options for the chosen date, in 30-min steps inside [DEFAULT_DAY_START_HOUR,
- * DEFAULT_DAY_END_HOUR). For TODAY, drop any step <= now (rounded up to next step).
- * Returns Unix-ms timestamps; render-side formats them.
+ * Time options for the chosen calendar day, in 30-min steps inside
+ * [openMin, closeMin - 30] (inclusive of last legal start). closeMin > 1440
+ * = next-day close — those late-night slots are tagged "late-night" and land
+ * under the same date header for v1 simplicity. For TODAY, drops any step
+ * whose start <= now. Returns Unix ms; render formats.
  */
-function buildTimeOptions(date: Date, now: number): { ms: number; label: string }[] {
-  const out: { ms: number; label: string }[] = []
-  for (let h = DEFAULT_DAY_START_HOUR; h < DEFAULT_DAY_END_HOUR; h += 1) {
-    for (let m = 0; m < 60; m += SLOT_STEP_MIN) {
-      const t = new Date(date)
-      t.setHours(h, m, 0, 0)
-      const ms = t.getTime()
-      if (ms <= now) continue
-      out.push({ ms, label: formatTime(h, m) })
-    }
+function buildTimeOptions(
+  date: Date,
+  now: number,
+  openMin: number,
+  closeMin: number,
+): { ms: number; label: string; lateNight: boolean }[] {
+  const out: { ms: number; label: string; lateNight: boolean }[] = []
+  const dayStart = new Date(date)
+  dayStart.setHours(0, 0, 0, 0)
+  const lastStart = closeMin - SLOT_STEP_MIN
+  for (let m = openMin; m <= lastStart; m += SLOT_STEP_MIN) {
+    const ms = dayStart.getTime() + m * 60_000
+    if (ms <= now) continue
+    const lateNight = m >= 1440
+    const t = new Date(ms)
+    out.push({ ms, label: formatTime(t.getHours(), t.getMinutes()), lateNight })
   }
   return out
 }
@@ -118,6 +124,7 @@ type PageState =
   | 'loading'
   | 'club_not_found'
   | 'bookings_disabled'
+  | 'not_configured'
   | 'no_tables'
   | 'form'
   | 'submitting'
@@ -196,6 +203,13 @@ export default function BookingScreen() {
       .then((info) => {
         if (!info) { setPageState('club_not_found'); return }
         if (!info.acceptsBookings) { setPageState('bookings_disabled'); return }
+        // #106: NO hardcoded fallback. If hours aren't configured the player
+        // sees a "not configured" state and is told to contact the club.
+        if (info.bookingOpenMinutes === null || info.bookingCloseMinutes === null) {
+          setClubInfo(info)
+          setPageState('not_configured')
+          return
+        }
         // Defensive read (Part A): drop any table missing an id. Without id we
         // cannot safely submit a booking. If ALL are missing → setup-in-progress
         // state instead of a broken picker. Log once for diagnosis.
@@ -322,9 +336,15 @@ export default function BookingScreen() {
   }, [dateMs])
 
   const timeOptions = useMemo(() => {
-    if (!selectedDate) return []
-    return buildTimeOptions(selectedDate, Date.now())
-  }, [selectedDate])
+    if (!selectedDate || !clubInfo) return []
+    if (clubInfo.bookingOpenMinutes === null || clubInfo.bookingCloseMinutes === null) return []
+    return buildTimeOptions(
+      selectedDate,
+      Date.now(),
+      clubInfo.bookingOpenMinutes,
+      clubInfo.bookingCloseMinutes,
+    )
+  }, [selectedDate, clubInfo])
 
   // #90: A 30-min step is "booked" if any booked range overlaps its [ms, ms+30min) window.
   function isStepBooked(ms: number): boolean {
@@ -367,7 +387,10 @@ export default function BookingScreen() {
     return slotStartMs + durationMin * 60 * 1000
   }, [slotStartMs, durationMin])
 
-  const advanceAmount = clubInfo?.bookingAdvanceAmount ?? 100
+  // #106: per-slot advance. Final advance = ceil(durationMin / 30) * perSlot.
+  const perSlotAdvance = clubInfo?.bookingAdvancePerSlot ?? 50
+  const slotsBooked = durationMin === null ? 0 : Math.ceil(durationMin / 30)
+  const advanceAmount = slotsBooked * perSlotAdvance
 
   // ── Validation helpers ────────────────────────────────────────────────────
   function validateForm(): boolean {
@@ -482,6 +505,20 @@ export default function BookingScreen() {
         setPhoneError('Please wait a few minutes before trying again.')
         setPageState('form'); return
       }
+      // #106: Server-side recompute mismatch or outside-hours rejection.
+      // Either is a UX-layer issue (stale config / out-of-window slot) — show
+      // inline and bounce the user back to the relevant step.
+      if (msg === 'advance_mismatch') {
+        setErrorMsg('Pricing changed. Please retry.')
+        setStep('summary'); setPageState('form'); return
+      }
+      if (msg === 'outside_hours') {
+        setErrorMsg('That time is outside this club’s booking hours. Pick another slot.')
+        setStep('time'); setPageState('form'); return
+      }
+      if (msg === 'hours_not_set') {
+        setPageState('not_configured'); return
+      }
       setErrorMsg('Something went wrong. Please try again.')
       setPageState('form')
     }
@@ -569,6 +606,25 @@ export default function BookingScreen() {
             className="min-h-[44px] px-6 bg-accent text-bg font-bold rounded-2xl mt-2"
           >
             Back to top-up
+          </button>
+        </div>
+      </PlayerScanLayout>
+    )
+  }
+
+  if (pageState === 'not_configured') {
+    return (
+      <PlayerScanLayout>
+        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4">
+          <p className="text-text font-semibold text-[17px]">Bookings not configured yet</p>
+          <p className="text-text-dim text-[14px]">
+            Ask the club to set their opening &amp; closing hours, then try again.
+          </p>
+          <button
+            onClick={() => clubSlug && navigate(`/c/${clubSlug}`)}
+            className="min-h-[44px] px-6 bg-accent text-bg font-bold rounded-2xl mt-2"
+          >
+            Back
           </button>
         </div>
       </PlayerScanLayout>
@@ -911,7 +967,7 @@ export default function BookingScreen() {
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2">
-                {timeOptions.map(({ ms, label }) => {
+                {timeOptions.map(({ ms, label, lateNight }) => {
                   const booked = isStepBooked(ms)
                   return (
                     <button
@@ -925,11 +981,15 @@ export default function BookingScreen() {
                       }`}
                     >
                       <span>{label}</span>
-                      {booked && (
+                      {booked ? (
                         <span className="text-[9px] uppercase tracking-widest text-busy mt-0.5">
                           Booked
                         </span>
-                      )}
+                      ) : lateNight ? (
+                        <span className="text-[9px] uppercase tracking-widest text-text-faint mt-0.5">
+                          Late-night
+                        </span>
+                      ) : null}
                     </button>
                   )
                 })}
@@ -993,6 +1053,7 @@ export default function BookingScreen() {
                 <span className="text-accent text-[16px] font-bold font-mono">{formatRupees(advanceAmount)}</span>
               </div>
               <p className="text-text-faint text-[11px]">
+                {slotsBooked} × 30 min slot{slotsBooked === 1 ? '' : 's'} @ {formatRupees(perSlotAdvance)}/slot.
                 Pay the rest when you arrive. Advance is non-refundable if you don't show.
               </p>
             </div>

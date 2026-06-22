@@ -39,5 +39,13 @@ export interface ClubPublicInfo {
   acceptsPricingDisplay: boolean
   // v17 — advance booking (Phase 1 of #84)
   acceptsBookings: boolean
+  /** @deprecated 22 Jun 2026 — replaced by bookingAdvancePerSlot (#106). */
   bookingAdvanceAmount: number     // ₹; default 100 if undefined on row
+  // v19 (#106) — per-club operating hours + per-slot advance. null when the
+  // club hasn't been configured yet OR the migration hasn't run on this row;
+  // BookingScreen renders a "not configured" state and never falls back to
+  // hardcoded hours.
+  bookingOpenMinutes: number | null
+  bookingCloseMinutes: number | null
+  bookingAdvancePerSlot: number    // ₹; default 50 if undefined on row
 }

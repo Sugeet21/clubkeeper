@@ -11,7 +11,33 @@ import { getAllTables } from '../db/queries'
 import { useDexieSetting } from '../hooks/useDexieSetting'
 import { useToastStore } from '../store/toastStore'
 import { DEFAULT_COIN_CONFIG, resolveCoinConfig } from '../lib/coins'
+import { canEnableBookings } from '../lib/validation'
+import { SaveIndicator, useSaveIndicator } from '../components/SaveIndicator'
 import type { ClubSettings, CoinTier } from '../types'
+
+// ─── Hours helpers (#106) ────────────────────────────────────────────────────
+// All values are "minutes since local midnight". Close > 1440 = next-day close
+// (e.g. 1530 = 1:30 AM the next morning).
+
+function formatHourLabel(min: number): string {
+  // Same-day labels 0–1439 → "h:mm AM/PM"; next-day labels 1440–2880 →
+  // "h:mm AM/PM next day". Step is 30 min in this UI.
+  const dayOffset = min >= 1440 ? ' next day' : ''
+  const m = min % 1440
+  const h24 = Math.floor(m / 60)
+  const mm = m % 60
+  const period = h24 < 12 ? 'AM' : 'PM'
+  const h12 = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24
+  return `${h12}:${mm < 10 ? `0${mm}` : mm} ${period}${dayOffset}`
+}
+
+const HOUR_STEP_MIN = 30
+// Opens: 0 → 1410 (last legal open: 23:30). Closes: 30 → 1740 (5:00 AM next day).
+const OPEN_OPTIONS: number[] = Array.from({ length: 1440 / HOUR_STEP_MIN }, (_, i) => i * HOUR_STEP_MIN)
+const CLOSE_OPTIONS: number[] = Array.from(
+  { length: (1740 - 30) / HOUR_STEP_MIN + 1 },
+  (_, i) => 30 + i * HOUR_STEP_MIN,
+)
 
 // ─── Numeric input that allows full clearance (Pattern F7 / B7) ──────────────
 
@@ -83,16 +109,28 @@ export function PlayerHubSettings({ settings }: Props) {
   // No useState mirror, no sync useEffect — see src/hooks/useDexieSetting.ts.
   const [acceptsTopups, setAcceptsTopupsDexie] = useDexieSetting('acceptsTopups', true)
   const [toggling, setToggling] = useState(false)
-  // ── Booking opt-in + advance (Phase 1 of #84) ────────────────────────────
+  // ── Booking opt-in + hours + per-slot advance (#84 / #106) ──────────────
   const [acceptsBookings, setAcceptsBookingsDexie] = useDexieSetting('acceptsBookings', false)
-  const [bookingTogglingState, setBookingTogglingState] = useState(false)
-  const [bookingAdvance, setBookingAdvance] = useDexieSetting('bookingAdvanceAmount', 100)
-  // Typing-buffer variant of Pattern R4: keep a local draft for in-progress
-  // editing, re-sync it whenever Dexie's authoritative value changes.
-  const [advanceDraft, setAdvanceDraft] = useState(String(bookingAdvance))
-  const [advanceError, setAdvanceError] = useState<string | null>(null)
-  const [advanceSaving, setAdvanceSaving] = useState(false)
-  useEffect(() => { setAdvanceDraft(String(bookingAdvance)) }, [bookingAdvance])
+  // bookingOpenMinutes / bookingCloseMinutes are required-when-toggle-on.
+  // useDexieSetting wants a non-nullable fallback, so we read them off
+  // `settings` directly to preserve the undefined sentinel and use the hook
+  // only for the WRITE path. Pattern R4 — no useState mirror; the value below
+  // re-renders from useLiveQuery via useSettings() inside useDexieSetting.
+  const [, setBookingOpenMinutesDexie] = useDexieSetting('bookingOpenMinutes', 0)
+  const [, setBookingCloseMinutesDexie] = useDexieSetting('bookingCloseMinutes', 1)
+  const bookingOpenMinutes = settings?.bookingOpenMinutes
+  const bookingCloseMinutes = settings?.bookingCloseMinutes
+  const [advancePerSlot, setAdvancePerSlotDexie] = useDexieSetting('bookingAdvancePerSlot', 50)
+  // Typing-buffer variant of Pattern R4 — keep a local draft for the per-slot
+  // input, re-sync whenever Dexie's authoritative value changes.
+  const [perSlotDraft, setPerSlotDraft] = useState(String(advancePerSlot))
+  useEffect(() => { setPerSlotDraft(String(advancePerSlot)) }, [advancePerSlot])
+
+  // Save indicators (Pattern U10) — one per save site.
+  const openSave = useSaveIndicator()
+  const closeSave = useSaveIndicator()
+  const perSlotSave = useSaveIndicator()
+  const bookingsToggleSave = useSaveIndicator()
 
   // ── ClubCoins local state ─────────────────────────────────────────────────
   const coinConfig = resolveCoinConfig(settings ?? {})
@@ -304,52 +342,59 @@ export function PlayerHubSettings({ settings }: Props) {
   }, [settings?.slug, setAcceptsTopupsDexie, showToast])
 
   // ── Accept-bookings toggle (Supabase-first, mirrors topup pattern, Pattern R2) ──
-  const handleToggleBookings = useCallback(async (val: boolean) => {
+  // Disabled until both hours are set (#106) — see canEnableBookings.
+  const bookingsEnabled = canEnableBookings(settings)
+  const handleToggleBookings = useCallback((val: boolean) => {
     const currentSlug = settings?.slug
-    if (!currentSlug) return
-    setBookingTogglingState(true)
-    try {
-      // Use the current advance value so Supabase mirror stays in sync. Read
-      // from Dexie (authoritative) rather than the typing draft.
-      await syncBookingConfigBySlug(currentSlug, val, bookingAdvance)
+    if (!currentSlug || !bookingsEnabled) return
+    void bookingsToggleSave.run(async () => {
+      await syncBookingConfigBySlug(currentSlug, { acceptsBookings: val })
       await setAcceptsBookingsDexie(val)
-    } catch {
-      showToast('Failed to update. Try again.')
-    } finally {
-      setBookingTogglingState(false)
-    }
-  }, [settings?.slug, bookingAdvance, setAcceptsBookingsDexie, showToast])
+    })
+  }, [settings?.slug, bookingsEnabled, bookingsToggleSave, setAcceptsBookingsDexie])
 
-  // ── Advance amount — onBlur commits via debounced save ───────────────────
-  const handleAdvanceBlur = useCallback(async () => {
-    const trimmed = advanceDraft.trim()
+  // ── Hours selects — save-on-change via SaveIndicator (Pattern U10) ──────
+  const handleOpenChange = useCallback((nextMin: number) => {
+    const currentSlug = settings?.slug
+    void openSave.run(async () => {
+      if (currentSlug) {
+        await syncBookingConfigBySlug(currentSlug, { bookingOpenMinutes: nextMin })
+      }
+      await setBookingOpenMinutesDexie(nextMin)
+    })
+  }, [settings?.slug, openSave, setBookingOpenMinutesDexie])
+
+  const handleCloseChange = useCallback((nextMin: number) => {
+    const currentSlug = settings?.slug
+    void closeSave.run(async () => {
+      if (currentSlug) {
+        await syncBookingConfigBySlug(currentSlug, { bookingCloseMinutes: nextMin })
+      }
+      await setBookingCloseMinutesDexie(nextMin)
+    })
+  }, [settings?.slug, closeSave, setBookingCloseMinutesDexie])
+
+  // ── Per-slot advance — onBlur via SaveIndicator (Pattern U10) ───────────
+  const handlePerSlotBlur = useCallback(() => {
+    const trimmed = perSlotDraft.trim()
     if (trimmed === '') {
-      setAdvanceDraft(String(bookingAdvance))
-      setAdvanceError(null)
+      setPerSlotDraft(String(advancePerSlot))
       return
     }
     const n = parseInt(trimmed, 10)
-    if (isNaN(n) || n < 0 || n > 10000) {
-      setAdvanceError('Must be ₹0 – ₹10,000')
+    if (isNaN(n) || n < 0 || n > 2000) {
+      void perSlotSave.run(async () => { throw new Error('Must be ₹0 – ₹2,000') })
       return
     }
+    if (n === advancePerSlot) return
     const currentSlug = settings?.slug
-    setAdvanceError(null)
-    setAdvanceSaving(true)
-    try {
-      // Mirror to Supabase first so player-side reads see the new advance
-      // immediately. Then Dexie. Both must succeed or we revert the draft.
+    void perSlotSave.run(async () => {
       if (currentSlug) {
-        await syncBookingConfigBySlug(currentSlug, acceptsBookings, n)
+        await syncBookingConfigBySlug(currentSlug, { bookingAdvancePerSlot: n })
       }
-      await setBookingAdvance(n)
-    } catch {
-      setAdvanceError('Save failed. Try again.')
-      // Don't blow away the draft — let owner retry the same value.
-    } finally {
-      setAdvanceSaving(false)
-    }
-  }, [advanceDraft, acceptsBookings, settings?.slug, bookingAdvance, setBookingAdvance])
+      await setAdvancePerSlotDexie(n)
+    })
+  }, [perSlotDraft, advancePerSlot, settings?.slug, perSlotSave, setAdvancePerSlotDexie])
 
   const slug = settings?.slug
   const locked = settings?.slugLocked
@@ -456,42 +501,90 @@ export function PlayerHubSettings({ settings }: Props) {
         />
       </div>
 
-      {/* Accept bookings toggle + advance amount input (Phase 1 of #84) */}
-      <div className="flex items-center justify-between min-h-[44px]">
+      {/* Bookings card — hours + accept toggle + per-slot advance (#84 + #106) */}
+      <div className="bg-bg border border-border rounded-2xl px-4 py-4 flex flex-col gap-4">
+        {/* Opens at */}
         <div>
-          <p className="text-[14px] font-semibold text-text">Accept bookings</p>
-          <p className="text-[11px] text-text-faint mt-0.5">Players can book tables in advance via QR</p>
-        </div>
-        <Toggle
-          value={acceptsBookings}
-          onChange={bookingTogglingState ? () => {} : handleToggleBookings}
-        />
-      </div>
-
-      {acceptsBookings && (
-        <div className="bg-bg border border-border rounded-2xl px-4 py-3">
           <div className="flex items-center gap-2">
-            <p className="text-[13px] text-text-dim flex-1">Advance per booking</p>
+            <label htmlFor="bookingOpenMinutes" className="text-[13px] text-text-dim flex-1">Opens at</label>
+            <select
+              id="bookingOpenMinutes"
+              value={bookingOpenMinutes ?? ''}
+              onChange={(e) => handleOpenChange(parseInt(e.target.value, 10))}
+              className="min-h-[36px] px-2 bg-bg-card border border-border rounded-xl text-text text-[14px] outline-none focus:border-accent"
+            >
+              {bookingOpenMinutes === undefined && <option value="" disabled>Select…</option>}
+              {OPEN_OPTIONS.map((m) => (
+                <option key={m} value={m}>{formatHourLabel(m)}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-end mt-1"><SaveIndicator state={openSave.state} error={openSave.error} /></div>
+        </div>
+
+        {/* Closes at */}
+        <div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="bookingCloseMinutes" className="text-[13px] text-text-dim flex-1">Closes at</label>
+            <select
+              id="bookingCloseMinutes"
+              value={bookingCloseMinutes ?? ''}
+              onChange={(e) => handleCloseChange(parseInt(e.target.value, 10))}
+              className="min-h-[36px] px-2 bg-bg-card border border-border rounded-xl text-text text-[14px] outline-none focus:border-accent"
+            >
+              {bookingCloseMinutes === undefined && <option value="" disabled>Select…</option>}
+              {CLOSE_OPTIONS
+                .filter((m) => bookingOpenMinutes === undefined || m > bookingOpenMinutes)
+                .map((m) => (
+                  <option key={m} value={m}>{formatHourLabel(m)}</option>
+                ))}
+            </select>
+          </div>
+          <div className="flex justify-end mt-1"><SaveIndicator state={closeSave.state} error={closeSave.error} /></div>
+        </div>
+
+        {/* Accept bookings toggle — gated on hours set */}
+        <div className="flex items-center justify-between min-h-[44px]">
+          <div>
+            <p className="text-[14px] font-semibold text-text">Accept bookings</p>
+            <p className="text-[11px] text-text-faint mt-0.5">
+              {bookingsEnabled
+                ? 'Players can book tables in advance via QR'
+                : 'Set opening & closing hours first'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <SaveIndicator state={bookingsToggleSave.state} error={bookingsToggleSave.error} />
+            <Toggle
+              value={acceptsBookings && bookingsEnabled}
+              onChange={bookingsEnabled ? handleToggleBookings : () => {}}
+            />
+          </div>
+        </div>
+
+        {/* Advance per 30 mins */}
+        <div>
+          <div className="flex items-center gap-2">
+            <p className="text-[13px] text-text-dim flex-1">Advance per 30 mins</p>
             <span className="text-[13px] text-text-faint">₹</span>
             <input
               type="text"
               inputMode="numeric"
-              value={advanceDraft}
-              onChange={(e) => { setAdvanceDraft(e.target.value.replace(/\D/g, '').slice(0, 5)); setAdvanceError(null) }}
-              onBlur={handleAdvanceBlur}
-              disabled={advanceSaving}
+              value={perSlotDraft}
+              onChange={(e) => setPerSlotDraft(e.target.value.replace(/\D/g, '').slice(0, 4))}
+              onBlur={handlePerSlotBlur}
               className="w-20 px-2 py-1.5 bg-bg-card border border-border rounded-xl text-text text-[14px] outline-none focus:border-accent text-right font-mono"
-              aria-label="Advance amount per booking"
+              aria-label="Advance per 30 minutes"
             />
           </div>
-          {advanceError && <p className="text-busy text-[11px] mt-1 text-right">{advanceError}</p>}
-          {!advanceError && (
-            <p className="text-text-faint text-[11px] mt-1">
-              Same advance applies to every booking. 0–10,000.
+          <div className="flex items-center justify-between mt-1 gap-2">
+            <p className="text-text-faint text-[11px]">
+              A 90-min booking will collect ₹{(advancePerSlot * 3).toLocaleString('en-IN')}.
             </p>
-          )}
+            <SaveIndicator state={perSlotSave.state} error={perSlotSave.error} />
+          </div>
         </div>
-      )}
+      </div>
 
       {/* ── ClubCoins sub-card ─────────────────────────────────────────────── */}
       <div className="bg-bg border border-border rounded-2xl px-4 py-4">

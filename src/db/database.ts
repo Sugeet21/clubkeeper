@@ -347,6 +347,24 @@ export class ClubKeeperDB extends Dexie {
       stockPurchases: 'id, createdAt, canteenItemId, source',
       bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
     })
+    // Version 19: per-club operating hours + per-30-min-slot advance (#106) —
+    // additive only, no .upgrade(). Adds optional fields to ClubSettings:
+    //   bookingOpenMinutes?, bookingCloseMinutes?, bookingAdvancePerSlot?
+    // Legacy bookingAdvanceAmount stays as @deprecated — never written by new UI,
+    // never read for new bookings, but kept on the row for back-compat.
+    // Schema string identical to v18 — no index changes.
+    this.version(19).stores({
+      gameTables: '++id, name, gameType, sortOrder, outOfService',
+      sessions: '++id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: '++id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: '++id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+      bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
+    })
   }
 }
 

@@ -2,6 +2,25 @@
 
 ---
 
+## 22 Jun 2026 — Per-club booking hours + per-30-min-slot advance (#106) [R4, S11, U10, T1, P2]
+
+- `feat(booking): per-club hours + per-slot advance (closes #106 — pending owner verification)`. Two linked changes shipped together so the migration + UI + RPC contract move as one atom.
+- `supabase/migrations/20260622_booking_hours_and_per_slot_advance.sql` (NEW, ⚠ pending manual run) — clubs gains `booking_open_minutes`, `booking_close_minutes`, `booking_advance_per_slot int default 50` (CHECK 0–2000) + `booking_hours_valid` CHECK constraint. `get_club_public_info` dropped+recreated with 3 new OUT params. `submit_booking_intent` dropped+recreated to (a) reject `hours_not_set`, (b) recompute server-side advance and raise `advance_mismatch` on disagreement, (c) raise `outside_hours` for non-overnight clubs only.
+- `src/types/index.ts` — `ClubSettings` adds 3 new optional fields. `bookingAdvanceAmount` marked `@deprecated 22 Jun 2026`.
+- `src/types/playerHub.ts` — `ClubPublicInfo` extended with `bookingOpenMinutes / bookingCloseMinutes (number | null)` + `bookingAdvancePerSlot`. `bookingAdvanceAmount` marked `@deprecated`.
+- `src/db/database.ts` — Dexie v19 (additive only, no `.upgrade()`, schema string identical to v18).
+- `src/db/queries.ts` — `CURRENT_SCHEMA_VERSION = 19`. New `ClubKeeperBackupV19` interface; V18/V17/V16 aliased to it for back-compat.
+- `src/db/seed.ts` — `bookingAdvancePerSlot: 50` default; open/close intentionally undefined so owner must explicitly set them.
+- `src/lib/validation.ts` — adds `isValidBookingHours`, `canEnableBookings`, `minutesSinceMidnightLocal`.
+- `src/lib/playerHubApi.ts` — `syncBookingConfigBySlug` signature now takes a `BookingConfigPatch`; routes through `mirrorToSupabaseBySlug` (Pattern S11). `getClubPublicInfo` mapper extended with `?? null / ?? 50` defaults (pre-migration safe). `submitBookingIntent` error map widened for `hours_not_set | outside_hours | advance_mismatch`.
+- `src/pages/PlayerHubSettings.tsx` — booking card rebuilt: Opens-at / Closes-at 30-min-step selects, Accept Bookings toggle gated on `canEnableBookings`, "Advance per 30 mins" replaces "Advance per booking" input. All four save sites use `useSaveIndicator()` + `<SaveIndicator>` (Pattern U10). Read side respects Pattern R4 — open/close read directly off `settings`, hook only drives write path.
+- `src/pages/player/BookingScreen.tsx` — `buildTimeOptions` now settings-driven; new `not_configured` PageState (NO hardcoded fallback — that was the #106 regression vector). Overnight slots tagged "Late-night" inline. Advance computed as `ceil(durationMin / 30) * bookingAdvancePerSlot`. Summary shows breakdown line. `advance_mismatch` surfaces as inline "Pricing changed. Please retry."
+- `.claude/skills/clubkeeper/references/ripple_effects.md` — "## Advance Booking" section gets a new "Files in scope (P2 — shipped 22 Jun 2026, closes #106)" block + P2 invariants (no-hardcoded-fallback, server-side recompute, non-overnight-only outside_hours, deprecated `bookingAdvanceAmount` is frozen). Schema & Migrations section bumped to v19.
+- `.claude/skills/clubkeeper/SKILL.md` — Current State entry for Advance booking overwritten (#106 added). Pending migration line added. Dexie current bumped to v19.
+- `npm run check:settings` + `npm run build` both pass locally before commit.
+
+---
+
 ## 21 Jun 2026 — Player Hub slug input validation gate (#105)
 
 - `1ee1372` — fix(player-hub): slug input validation gate (Pattern R4 + fail-open availability).

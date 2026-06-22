@@ -1,4 +1,43 @@
-import type { RateTier } from '../types'
+import type { RateTier, ClubSettings } from '../types'
+
+// ─── Booking hours (#106) ────────────────────────────────────────────────────
+// All times are "minutes since local midnight". Close > 1440 means next-day
+// close (e.g. 1530 = 1:30 AM next day). Server-side outside_hours check is
+// non-overnight only — see migration 20260622.
+
+export function isValidBookingHours(
+  open: number | undefined,
+  close: number | undefined,
+): boolean {
+  if (open === undefined || close === undefined) return false
+  if (!Number.isInteger(open) || !Number.isInteger(close)) return false
+  if (open < 0 || open > 1439) return false
+  if (close < 1 || close > 2880) return false
+  return close > open
+}
+
+export function canEnableBookings(settings: ClubSettings | undefined | null): boolean {
+  if (!settings) return false
+  return isValidBookingHours(settings.bookingOpenMinutes, settings.bookingCloseMinutes)
+}
+
+/**
+ * Minutes since local midnight at the given timezone, for a Unix-ms timestamp.
+ * Used client-side to gate "outside hours" before the player submits. Server
+ * re-validates non-overnight clubs inside submit_booking_intent.
+ */
+export function minutesSinceMidnightLocal(ms: number, tz = 'Asia/Kolkata'): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(ms))
+  const h = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10)
+  const m = parseInt(parts.find((p) => p.type === 'minute')?.value ?? '0', 10)
+  return h * 60 + m
+}
+
 
 export const PLAYER_NAME_MAX = 50
 export const PLAYER_NAME_REGEX = /^[a-zA-Z0-9\s.,'+\-_&()]+$/

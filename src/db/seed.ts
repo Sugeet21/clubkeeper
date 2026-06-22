@@ -61,6 +61,9 @@ const DEFAULT_SETTINGS: ClubSettings = {
   currency: '₹',
   rounding: 'none',
   lowStockThreshold: 5,
+  // v19: per-slot advance default. Operating hours stay undefined so the owner
+  // must explicitly set Opens/Closes before Accept Bookings can be enabled (#106).
+  bookingAdvancePerSlot: 50,
 }
 
 export async function seedIfEmpty(): Promise<void> {
