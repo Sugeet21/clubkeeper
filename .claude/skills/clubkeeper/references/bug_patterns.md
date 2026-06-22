@@ -931,3 +931,14 @@ The auto-open `useEffect` is guarded by `autoOpenHandled` (run-once per mount) A
 **Why this keeps biting:** Pending #7 (PWA update banner via `useRegisterSW`) hasn't shipped, so there's no in-app prompt when a new bundle is available. Until S6/Pending-7 ships, this is a per-deploy manual step the owner has to remember.
 
 **How to apply:** Any future bug report that opens with "I just shipped X and prod doesn't work" — FIRST validate the deploy chain (commit pushed → Vercel green → SW refreshed). Do NOT start re-reading source until that's confirmed. Saves hours of phantom debugging.
+
+**Addendum (22 Jun 2026 — localhost variant, post-#106):** The same trap fires on **localhost** when a brand-new Settings surface ships. Owner reported the new Opens at / Closes at selects rendered empty (no options) AND the SaveIndicator stuck on "Saving…". Code on disk was correct; reading the JSX line-by-line found no bug; `OPEN_OPTIONS` / `CLOSE_OPTIONS` were static module-level arrays that could not possibly render empty. Root cause was the dev tab still running the pre-#106 bundle via Vite HMR's module cache + a stale service worker registration from a prior `npm run build` preview. Hard refresh resolved both symptoms instantly.
+
+**Rule (for any brand-new Settings UI surface that looks half-rendered):** Before re-reading the source or filing the bug:
+1. Hard refresh the dev tab (Ctrl+Shift+R / Cmd+Shift+R).
+2. DevTools → Application → Service Workers → Unregister any `localhost` SW.
+3. Restart `npm run dev` (clears Vite's module graph).
+4. If the dev server has been running across a `git pull` that bumped Dexie schema or added new ClubSettings fields, also clear IndexedDB for `localhost` (Application → Storage → Clear site data) — `useDexieSetting`'s diag logs and the v(N+1) upgrade path don't fire on a stale DB and can mask a real bug.
+5. THEN reproduce. Only after all four pass is it worth re-reading the source.
+
+**Why the localhost variant exists:** `vite-plugin-pwa` registers a service worker in dev for parity with prod. Owner pulls the new commit, but the tab is still controlled by the SW that cached the pre-commit bundle. HMR appears to update — but a fresh module added in the new commit (e.g. the `OPEN_OPTIONS` const) can be silently absent from the running graph if the SW intercepts the JS request and serves stale. Symptom looks like a real render bug because the surface is partially rendered with the new JSX but the new constants are missing.
