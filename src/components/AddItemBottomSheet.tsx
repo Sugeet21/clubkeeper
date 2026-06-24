@@ -73,7 +73,7 @@ async function runCanteenAddTransaction(
     if (existing && existing.id != null) {
       await db.sessionItems.update(existing.id, { quantity: Math.min(99, existing.quantity + qtyNum) })
     } else {
-      await db.sessionItems.add({ sessionId, name: itemName.trim(), price: priceNum, quantity: qtyNum, addedAt: Date.now() })
+      await db.sessionItems.add({ id: crypto.randomUUID(), sessionId, name: itemName.trim(), price: priceNum, quantity: qtyNum, addedAt: Date.now() })
     }
     crossing = { oldStock, newStock }
   })

@@ -58,10 +58,11 @@ export async function getTableById(id: number): Promise<GameTable | undefined> {
   return db.gameTables.get(id)
 }
 
-export async function addTable(data: Omit<GameTable, 'id'>): Promise<number> {
-  // TODO(phase-b-step-2): after v20 .upgrade() lands, change return type to Promise<string>,
-  // switch to pre-generating UUID: const id = crypto.randomUUID(); return db.gameTables.add({ ...data, id }) as Promise<string>
-  return db.gameTables.add(data)
+export async function addTable(data: Omit<GameTable, 'id'>): Promise<string> {
+  // v20: id is caller-supplied (schema no longer uses ++id auto-gen). See #107.
+  const id = crypto.randomUUID()
+  await db.gameTables.add({ ...data, id })
+  return id
 }
 
 export async function updateTable(
@@ -110,7 +111,7 @@ export async function startSession(
     | 'framesPlayed'
   >,
   notifyAfterMs?: number | null,
-): Promise<number | string> {
+): Promise<string> {
   const startedAt = Date.now()
   const alarmFields =
     typeof notifyAfterMs === 'number' && notifyAfterMs > 0
@@ -128,10 +129,11 @@ export async function startSession(
         }
       : {}
 
-  // TODO(phase-b-step-2): after v20 .upgrade() lands, change return type to Promise<string>,
-  // switch to: const id = crypto.randomUUID(); return db.sessions.add({ ...data, id, startedAt, ... }) as Promise<string>
-  return db.sessions.add({
+  // v20: id is caller-supplied. See #107.
+  const id = crypto.randomUUID()
+  await db.sessions.add({
     ...data,
+    id,
     startedAt,
     endedAt: null,
     pausedTotalMs: 0,
@@ -141,6 +143,7 @@ export async function startSession(
     ...alarmFields,
     ...rateCardFields,
   })
+  return id
 }
 
 export async function acknowledgeNotify(sessionId: number | string): Promise<void> {
@@ -596,7 +599,7 @@ export async function getOrphanedSessions(): Promise<Session[]> {
 
 export async function addSessionItem(
   data: Omit<SessionItem, 'id' | 'addedAt'>
-): Promise<number> {
+): Promise<string> {
   const nameError = validateItemName(data.name)
   if (nameError) throw new Error(nameError)
   if (!Number.isInteger(data.price) || data.price < 0 || data.price > 99999) {
@@ -605,13 +608,15 @@ export async function addSessionItem(
   if (!Number.isInteger(data.quantity) || data.quantity < 1 || data.quantity > 99) {
     throw new Error('Quantity must be 1–99')
   }
-  // TODO(phase-b-step-2): after v20 .upgrade() lands, change return type to Promise<string>,
-  // switch to: const id = crypto.randomUUID(); return db.sessionItems.add({ ...data, id, name: ..., addedAt: ... }) as Promise<string>
-  return db.sessionItems.add({
+  // v20: id is caller-supplied. See #107.
+  const id = crypto.randomUUID()
+  await db.sessionItems.add({
     ...data,
+    id,
     name: data.name.trim(),
     addedAt: Date.now(),
   })
+  return id
 }
 
 export class InsufficientStockError extends Error {
@@ -711,13 +716,15 @@ export async function restoreSessionItem(item: SessionItem): Promise<void> {
       }
       await db.canteenItems.update(matched.id, { currentStock: newStock })
     }
-    // Use add() not restore-by-id — Dexie autoincrement doesn't reuse ids
+    // v20: id is caller-supplied. Mint a new UUID rather than re-using the
+    // deleted row's id (preserves Undo semantics without resurrecting old key).
     await db.sessionItems.add({
+      id: crypto.randomUUID(),
       sessionId: item.sessionId,
       name: item.name,
       price: item.price,
       quantity: item.quantity,
-      addedAt: item.addedAt, // preserve original timestamp for Undo semantics
+      addedAt: item.addedAt,
     })
   })
 }
@@ -732,11 +739,11 @@ export async function restoreSessionItem(item: SessionItem): Promise<void> {
  * This helper is for the freeform (sessionItems-only) path.
  */
 export async function addOrIncrementSessionItem(input: {
-  sessionId: number
+  sessionId: number | string
   name: string
   price: number
   quantity: number
-}): Promise<number> {
+}): Promise<number | string> {
   const { sessionId, name, price, quantity } = input
   const normalized = normalizeName(name)
 
@@ -753,15 +760,17 @@ export async function addOrIncrementSessionItem(input: {
       return existing.id
     }
 
-    // TODO(phase-b-step-2): after v20 .upgrade() lands, pre-generate UUID:
-    // const id = crypto.randomUUID(); return db.sessionItems.add({ id, sessionId, name: name.trim(), price, quantity, addedAt: Date.now() }) as Promise<string>
-    return db.sessionItems.add({
+    // v20: id is caller-supplied. See #107.
+    const id = crypto.randomUUID()
+    await db.sessionItems.add({
+      id,
       sessionId,
       name: name.trim(),
       price,
       quantity,
       addedAt: Date.now(),
     })
+    return id
   })
 }
 
@@ -837,7 +846,7 @@ export async function getCanteenItems(includeInactive = false): Promise<CanteenI
 
 export async function addCanteenItem(
   input: Omit<CanteenItem, 'id' | 'createdAt' | 'sortOrder' | 'isActive'>,
-): Promise<number> {
+): Promise<string> {
   const nameValidation = validateCanteenItemName(input.name)
   if (!nameValidation.valid) throw new Error(nameValidation.error)
 
@@ -862,9 +871,10 @@ export async function addCanteenItem(
   const last = await db.canteenItems.orderBy('sortOrder').last()
   const sortOrder = last ? last.sortOrder + 1 : 1
 
-  // TODO(phase-b-step-2): after v20 .upgrade() lands, change return type to Promise<string>,
-  // switch to: const id = crypto.randomUUID(); return db.canteenItems.add({ id, name: trimmedName, ... }) as Promise<string>
-  return db.canteenItems.add({
+  // v20: id is caller-supplied. See #107.
+  const id = crypto.randomUUID()
+  await db.canteenItems.add({
+    id,
     name: trimmedName,
     defaultPrice: input.defaultPrice,
     stockEnabled,
@@ -874,6 +884,7 @@ export async function addCanteenItem(
     sortOrder,
     ...(typeof input.peakPrice === 'number' ? { peakPrice: input.peakPrice } : {}),
   })
+  return id
 }
 
 export async function updateCanteenItem(
@@ -1028,7 +1039,7 @@ export interface BackEntryInput {
   items?: BackEntryItemInput[]  // optional; defaults to []
 }
 
-export async function createBackEntry(input: BackEntryInput): Promise<number> {
+export async function createBackEntry(input: BackEntryInput): Promise<number | string> {
   const items = input.items ?? []
 
   // Pattern D7 — ONE flat transaction. All writes atomic — session + sessionItems + stock.
@@ -1075,9 +1086,9 @@ export async function createBackEntry(input: BackEntryInput): Promise<number> {
     const elapsedMs = input.endedAt - input.startedAt
     proto.amount = calculateAmount(proto, elapsedMs, rounding)
 
-    // TODO(phase-b-step-2): after v20 .upgrade() lands, change cast to `as string`
-    // and switch to: const sessionId = crypto.randomUUID(); await db.sessions.add({ ...proto, id: sessionId })
-    const sessionId = (await db.sessions.add(proto)) as number
+    // v20: id is caller-supplied. See #107.
+    const sessionId = crypto.randomUUID()
+    await db.sessions.add({ ...proto, id: sessionId })
 
     // ---- 4. Process items INLINE (Pattern D7 — no calls to addSessionItem /
     //         addOrIncrementSessionItem / decrementCanteenItemStock from inside this tx) ----
@@ -1125,6 +1136,7 @@ export async function createBackEntry(input: BackEntryInput): Promise<number> {
       let order = 0
       for (const r of resolved) {
         await db.sessionItems.add({
+          id: crypto.randomUUID(),
           sessionId,
           name: r.item.name.trim(),
           price: r.item.price,
