@@ -2,6 +2,24 @@
 
 ---
 
+## 25 Jun 2026 — Phase C Chunks 1 + 2: owner auth hook + DDL (manual deploy pending)
+
+**Chunk 1 — `feat(auth): Phase C Chunk 1 — Supabase owner sign-in + useCurrentUser`**
+
+- `src/lib/auth.ts` (NEW) — `useCurrentUser()` returns `{ user, clubId, status: 'loading'|'signed_in'|'signed_out'|'no_club' }` over `useAuthStore` + `getOwnerClub`. Re-exports `signInWithGoogle` / `signOut`.
+- `src/components/NoClubScreen.tsx` (NEW) — fallback for status='no_club'.
+- `src/App.tsx` — `/auth/login` alias to `<Signup />`; added to `PUBLIC_PATHS`.
+- Existing supabase client + authStore reused — no duplicate clients. Staff login + role gates explicitly Phase D.
+- NoClubScreen exported but NOT auto-gated in `RequireAccess` — gating all private routes on a clubs row would block existing offline-only users. Chunk 5 (initial pull) is the right place for that gate.
+
+**Chunk 2 — `feat(sync): Phase C Chunk 2 — DDL migration file (manual deploy required)`**
+
+- `supabase/migrations/20260625_phase_c_sync_tables.sql` (NEW) — 9 sync tables per §4.2 with v3.2 amendment (`session_items` drops invented `canteen_item_id` column), all indexes per §4.2, `users_meta` table (Phase-D-permissive RLS — service-role only for INSERT/UPDATE for now), `add_user_meta_to_jwt` PL/pgSQL function for §4.5 JWT custom claims, `clubs.sync_enabled` + `sync_disabled_reason` + `sync_disabled_at` kill-switch columns, `clubs.owner_id` add-if-missing guard. RLS per Appendix B owner-only (`(auth.jwt() ->> 'user_role') = 'owner'`). Realtime publication grants for all 9 sync tables with `REPLICA IDENTITY FULL`. All DDL idempotent.
+- **NOT auto-deployed.** Sugeet manually pastes into Supabase Dashboard → SQL Editor, configures the Custom Access Token Hook, INSERTs his own `users_meta` row, then signs out + in to refresh JWT. Returns `PHASE_C_DDL_DEPLOYED` token to unblock Chunk 3.
+- Migration deviates from v2 §4.1 in two places (intentional, captured in v3.2 amendment): (a) `clubs.owner_id` not `owner_user_id` — matches production. (b) `session_items` has no `canteen_item_id` column — Dexie SessionItem never had that field, snapshots are authoritative.
+
+---
+
 ## 25 Jun 2026 — Phase C Chunk 0: Step 2 audit fixups
 
 - `fix(types): Phase C Chunk 0 — Step 2 audit fixups (booking types, _migrationSeq, SyncTableName, §4.2 amend)`
