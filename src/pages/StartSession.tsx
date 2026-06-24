@@ -61,15 +61,8 @@ export default function StartSession() {
   const { tableId } = useParams<{ tableId: string }>()
   const navigate = useNavigate()
 
-  // Dual-accept route param (Phase B step 1.5 — #107).
-  // Legacy v19 rows use numeric ids; v20-seeded rows use UUID strings. Round-trip
-  // check ensures "123abc" doesn't get silently truncated to 123.
-  const tid: number | string = (() => {
-    if (tableId === undefined || tableId === '') return NaN
-    const n = Number(tableId)
-    return Number.isFinite(n) && n > 0 && String(n) === tableId ? n : tableId
-  })()
-  const tidValid = typeof tid === 'string' ? tid.length > 0 : Number.isFinite(tid) && tid > 0
+  const tid = tableId ?? ''
+  const tidValid = tid.length === 36
   const table = useLiveQuery(
     () => (tidValid ? db.gameTables.get(tid) : Promise.resolve(undefined)),
     [tid, tidValid],

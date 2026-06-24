@@ -20,11 +20,10 @@ import type { Booking } from '../types/booking'
 // so a one-time migration can be written later if needed.
 
 export class ClubKeeperDB extends Dexie {
-  // Transitional: number on v19 (++id), string UUID on v20 — TODO(phase-b-step-2): narrow to string after .upgrade()
-  gameTables!: Table<GameTable, number | string>
-  sessions!: Table<Session, number | string>
-  sessionItems!: Table<SessionItem, number | string>
-  canteenItems!: Table<CanteenItem, number | string>
+  gameTables!: Table<GameTable, string>
+  sessions!: Table<Session, string>
+  sessionItems!: Table<SessionItem, string>
+  canteenItems!: Table<CanteenItem, string>
   // Already string id from v5/v13/v17 — no change
   settings!: Table<ClubSettings, number>
   customers!: Table<Customer, string>
@@ -370,11 +369,10 @@ export class ClubKeeperDB extends Dexie {
       stockPurchases: 'id, createdAt, canteenItemId, source',
       bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
     })
-    // Version 20: UUID migration — PHASE B STEP 1 (schema only, no .upgrade() yet).
-    // The 4 ++id tables flip to caller-supplied string id. Step 2 (next session)
-    // adds the .upgrade() callback that actually rewrites existing rows.
-    // Until Step 2 ships, this is a no-op upgrade — existing rows keep their
-    // numeric ids in IndexedDB, and the app continues to use them.
+    // Version 20: UUID migration — PHASE B STEP 2 (schema + .upgrade() callback).
+    // The 4 ++id tables flip to caller-supplied string id. The .upgrade() callback
+    // rewrites all existing numeric-id rows to UUIDs in a single atomic Dexie
+    // transaction. If the upgrade throws, Dexie rolls back and the user stays on v19.
     // Also adds _outbox table for Phase C sync (no Phase B logic uses it yet).
     this.version(20).stores({
       gameTables: 'id, name, gameType, sortOrder, outOfService',
@@ -388,6 +386,144 @@ export class ClubKeeperDB extends Dexie {
       stockPurchases: 'id, createdAt, canteenItemId, source',
       bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
       _outbox: '++seq, table, op, rowId, createdAt',
+    }).upgrade(async (tx) => {
+      // Phase 1: build numeric-id → UUID maps for the 4 migrated tables.
+      const idMaps = {
+        gameTables:   new Map<number, string>(),
+        sessions:     new Map<number, string>(),
+        sessionItems: new Map<number, string>(),
+        canteenItems: new Map<number, string>(),
+      }
+      for (const tableName of ['gameTables', 'sessions', 'sessionItems', 'canteenItems'] as const) {
+        await tx.table(tableName).toCollection().each((row: { id: number }) => {
+          if (typeof row.id === 'number') {
+            idMaps[tableName].set(row.id, crypto.randomUUID())
+          }
+        })
+      }
+
+      // Phase 2: rewrite each migrated table. clear() + add() inside the same tx
+      // so it's atomic. Order: catalog first (gameTables, canteenItems), then
+      // operational (sessions — FK tableId, sessionItems — FKs sessionId+canteenItemId).
+      let migrationSeq = 0
+
+      // gameTables — no FKs to other migrated tables
+      const allTables = await tx.table('gameTables').toArray()
+      await tx.table('gameTables').clear()
+      for (const r of allTables) {
+        if (typeof r.id !== 'number') {
+          await tx.table('gameTables').add({ ...r, _migrationSeq: ++migrationSeq })
+          continue
+        }
+        await tx.table('gameTables').add({
+          ...r,
+          id: idMaps.gameTables.get(r.id) ?? crypto.randomUUID(),
+          _migrationSeq: ++migrationSeq,
+        })
+      }
+
+      // canteenItems — no FKs to other migrated tables
+      const allCanteenItems = await tx.table('canteenItems').toArray()
+      await tx.table('canteenItems').clear()
+      for (const r of allCanteenItems) {
+        if (typeof r.id !== 'number') {
+          await tx.table('canteenItems').add({ ...r, _migrationSeq: ++migrationSeq })
+          continue
+        }
+        await tx.table('canteenItems').add({
+          ...r,
+          id: idMaps.canteenItems.get(r.id) ?? crypto.randomUUID(),
+          _migrationSeq: ++migrationSeq,
+        })
+      }
+
+      // sessions — FK: tableId → gameTables; nested tableMoves[].fromTableId + .toTableId
+      const allSessions = await tx.table('sessions').toArray()
+      await tx.table('sessions').clear()
+      for (const r of allSessions) {
+        const newId = typeof r.id === 'number'
+          ? (idMaps.sessions.get(r.id) ?? crypto.randomUUID())
+          : r.id
+        const newTableId = typeof r.tableId === 'number'
+          ? (idMaps.gameTables.get(r.tableId) ?? String(r.tableId))
+          : r.tableId
+        // Remap nested tableMoves FK fields (§5.6 landmine 2c)
+        const newTableMoves = Array.isArray(r.tableMoves)
+          ? r.tableMoves.map((move: { fromTableId: number | string; toTableId: number | string; movedAt: number }) => ({
+              ...move,
+              fromTableId: typeof move.fromTableId === 'number'
+                ? (idMaps.gameTables.get(move.fromTableId) ?? String(move.fromTableId))
+                : move.fromTableId,
+              toTableId: typeof move.toTableId === 'number'
+                ? (idMaps.gameTables.get(move.toTableId) ?? String(move.toTableId))
+                : move.toTableId,
+            }))
+          : r.tableMoves
+        await tx.table('sessions').add({
+          ...r,
+          id: newId,
+          tableId: newTableId,
+          tableMoves: newTableMoves,
+          _migrationSeq: ++migrationSeq,
+        })
+      }
+
+      // sessionItems — FKs: sessionId → sessions, canteenItemId → canteenItems
+      const allSessionItems = await tx.table('sessionItems').toArray()
+      await tx.table('sessionItems').clear()
+      for (const r of allSessionItems) {
+        const newId = typeof r.id === 'number'
+          ? (idMaps.sessionItems.get(r.id) ?? crypto.randomUUID())
+          : r.id
+        const newSessionId = typeof r.sessionId === 'number'
+          ? (idMaps.sessions.get(r.sessionId) ?? String(r.sessionId))
+          : r.sessionId
+        await tx.table('sessionItems').add({
+          ...r,
+          id: newId,
+          sessionId: newSessionId,
+          _migrationSeq: ++migrationSeq,
+        })
+      }
+
+      // Phase 3: rewrite FK fields in the 5 already-UUID tables that point into
+      // migrated tables. Use .update() (cheaper than clear+add) since their own ids
+      // don't change.
+
+      // canteenSales — inline items array contains canteenItemId FK
+      await tx.table('canteenSales').toCollection().modify((sale: {
+        items: Array<{ canteenItemId?: number | string; [key: string]: unknown }>
+      }) => {
+        if (Array.isArray(sale.items)) {
+          sale.items = sale.items.map((line) => {
+            if (typeof line.canteenItemId === 'number') {
+              return {
+                ...line,
+                canteenItemId: idMaps.canteenItems.get(line.canteenItemId) ?? String(line.canteenItemId),
+              }
+            }
+            return line
+          })
+        }
+      })
+
+      // stockPurchases — top-level canteenItemId FK
+      await tx.table('stockPurchases').toCollection().modify((purchase: {
+        canteenItemId: number | string
+      }) => {
+        if (typeof purchase.canteenItemId === 'number') {
+          purchase.canteenItemId = idMaps.canteenItems.get(purchase.canteenItemId) ?? String(purchase.canteenItemId)
+        }
+      })
+
+      // bookings — top-level tableId FK
+      await tx.table('bookings').toCollection().modify((booking: {
+        tableId: number | string
+      }) => {
+        if (typeof booking.tableId === 'number') {
+          booking.tableId = idMaps.gameTables.get(booking.tableId) ?? String(booking.tableId)
+        }
+      })
     })
   }
 }

@@ -54,7 +54,7 @@ export async function getAllTables(): Promise<GameTable[]> {
   return db.gameTables.orderBy('sortOrder').toArray()
 }
 
-export async function getTableById(id: number): Promise<GameTable | undefined> {
+export async function getTableById(id: string): Promise<GameTable | undefined> {
   return db.gameTables.get(id)
 }
 
@@ -66,20 +66,20 @@ export async function addTable(data: Omit<GameTable, 'id'>): Promise<string> {
 }
 
 export async function updateTable(
-  id: number,
+  id: string,
   data: Partial<Omit<GameTable, 'id'>>,
 ): Promise<void> {
   await db.gameTables.update(id, data)
 }
 
-export async function deleteTable(id: number): Promise<void> {
+export async function deleteTable(id: string): Promise<void> {
   await db.gameTables.delete(id)
 }
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
 export async function getActiveSessionForTable(
-  tableId: number | string,
+  tableId: string,
 ): Promise<Session | undefined> {
   return db.sessions
     .where('tableId')
@@ -95,7 +95,7 @@ export async function getAllActiveSessions(): Promise<Session[]> {
     .toArray()
 }
 
-export async function getSessionById(id: number): Promise<Session | undefined> {
+export async function getSessionById(id: string): Promise<Session | undefined> {
   return db.sessions.get(id)
 }
 
@@ -146,11 +146,11 @@ export async function startSession(
   return id
 }
 
-export async function acknowledgeNotify(sessionId: number | string): Promise<void> {
+export async function acknowledgeNotify(sessionId: string): Promise<void> {
   await db.sessions.update(sessionId, { notifyAcknowledgedAt: Date.now() })
 }
 
-export async function snoozeNotify(sessionId: number | string, snoozeMs: number): Promise<void> {
+export async function snoozeNotify(sessionId: string, snoozeMs: number): Promise<void> {
   const session = await db.sessions.get(sessionId)
   if (!session) return
   const original = session.notifyAtMs ?? Date.now()
@@ -170,7 +170,7 @@ export async function snoozeNotify(sessionId: number | string, snoozeMs: number)
  * notifyAfterMs = duration FROM NOW. Pass null to clear the alarm entirely.
  */
 export async function updateSessionNotify(
-  sessionId: number | string,
+  sessionId: string,
   notifyAfterMs: number | null,
 ): Promise<void> {
   if (notifyAfterMs === null) {
@@ -186,7 +186,7 @@ export async function updateSessionNotify(
   })
 }
 
-export async function pauseSession(sessionId: number | string): Promise<void> {
+export async function pauseSession(sessionId: string): Promise<void> {
   const session = await db.sessions.get(sessionId)
   if (!session) throw new Error(`Session ${sessionId} not found`)
   if (session.status !== 'running') return
@@ -197,7 +197,7 @@ export async function pauseSession(sessionId: number | string): Promise<void> {
   })
 }
 
-export async function resumeSession(sessionId: number | string): Promise<void> {
+export async function resumeSession(sessionId: string): Promise<void> {
   const session = await db.sessions.get(sessionId)
   if (!session) throw new Error(`Session ${sessionId} not found`)
   if (session.status !== 'paused' || session.pausedAt === null) return
@@ -210,7 +210,7 @@ export async function resumeSession(sessionId: number | string): Promise<void> {
   })
 }
 
-export async function stopSession(sessionId: number): Promise<Session> {
+export async function stopSession(sessionId: string): Promise<Session> {
   const session = await db.sessions.get(sessionId)
   if (!session) throw new Error(`Session ${sessionId} not found`)
   if (session.status === 'completed') return session
@@ -258,7 +258,7 @@ export async function stopSession(sessionId: number): Promise<Session> {
  * Does NOT write endedAt or amount — those are written only in confirmPaymentAndStop.
  */
 export async function pauseForPayment(
-  sessionId: number | string,
+  sessionId: string,
 ): Promise<{ billableMs: number; grandTotal: number }> {
   const session = await db.sessions.get(sessionId)
   if (!session) throw new Error(`Session ${sessionId} not found`)
@@ -302,17 +302,12 @@ export async function pauseForPayment(
  * in a single Dexie transaction. Wallet debit inlined in the same tx (Pattern D7).
  */
 export async function confirmPaymentAndStop(
-  sessionId: number | string,
+  sessionId: string,
   breakdown: { cash: number; upi: number; wallet: number },
   customerId?: string,
 ): Promise<void> {
-  // Transitional guard: accepts v19 numeric ids AND v20 UUID strings.
-  // TODO(phase-b-step-2): narrow to `typeof sessionId !== 'string' || sessionId.length !== 36`
-  // once .upgrade() has rewritten all existing rows to UUIDs.
-  const isLegacyNumber = typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
-  const isUuidString = typeof sessionId === 'string' && sessionId.length === 36
-  if (!isLegacyNumber && !isUuidString) {
-    throw new Error(`confirmPaymentAndStop: invalid sessionId (got ${typeof sessionId} "${String(sessionId)}")`)
+  if (typeof sessionId !== 'string' || sessionId.length !== 36) {
+    throw new Error(`confirmPaymentAndStop: invalid sessionId (got ${typeof sessionId} "${sessionId}")`)
   }
   const { cash, upi, wallet } = breakdown
   if (
@@ -411,7 +406,7 @@ export async function confirmPaymentAndStop(
  * Cancel a payment-in-progress pause and resume the session as running.
  * Only valid when session.paymentInProgress === true.
  */
-export async function cancelPaymentAndResume(sessionId: number): Promise<void> {
+export async function cancelPaymentAndResume(sessionId: string): Promise<void> {
   const session = await db.sessions.get(sessionId)
   if (!session) throw new Error(`Session ${sessionId} not found`)
   if (!session.paymentInProgress || session.pausedAt === null) return
@@ -426,7 +421,7 @@ export async function cancelPaymentAndResume(sessionId: number): Promise<void> {
 }
 
 export async function editSessionStart(
-  sessionId: number,
+  sessionId: string,
   newStartedAt: number,
 ): Promise<void> {
   const session = await db.sessions.get(sessionId)
@@ -485,7 +480,7 @@ export async function getRecentPlayerNames(limit = 10): Promise<string[]> {
 }
 
 export async function updateSession(
-  id: number,
+  id: string,
   data: Partial<Omit<Session, 'id'>>,
 ): Promise<void> {
   await db.sessions.update(id, data)
@@ -646,7 +641,7 @@ async function findMatchingCanteenItemForRow(
 }
 
 export async function updateSessionItem(
-  id: number,
+  id: string,
   patch: Partial<Pick<SessionItem, 'name' | 'price' | 'quantity'>>
 ): Promise<void> {
   if (patch.name !== undefined) {
@@ -688,7 +683,7 @@ export async function updateSessionItem(
   })
 }
 
-export async function deleteSessionItem(id: number): Promise<void> {
+export async function deleteSessionItem(id: string): Promise<void> {
   await db.transaction('rw', db.sessionItems, db.canteenItems, async () => {
     const existing = await db.sessionItems.get(id)
     if (!existing) return // idempotent — already gone
@@ -739,11 +734,11 @@ export async function restoreSessionItem(item: SessionItem): Promise<void> {
  * This helper is for the freeform (sessionItems-only) path.
  */
 export async function addOrIncrementSessionItem(input: {
-  sessionId: number | string
+  sessionId: string
   name: string
   price: number
   quantity: number
-}): Promise<number | string> {
+}): Promise<string> {
   const { sessionId, name, price, quantity } = input
   const normalized = normalizeName(name)
 
@@ -888,7 +883,7 @@ export async function addCanteenItem(
 }
 
 export async function updateCanteenItem(
-  id: number,
+  id: string,
   patch: Partial<CanteenItem>,
 ): Promise<void> {
   const item = await db.canteenItems.get(id)
@@ -935,7 +930,7 @@ export async function updateCanteenItem(
   await db.canteenItems.update(id, { ...patch, currentStock })
 }
 
-export async function softDeleteCanteenItem(id: number): Promise<void> {
+export async function softDeleteCanteenItem(id: string): Promise<void> {
   await db.canteenItems.update(id, { isActive: false })
 }
 
@@ -976,7 +971,7 @@ export async function bulkSetCanteenItemPeakPrices(
 }
 
 export async function decrementCanteenItemStock(
-  id: number,
+  id: string,
   quantity: number,
 ): Promise<{ oldStock: number; newStock: number }> {
   return db.transaction('rw', db.canteenItems, async () => {
@@ -1030,7 +1025,7 @@ export interface BackEntryItemInput {
 }
 
 export interface BackEntryInput {
-  tableId: number
+  tableId: string
   startedAt: number       // Unix ms (past)
   endedAt: number         // Unix ms (> startedAt and ≤ Date.now())
   playerName: string | null
@@ -1039,7 +1034,7 @@ export interface BackEntryInput {
   items?: BackEntryItemInput[]  // optional; defaults to []
 }
 
-export async function createBackEntry(input: BackEntryInput): Promise<number | string> {
+export async function createBackEntry(input: BackEntryInput): Promise<string> {
   const items = input.items ?? []
 
   // Pattern D7 — ONE flat transaction. All writes atomic — session + sessionItems + stock.
@@ -1098,10 +1093,10 @@ export async function createBackEntry(input: BackEntryInput): Promise<number | s
 
       // Aggregate stock needs by canteenItem.id so multiple rows for the same item
       // do not each independently pass a single insufficient-stock check.
-      const stockNeeded = new Map<number, number>() // canteenItemId → totalQty needed
+      const stockNeeded = new Map<string, number>() // canteenItemId → totalQty needed
 
       // First pass: match items and build the stock-needs map.
-      const resolved: Array<{ item: BackEntryItemInput; canteenId?: number }> = []
+      const resolved: Array<{ item: BackEntryItemInput; canteenId?: string }> = []
       for (const it of items) {
         const match = findMatchingCanteenItem(it.name, it.price, activeCanteen)
         if (match && match.stockEnabled && match.id !== undefined) {
@@ -1152,8 +1147,8 @@ export async function createBackEntry(input: BackEntryInput): Promise<number | s
 }
 
 export async function moveSessionToTable(
-  sessionId: number,
-  toTableId: number,
+  sessionId: string,
+  toTableId: string,
 ): Promise<void> {
   await db.transaction('rw', db.sessions, db.gameTables, async () => {
     const session = await db.sessions.get(sessionId)
@@ -1256,21 +1251,12 @@ export class WalletInsufficientError extends Error {
  * helpers are inlined here — never call this from inside another transaction.
  */
 export async function recordSessionPaymentBreakdown(
-  sessionId: number | string,
+  sessionId: string,
   breakdown: { cash: number; upi: number; wallet: number },
   customerId?: string,
 ): Promise<void> {
-  // Defense-in-depth: TypeScript's `sessionId: number` cannot prevent a string
-  // sneaking in via untyped JS or route param leakage. db.sessions.get('2')
-  // silently returns undefined (autoincrement keys are numbers), which causes
-  // session.amount to read as 0 downstream — exact bug shipped in Phase 2.
-  // Transitional guard: accepts v19 numeric ids AND v20 UUID strings.
-  // TODO(phase-b-step-2): narrow to `typeof sessionId !== 'string' || sessionId.length !== 36`
-  // once .upgrade() has rewritten all existing rows to UUIDs.
-  const isLegacyNumberRspb = typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
-  const isUuidStringRspb = typeof sessionId === 'string' && sessionId.length === 36
-  if (!isLegacyNumberRspb && !isUuidStringRspb) {
-    throw new Error(`recordSessionPaymentBreakdown: invalid sessionId (got ${typeof sessionId} "${String(sessionId)}")`)
+  if (typeof sessionId !== 'string' || sessionId.length !== 36) {
+    throw new Error(`recordSessionPaymentBreakdown: invalid sessionId (got ${typeof sessionId} "${sessionId}")`)
   }
   const { cash, upi, wallet } = breakdown
   if (
@@ -1370,7 +1356,7 @@ export class CanteenSaleStockError extends Error {
 }
 
 export interface CanteenSaleLineInput {
-  canteenItemId: number
+  canteenItemId: string
   name: string
   price: number
   quantity: number
@@ -1414,7 +1400,7 @@ export async function createCanteenSale(input: {
   }
   // Validate each line
   for (const line of input.items) {
-    if (!Number.isInteger(line.canteenItemId) || line.canteenItemId <= 0) {
+    if (typeof line.canteenItemId !== 'string' || line.canteenItemId.length !== 36) {
       throw new CanteenSaleInvalidError('Invalid canteen item reference.')
     }
     if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
@@ -1437,7 +1423,7 @@ export async function createCanteenSale(input: {
   }
 
   // Aggregate qty per canteenItemId for stock sufficiency
-  const qtyByItem = new Map<number, number>()
+  const qtyByItem = new Map<string, number>()
   for (const line of input.items) {
     qtyByItem.set(
       line.canteenItemId,
@@ -1684,13 +1670,13 @@ export class StockPurchaseInvalidError extends Error {
 }
 
 export async function recordStockPurchase(input: {
-  canteenItemId: number
+  canteenItemId: string
   quantityAdded: number
   cost: number
   source: 'piggy' | 'other'
   notes?: string
 }): Promise<string> {
-  if (!Number.isInteger(input.canteenItemId) || input.canteenItemId <= 0) {
+  if (typeof input.canteenItemId !== 'string' || input.canteenItemId.length !== 36) {
     throw new StockPurchaseInvalidError('Invalid canteen item.')
   }
   if (!Number.isInteger(input.quantityAdded) || input.quantityAdded <= 0) {
@@ -1942,7 +1928,7 @@ export class BookingAlreadyConsumedError extends Error {
  * prompt. Excludes anything already consumed/cancelled/no_show.
  */
 export async function getLinkableBookingsForTable(
-  tableId: number | string,
+  tableId: string,
   now: number,
   windowMs: number,
 ): Promise<Booking[]> {
@@ -1962,7 +1948,7 @@ export async function getLinkableBookingsForTable(
  * never blocks the walk-in.
  */
 export async function getUpcomingBookingsForTable(
-  tableId: number | string,
+  tableId: string,
   now: number,
   lookaheadMs: number,
 ): Promise<Booking[]> {
@@ -1985,7 +1971,7 @@ export async function getUpcomingBookingsForTable(
  */
 export async function linkBookingToSession(
   bookingId: string,
-  sessionId: number | string,
+  sessionId: string,
 ): Promise<{ customerId: string }> {
   return db.transaction('rw', db.bookings, db.customers, async () => {
     const booking = await db.bookings.get(bookingId)

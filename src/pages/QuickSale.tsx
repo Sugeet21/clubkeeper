@@ -10,7 +10,7 @@ import { getEffectivePrice, getPeakConfig, isInPeakWindow } from '../lib/peakPri
 import type { CanteenItem } from '../types'
 
 interface CartLine {
-  canteenItemId: number
+  canteenItemId: string
   name: string
   price: number
   quantity: number
@@ -23,7 +23,7 @@ export default function QuickSale() {
   const settings = useSettings()
 
   const items = useLiveQuery(() => getCanteenItems(false), [])
-  const [cart, setCart] = useState<Map<number, CartLine>>(new Map())
+  const [cart, setCart] = useState<Map<string, CartLine>>(new Map())
   const [paymentOpen, setPaymentOpen] = useState(false)
   // After a successful sale with upi > 0, store the UPI amount to show the QR screen.
   const [pendingUpiAmount, setPendingUpiAmount] = useState<number | null>(null)
@@ -71,7 +71,7 @@ export default function QuickSale() {
     })
   }
 
-  function decrementLine(canteenItemId: number) {
+  function decrementLine(canteenItemId: string) {
     setCart((prev) => {
       const next = new Map(prev)
       const line = next.get(canteenItemId)
@@ -85,7 +85,7 @@ export default function QuickSale() {
     })
   }
 
-  function removeLine(canteenItemId: number) {
+  function removeLine(canteenItemId: string) {
     setCart((prev) => {
       const next = new Map(prev)
       next.delete(canteenItemId)

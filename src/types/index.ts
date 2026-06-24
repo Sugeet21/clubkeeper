@@ -37,7 +37,7 @@ export type BillingMode = 'per_hour' | 'per_frame'
 export type TableStatus = 'free' | 'busy' | 'paused' | 'out_of_service'
 
 export interface GameTable {
-  id?: number | string  // transitional: number on v19, UUID string on v20 — TODO(phase-b-step-2): narrow to string
+  id?: string
   name: string
   gameType: GameType
   ratePerHour: number
@@ -51,14 +51,14 @@ export interface GameTable {
 }
 
 export interface TableMove {
-  fromTableId: number
-  toTableId: number
+  fromTableId: string
+  toTableId: string
   movedAt: number  // Unix ms timestamp
 }
 
 export interface Session {
-  id?: number | string  // transitional: number on v19, UUID string on v20 — TODO(phase-b-step-2): narrow to string
-  tableId: number
+  id?: string
+  tableId: string
   startedAt: number
   endedAt: number | null
   pausedTotalMs: number
@@ -106,7 +106,7 @@ export interface CanteenSale {
     name: string
     price: number                                             // integer rupees
     quantity: number                                          // integer ≥ 1
-    canteenItemId?: number                                    // matched CanteenItem.id; absent for unmatched (v1: always matched)
+    canteenItemId?: string                                    // matched CanteenItem.id; absent for unmatched
   }>
   subtotal: number                                            // sum of price * quantity (integer rupees)
   paymentBreakdown: PaymentBreakdown                          // cash + upi + wallet === total
@@ -122,7 +122,7 @@ export interface CanteenSale {
  */
 export interface StockPurchase {
   id: string                  // UUID v4
-  canteenItemId: number       // FK → CanteenItem.id
+  canteenItemId: string       // FK → CanteenItem.id (UUID)
   quantityAdded: number       // integer ≥ 1
   cost: number                // total cost paid for this restock (integer rupees, ≥ 0)
   source: 'piggy' | 'other'
@@ -187,7 +187,7 @@ export interface ClubSettings {
 }
 
 export interface CanteenItem {
-  id?: number | string  // transitional: number on v19, UUID string on v20 — TODO(phase-b-step-2): narrow to string
+  id?: string
   name: string           // 1-50 chars
   defaultPrice: number   // integer rupees, 1-9999
   stockEnabled: boolean  // default false
@@ -199,8 +199,8 @@ export interface CanteenItem {
 }
 
 export interface SessionItem {
-  id?: number | string  // transitional: number on v19, UUID string on v20 — TODO(phase-b-step-2): narrow to string
-  sessionId: number     // FK to sessions table — TODO(phase-b-step-2): change to string after .upgrade() rewrites sessions
+  id?: string
+  sessionId: string     // FK to sessions table
   name: string          // 1-50 chars after trim
   price: number         // integer rupees, 0-99999
   quantity: number      // integer, 1-99

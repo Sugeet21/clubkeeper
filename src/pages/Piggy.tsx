@@ -34,7 +34,7 @@ export default function Piggy() {
     [] as CanteenItem[],
   )
   const itemNameById = useMemo(() => {
-    const m = new Map<number, string>()
+    const m = new Map<string, string>()
     for (const i of canteenItemsAll) {
       if (i.id !== undefined) m.set(i.id, i.name)
     }
@@ -255,7 +255,7 @@ function RestockList({
   itemNameById,
 }: {
   rows: StockPurchase[]
-  itemNameById: Map<number, string>
+  itemNameById: Map<string, string>
 }) {
   if (rows.length === 0) {
     return (

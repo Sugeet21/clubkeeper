@@ -364,15 +364,8 @@ function formatPlayers(s: Session): string {
 export default function SessionDetail() {
   const { sessionId: rawSessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
-  // Dual-accept route param (Phase B step 1.5 — #107). Legacy v19 = number,
-  // v20-seeded = UUID string. Round-trip check prevents "123abc" → 123 truncation.
-  const sid: number | string = (() => {
-    if (rawSessionId === undefined || rawSessionId === '') return NaN
-    const n = Number(rawSessionId)
-    return Number.isFinite(n) && n > 0 && String(n) === rawSessionId ? n : rawSessionId
-  })()
-  const sidValid =
-    typeof sid === 'string' ? sid.length > 0 : Number.isFinite(sid) && sid > 0
+  const sid = rawSessionId ?? ''
+  const sidValid = sid.length === 36
 
   // undefined = loading, null = not found, Session = loaded
   const session = useLiveQuery<Session | null>(
