@@ -32,7 +32,7 @@ import Poster from './pages/Poster'
 import { TopupRealtimeBridge } from './components/TopupRealtimeBridge'
 import { BookingRealtimeBridge } from './components/BookingRealtimeBridge'
 
-const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback']
+const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback', '/auth/login']
 // /c/ and /poster/ are public but use path prefixes — checked via startsWith in AppLayout
 // Wallet routes are private but not in BottomNav — they are deep-linked pages.
 // They must NOT be in PUBLIC_PATHS (would hide BottomNav on /tables if added).
@@ -136,6 +136,10 @@ function AppLayout() {
           {/* ── Public routes (no auth required) ─────────────────────── */}
           <Route path="/" element={<Landing />} />
           <Route path="/signup" element={<Signup />} />
+          {/* Phase C Chunk 1 — owner sign-in alias. Reuses the Signup screen
+              (which already handles already-signed-in → redirect) so there's
+              one onboarding surface, not two. */}
+          <Route path="/auth/login" element={<Signup />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/subscribe" element={<Subscribe />} />
           <Route path="/c/:clubSlug" element={<PlayerScan />} />
