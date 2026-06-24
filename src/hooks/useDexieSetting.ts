@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useSettings } from './useLiveData'
 import { updateSettings } from '../db/queries'
+import { db } from '../db/database'
 import type { ClubSettings } from '../types'
 
 /**
@@ -46,7 +47,12 @@ export function useDexieSetting<K extends keyof ClubSettings>(
 
   const setValue = useCallback(
     async (next: NonNullable<ClubSettings[K]>) => {
+      // eslint-disable-next-line no-console
+      console.log('[useDexieSetting] write', key, '→', next) // TEMP #97 diag — remove after triage
       await updateSettings({ [key]: next } as Partial<ClubSettings>)
+      const after = await db.settings.toCollection().first()
+      // eslint-disable-next-line no-console
+      console.log('[useDexieSetting] readback', key, '=', after?.[key]) // TEMP #97 diag — remove after triage
     },
     [key],
   )

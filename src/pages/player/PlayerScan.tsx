@@ -1,10 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { Check, X, AlertCircle, Coins, Calendar, IndianRupee } from 'lucide-react'
 import PlayerScanLayout from './PlayerScanLayout'
-import { UpiQrCard } from '../../components/UpiQrCard'
+import { PlayerUpiQrCard } from '../../components/player/PlayerUpiQrCard'
+import { PlayerLoader } from '../../components/player/PlayerLoader'
 import { getClubPublicInfo, submitTopupIntent, getTopupIntentStatus } from '../../lib/playerHubApi'
 import type { ClubPublicInfo, PublicTableInfo } from '../../types/playerHub'
 import { coinsEarnedForTopup } from '../../lib/coins'
+
+// Player-side wallet top-up flow. Visually rebuilt against
+// .claude/skills/clubkeeper/references/player_design_system.md. The state
+// machine, validation, API calls, timers, refs, and polling cadence are
+// unchanged from the prior implementation — this is a visual/UX refresh.
+//
+// Token naming reminder: player tokens are kebab-case in tailwind.config.js
+// (text-player-cue-yellow, etc.). Do NOT camelCase them in JSX — Tailwind's
+// slash-opacity parser doesn't tolerate camelCase keys.
 
 const GAME_LABELS: Record<string, string> = {
   pool: 'Pool',
@@ -21,7 +32,6 @@ function formatRupees(n: number): string {
 function PricingCard({ tables }: { tables: PublicTableInfo[] }) {
   const [open, setOpen] = useState(false)
 
-  // Group by gameType, preserving insertion order
   const groups = new Map<string, PublicTableInfo[]>()
   for (const t of tables) {
     const arr = groups.get(t.gameType) ?? []
@@ -30,28 +40,30 @@ function PricingCard({ tables }: { tables: PublicTableInfo[] }) {
   }
 
   return (
-    <div className="bg-bg-card border border-border rounded-2xl overflow-hidden">
+    <div className="bg-player-felt-deep border border-player-ball-white/15 rounded">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="w-full flex items-center gap-3 px-4 py-3.5 min-h-[44px] text-left"
+        className="w-full flex items-center gap-3 px-5 py-4 min-h-[48px] text-left focus:outline-none focus:ring-2 focus:ring-player-cue-yellow/30 rounded"
       >
-        <span className="text-[14px]">💰</span>
-        <span className="flex-1 text-[14px] font-semibold text-text">View pricing</span>
+        <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-yellow">
+          Rates
+        </span>
+        <span className="flex-1 font-body text-[14px] text-player-ball-white">View pricing</span>
         <svg
-          width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" strokeWidth="2"
-          className={`text-text-faint shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+          width="16" height="16" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="1.5"
+          className={`text-player-cue-cream/65 shrink-0 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
         >
           <path d="M9 6l6 6-6 6" />
         </svg>
       </button>
       {open && (
-        <div className="px-4 pb-4 pt-1 border-t border-border space-y-4">
+        <div className="px-5 pb-5 pt-1 border-t border-player-ball-white/15 space-y-5">
           {Array.from(groups.entries()).map(([gameType, list]) => (
             <div key={gameType}>
-              <p className="text-[11px] font-mono uppercase tracking-widest text-text-faint mb-2">
+              <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-yellow mb-3">
                 {GAME_LABELS[gameType] ?? gameType}
               </p>
               <div className="space-y-3">
@@ -70,31 +82,31 @@ function PricingCard({ tables }: { tables: PublicTableInfo[] }) {
 function PricingRow({ table }: { table: PublicTableInfo }) {
   const hasCard = Array.isArray(table.rateCard) && table.rateCard.length > 0
   return (
-    <div className="bg-bg border border-border rounded-xl px-3 py-2.5">
-      <p className="text-[14px] font-semibold text-text">{table.name}</p>
+    <div className="border-b border-player-ball-white/15 pb-3 last:border-b-0 last:pb-0">
+      <p className="font-display font-bold text-[15px] text-player-ball-white">{table.name}</p>
       {hasCard ? (
         <>
           <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
             {table.rateCard!.map((tier, i) => (
-              <span key={i} className="text-[13px] text-text-dim font-mono">
-                {tier.minutes} min {formatRupees(tier.price)}
+              <span key={i} className="font-mono text-[13px] text-player-cue-cream">
+                {tier.minutes}m {formatRupees(tier.price)}
                 {i < table.rateCard!.length - 1 && (
-                  <span className="text-text-faint ml-3">·</span>
+                  <span className="text-player-cue-cream/40 ml-3">·</span>
                 )}
               </span>
             ))}
           </div>
           {table.toleranceMinutes !== undefined && table.toleranceMinutes > 0 && (
-            <p className="text-[11px] text-text-faint mt-1.5">
+            <p className="font-body text-[12px] text-player-cue-cream/65 mt-1.5">
               {table.toleranceMinutes} min grace at every tier
             </p>
           )}
         </>
       ) : (
-        <p className="text-[13px] text-text-dim font-mono mt-1">
+        <p className="font-mono text-[13px] text-player-cue-cream mt-1">
           {formatRupees(table.ratePerHour)}/hr
           {table.ratePerFrame !== undefined && (
-            <span className="ml-2 text-text-faint">
+            <span className="ml-2 text-player-cue-cream/65">
               · {formatRupees(table.ratePerFrame)}/frame
             </span>
           )}
@@ -118,15 +130,6 @@ type PageState =
   | 'error'
 
 const AMOUNT_CHIPS = [100, 200, 500, 1000]
-
-function Spinner({ size = 20 }: { size?: number }) {
-  return (
-    <div
-      className="border-2 border-accent border-t-transparent rounded-full animate-spin"
-      style={{ width: size, height: size }}
-    />
-  )
-}
 
 export default function PlayerScan() {
   const { clubSlug } = useParams<{ clubSlug: string }>()
@@ -306,9 +309,8 @@ export default function PlayerScan() {
   if (pageState === 'loading') {
     return (
       <PlayerScanLayout>
-        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-          <Spinner size={32} />
-          <p className="text-text-dim text-sm">Loading club info…</p>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <PlayerLoader variant="block" size={14} label="Loading…" />
         </div>
       </PlayerScanLayout>
     )
@@ -317,14 +319,14 @@ export default function PlayerScan() {
   if (pageState === 'error') {
     return (
       <PlayerScanLayout>
-        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4">
-          <div className="w-12 h-12 rounded-full bg-busy/12 flex items-center justify-center">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-busy">
-              <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-          </div>
-          <p className="text-text font-semibold">{error ?? 'Something went wrong'}</p>
-          <p className="text-text-dim text-sm">Please check your internet connection and try again.</p>
+        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
+          <AlertCircle size={32} strokeWidth={1.5} className="text-player-ball-red" aria-hidden />
+          <p className="font-display text-[22px] font-bold text-player-ball-white">
+            Couldn't load
+          </p>
+          <p className="font-body text-[14px] text-player-cue-cream/65 max-w-[280px]">
+            {error ?? 'Something went wrong. Check your internet and try again.'}
+          </p>
         </div>
       </PlayerScanLayout>
     )
@@ -333,9 +335,13 @@ export default function PlayerScan() {
   if (pageState === 'club_not_found') {
     return (
       <PlayerScanLayout>
-        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4">
-          <p className="text-text-dim text-[15px]">This QR code is not active.</p>
-          <p className="text-text-faint text-sm">Please ask the staff for assistance.</p>
+        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
+          <p className="font-display text-[22px] font-bold text-player-ball-white">
+            QR not active
+          </p>
+          <p className="font-body text-[14px] text-player-cue-cream/65 max-w-[280px]">
+            This QR code isn't recognised. Please ask the staff for help.
+          </p>
         </div>
       </PlayerScanLayout>
     )
@@ -343,10 +349,14 @@ export default function PlayerScan() {
 
   if (pageState === 'topups_disabled') {
     return (
-      <PlayerScanLayout>
-        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4">
-          <p className="text-text-dim text-[15px]">Top-ups are currently disabled at this club.</p>
-          <p className="text-text-faint text-sm">Please ask the staff for assistance.</p>
+      <PlayerScanLayout clubName={clubInfo?.clubName}>
+        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
+          <p className="font-display text-[22px] font-bold text-player-ball-white">
+            Top-ups paused
+          </p>
+          <p className="font-body text-[14px] text-player-cue-cream/65 max-w-[280px]">
+            This club isn't accepting top-ups right now. Please ask the staff to help.
+          </p>
         </div>
       </PlayerScanLayout>
     )
@@ -354,24 +364,33 @@ export default function PlayerScan() {
 
   if (pageState === 'confirmed') {
     return (
-      <PlayerScanLayout>
-        <div className="flex flex-col items-center gap-6 py-10 text-center">
-          <div className="w-16 h-16 rounded-full bg-free/12 flex items-center justify-center">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-free">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
+      <PlayerScanLayout clubName={clubInfo?.clubName}>
+        <div className="flex flex-col items-center gap-6 py-6 text-center">
+          <div
+            className="w-16 h-16 rounded-full flex items-center justify-center"
+            style={{ background: 'rgba(45, 107, 58, 0.2)' }}
+            aria-hidden
+          >
+            <Check size={32} strokeWidth={2.5} className="text-player-ball-green" />
           </div>
           <div>
-            <p className="text-[22px] font-bold text-text">
-              ₹{amount.toLocaleString('en-IN')} added to your wallet
+            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-cream/65 mb-2">
+              Top-up confirmed
             </p>
-            <p className="text-text-dim text-sm mt-2">
-              at {clubInfo?.clubName ?? 'the club'}
+            <p className="font-mono text-[40px] font-bold text-player-cue-yellow leading-none">
+              {formatRupees(amount)}
+            </p>
+            <p className="font-body text-[14px] text-player-cue-cream mt-3">
+              added to your wallet at {clubInfo?.clubName ?? 'the club'}
             </p>
           </div>
-          <div className="bg-bg-card border border-border rounded-2xl px-5 py-3 w-full">
-            <p className="text-text-faint text-[12px]">Show your mobile at the table to use your balance</p>
-            <p className="text-text font-mono font-bold text-lg mt-1">{mobile.replace(/(\d{5})(\d{5})/, '$1 $2')}</p>
+          <div className="bg-player-felt-deep border border-player-ball-white/15 rounded p-5 w-full text-left">
+            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-cream/65 mb-1">
+              Show this at the table
+            </p>
+            <p className="font-mono font-bold text-[22px] text-player-ball-white tracking-wide">
+              {mobile.replace(/(\d{5})(\d{5})/, '$1 $2')}
+            </p>
           </div>
           {clubInfo?.coinsEnabled && clubInfo.coinTiers.length > 0 && (() => {
             // Prefer the server-side authoritative total (includes welcome
@@ -382,9 +401,13 @@ export default function PlayerScan() {
             const coins = confirmedCoins ?? coinsEarnedForTopup(amount, clubInfo.coinTiers)
             if (coins <= 0) return null
             return (
-              <div className="flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl w-full">
-                <span className="text-amber-400 font-semibold text-[14px]">
-                  🪙 +{coins.toLocaleString('en-IN')} ClubCoins credited!
+              <div
+                className="flex items-center justify-center gap-2 px-4 py-3 rounded w-full"
+                style={{ background: 'rgba(244, 197, 66, 0.15)', border: '1px solid rgba(244, 197, 66, 0.35)' }}
+              >
+                <Coins size={18} strokeWidth={1.5} className="text-player-cue-yellow" aria-hidden />
+                <span className="font-mono text-[14px] font-semibold text-player-cue-yellow">
+                  +{coins.toLocaleString('en-IN')} ClubCoins credited
                 </span>
               </div>
             )
@@ -396,16 +419,24 @@ export default function PlayerScan() {
 
   if (pageState === 'rejected') {
     return (
-      <PlayerScanLayout>
-        <div className="flex flex-col items-center gap-4 py-10 text-center">
-          <div className="w-14 h-14 rounded-full bg-busy/12 flex items-center justify-center">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-busy">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+      <PlayerScanLayout clubName={clubInfo?.clubName}>
+        <div className="flex flex-col items-center gap-5 py-8 text-center">
+          <div
+            className="w-14 h-14 rounded-full flex items-center justify-center"
+            style={{ background: 'rgba(184, 49, 42, 0.15)' }}
+            aria-hidden
+          >
+            <X size={28} strokeWidth={2.5} className="text-player-ball-red" />
           </div>
-          <p className="text-[18px] font-bold text-text">Top-up rejected</p>
-          {rejectReason && <p className="text-text-dim text-sm">{rejectReason}</p>}
-          <p className="text-text-faint text-sm">Please speak to staff.</p>
+          <p className="font-display text-[22px] font-bold text-player-ball-white">
+            Top-up rejected
+          </p>
+          {rejectReason && (
+            <p className="font-body text-[14px] text-player-cue-cream">{rejectReason}</p>
+          )}
+          <p className="font-body text-[13px] text-player-cue-cream/65 max-w-[280px]">
+            Please speak to the staff. They can help sort this out.
+          </p>
         </div>
       </PlayerScanLayout>
     )
@@ -413,13 +444,17 @@ export default function PlayerScan() {
 
   if (pageState === 'expired') {
     return (
-      <PlayerScanLayout>
-        <div className="flex flex-col items-center gap-4 py-10 text-center">
-          <p className="text-[18px] font-bold text-text">Request expired</p>
-          <p className="text-text-dim text-sm">This request expired after 10 minutes.</p>
+      <PlayerScanLayout clubName={clubInfo?.clubName}>
+        <div className="flex flex-col items-center gap-5 py-8 text-center">
+          <p className="font-display text-[22px] font-bold text-player-ball-white">
+            Request expired
+          </p>
+          <p className="font-body text-[14px] text-player-cue-cream/65 max-w-[280px]">
+            This request expired after 10 minutes without confirmation.
+          </p>
           <button
             onClick={() => { stopPolling(); setIntentId(null); setPageState('form') }}
-            className="min-h-[44px] px-6 bg-accent text-bg font-bold rounded-2xl"
+            className="min-h-[48px] px-6 bg-player-cue-yellow text-player-felt-deep font-body font-semibold text-[15px] rounded tracking-wide focus:outline-none focus:ring-2 focus:ring-player-cue-yellow/50 focus:ring-offset-2 focus:ring-offset-player-felt active:scale-[0.98] transition-transform"
           >
             Try again
           </button>
@@ -430,22 +465,28 @@ export default function PlayerScan() {
 
   if (pageState === 'waiting_confirm') {
     return (
-      <PlayerScanLayout>
-        <div className="flex flex-col items-center gap-6 py-8 text-center">
-          <Spinner size={40} />
+      <PlayerScanLayout clubName={clubInfo?.clubName}>
+        <div className="flex flex-col items-center gap-6 py-6 text-center">
+          <PlayerLoader variant="block" size={14} label="Waiting for staff" />
           <div>
-            <p className="text-[17px] font-bold text-text">
-              Waiting for staff to confirm your ₹{amount.toLocaleString('en-IN')}…
+            <p className="font-display text-[22px] font-bold text-player-ball-white">
+              Confirming your {formatRupees(amount)}
             </p>
-            <p className="text-text-dim text-sm mt-2">
-              This usually takes under a minute.
+            <p className="font-body text-[14px] text-player-cue-cream/65 mt-2 max-w-[280px]">
+              Staff will mark this paid in under a minute.
             </p>
           </div>
-          <div className="bg-bg-card border border-border rounded-2xl px-5 py-4 w-full">
-            <p className="text-text-faint text-[11px] font-mono uppercase tracking-widest mb-1">Show this to staff</p>
-            <p className="text-accent font-mono font-bold text-2xl tracking-wider">{shortCode}</p>
+          <div className="bg-player-felt-deep border-l-[3px] border-player-cue-yellow rounded-sm py-5 px-6 w-full">
+            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-cream/65 mb-2">
+              Show this to staff
+            </p>
+            <p className="font-mono font-bold text-[28px] text-player-cue-yellow tracking-[0.08em]">
+              {shortCode}
+            </p>
           </div>
-          <p className="text-text-faint text-[12px]">Request will expire in 10 minutes.</p>
+          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-cream/40">
+            Expires in 10 min
+          </p>
         </div>
       </PlayerScanLayout>
     )
@@ -458,42 +499,47 @@ export default function PlayerScan() {
       : null
 
     return (
-      <PlayerScanLayout>
-        <div className="flex flex-col gap-5">
-          {/* Step 1 done */}
-          <div className="bg-free/8 border border-free/30 rounded-2xl px-4 py-3 flex items-center gap-3">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-free shrink-0">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <p className="text-free font-semibold text-[14px]">Step 1 of 2 complete</p>
+      <PlayerScanLayout clubName={clubInfo?.clubName} meta="STEP 2 OF 2">
+        <div className="flex flex-col gap-6">
+          {/* Step 1 complete */}
+          <div
+            className="flex items-center gap-3 px-4 py-3 rounded"
+            style={{ background: 'rgba(45, 107, 58, 0.15)', border: '1px solid rgba(45, 107, 58, 0.4)' }}
+          >
+            <Check size={18} strokeWidth={2.5} className="text-player-ball-green shrink-0" aria-hidden />
+            <p className="font-body text-[14px] font-medium text-player-ball-green">
+              Details submitted — now pay
+            </p>
           </div>
 
-          {/* Payment block */}
-          <div className="bg-bg-card border border-border rounded-2xl p-4 flex flex-col items-center gap-4">
-            <p className="text-[26px] font-bold font-mono text-text">
-              ₹{amount.toLocaleString('en-IN')}
-            </p>
+          {/* Amount hero + payment block */}
+          <div className="bg-player-felt-deep border border-player-ball-white/15 rounded p-6 flex flex-col items-center gap-5">
+            <div className="text-center">
+              <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-cream/65 mb-1">
+                Amount to pay
+              </p>
+              <p className="font-mono font-bold text-[44px] text-player-cue-yellow leading-none tracking-tight">
+                {formatRupees(amount)}
+              </p>
+            </div>
 
             {upiDeepLink ? (
               <>
-                {/* Primary: UPI deep-link button */}
                 <a
                   href={upiDeepLink}
-                  className="block w-full bg-green-500 text-black font-bold text-[17px] py-4 rounded-2xl text-center"
+                  className="block w-full bg-player-cue-yellow text-player-felt-deep font-body font-semibold text-[15px] py-4 rounded text-center min-h-[48px] tracking-wide focus:outline-none focus:ring-2 focus:ring-player-cue-yellow/50 focus:ring-offset-2 focus:ring-offset-player-felt-deep active:scale-[0.98] transition-transform"
                 >
-                  Pay ₹{amount.toLocaleString('en-IN')} with UPI
+                  Pay {formatRupees(amount)} with UPI
                 </a>
-                <p className="text-[12px] text-text-faint text-center -mt-2">
+                <p className="font-body text-[12px] text-player-cue-cream/65 text-center -mt-1">
                   Opens GPay, PhonePe, Paytm, or any UPI app
                 </p>
-
-                {/* Secondary: collapsible QR for another device */}
                 <details className="w-full">
-                  <summary className="text-[13px] text-text-faint cursor-pointer text-center">
+                  <summary className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-cream/65 cursor-pointer text-center select-none list-none">
                     Or scan from another device
                   </summary>
-                  <div className="mt-3 flex justify-center">
-                    <UpiQrCard
+                  <div className="mt-4 flex justify-center">
+                    <PlayerUpiQrCard
                       amount={amount}
                       upiId={clubInfo!.upiId!}
                       payeeName={clubInfo!.clubName}
@@ -503,154 +549,190 @@ export default function PlayerScan() {
                 </details>
               </>
             ) : (
-              <div className="bg-paused/8 border border-paused/30 rounded-2xl px-5 py-4 w-full text-center">
-                <p className="text-paused font-semibold">Pay ₹{amount.toLocaleString('en-IN')} cash to staff</p>
+              <div
+                className="rounded p-4 w-full text-center"
+                style={{ background: 'rgba(244, 197, 66, 0.15)', border: '1px solid rgba(244, 197, 66, 0.4)' }}
+              >
+                <p className="font-body font-semibold text-player-cue-yellow">
+                  Pay {formatRupees(amount)} cash to staff
+                </p>
               </div>
             )}
 
-            <div className="w-full bg-bg border border-border rounded-2xl px-4 py-2 text-center">
-              <p className="text-text-faint text-[11px] font-mono uppercase tracking-widest">Reference code</p>
-              <p className="text-accent font-mono font-bold text-lg tracking-widest">{shortCode}</p>
+            <div className="w-full pt-4 border-t border-player-ball-white/15 text-center">
+              <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-cream/65 mb-1">
+                Reference code
+              </p>
+              <p className="font-mono font-bold text-[18px] text-player-cue-yellow tracking-[0.1em]">
+                {shortCode}
+              </p>
             </div>
           </div>
 
           {/* I've paid button */}
-          <button
-            onClick={() => setPageState('waiting_confirm')}
-            disabled={!payBtnEnabled}
-            className={`w-full min-h-[52px] rounded-2xl font-bold text-[16px] transition-opacity ${
-              payBtnEnabled
-                ? 'bg-accent text-bg'
-                : 'bg-accent/40 text-bg/60 cursor-not-allowed'
-            }`}
-          >
-            {payBtnEnabled ? "I've paid — notify staff" : `I've paid (${secondsLeft}s)`}
-          </button>
-          <p className="text-text-faint text-[12px] text-center">
-            The button enables after 8 seconds so payment completes before we notify.
-          </p>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => setPageState('waiting_confirm')}
+              disabled={!payBtnEnabled}
+              className={`w-full min-h-[52px] rounded font-body font-semibold text-[15px] tracking-wide transition-all focus:outline-none focus:ring-2 focus:ring-player-cue-yellow/50 focus:ring-offset-2 focus:ring-offset-player-felt ${
+                payBtnEnabled
+                  ? 'bg-player-cue-yellow text-player-felt-deep active:scale-[0.98]'
+                  : 'bg-player-cue-yellow/40 text-player-felt-deep/60 cursor-not-allowed'
+              }`}
+            >
+              {payBtnEnabled ? "I've paid — notify staff" : `I've paid (${secondsLeft}s)`}
+            </button>
+            <p className="font-body text-[12px] text-player-cue-cream/65 text-center">
+              The button enables after 8s so payment lands before we notify.
+            </p>
+          </div>
         </div>
       </PlayerScanLayout>
     )
   }
 
-  // ─── Form state ────────────────────────────────────────────────────────────
+  // ─── Form / submitting state ───────────────────────────────────────────────
+
+  const submitting = pageState === 'submitting'
+  const formValid = isFormValid()
 
   return (
-    <PlayerScanLayout>
-      <div className="flex flex-col gap-5">
-        {/* Header */}
+    <PlayerScanLayout clubName={clubInfo?.clubName} meta="STEP 1 OF 2">
+      {/* The page scrolls; primary CTA stays sticky at the bottom (design system §9). */}
+      <div className="flex flex-col gap-6 pb-28">
+        {/* Heading */}
         <div>
-          <p className="text-text-faint text-[12px] font-mono uppercase tracking-widest mb-1">
-            {clubInfo?.clubName ?? 'Club'}
+          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-player-cue-yellow mb-2">
+            Wallet
           </p>
-          <h1 className="text-[24px] font-bold text-text">Add wallet balance</h1>
-          <p className="text-text-dim text-sm mt-1">
-            Pay via UPI, then staff will credit your wallet.
+          <h1 className="font-display font-bold text-[32px] leading-[1.05] text-player-ball-white">
+            Top up your <em className="not-italic text-player-cue-yellow font-display italic">balance.</em>
+          </h1>
+          <p className="font-body text-[15px] text-player-cue-cream/80 mt-3 leading-relaxed">
+            Pay over UPI. Staff confirms at the table.
           </p>
         </div>
 
         {/* Name (optional) */}
         <div>
-          <label className="block text-[12px] font-mono font-bold uppercase tracking-widest text-text-faint mb-2">
-            Your name (optional)
+          <label htmlFor="ck-name" className="block font-body text-[13px] font-medium text-player-cue-cream mb-2">
+            Your name <span className="text-player-cue-cream/65 font-normal">(optional)</span>
           </label>
           <input
+            id="ck-name"
             type="text"
             value={name}
             onChange={(e) => { setName(e.target.value); setNameError(null) }}
             placeholder="Rahul"
-            className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text text-[15px] focus:border-accent outline-none placeholder:text-text-faint"
+            aria-invalid={nameError !== null}
+            aria-describedby={nameError ? 'ck-name-err' : undefined}
+            className="player-input w-full px-4 py-3.5 bg-player-felt-deep border border-player-ball-white/35 rounded text-player-ball-white text-[16px] font-body min-h-[48px] focus:outline-none focus:border-player-cue-yellow focus:ring-[3px] focus:ring-player-cue-yellow/15 placeholder:text-player-cue-cream/40"
           />
-          {nameError && <p className="text-busy text-[13px] mt-1.5">{nameError}</p>}
+          {nameError && (
+            <p id="ck-name-err" className="font-body text-[12px] text-player-ball-red mt-1.5">{nameError}</p>
+          )}
         </div>
 
         {/* Mobile (required) */}
         <div>
-          <label className="block text-[12px] font-mono font-bold uppercase tracking-widest text-text-faint mb-2">
-            Mobile number <span className="text-busy">*</span>
+          <label htmlFor="ck-mobile" className="block font-body text-[13px] font-medium text-player-cue-cream mb-2">
+            Mobile number <span className="text-player-ball-red">*</span>
           </label>
           <input
+            id="ck-mobile"
             type="tel"
             inputMode="numeric"
+            autoComplete="off"
             value={mobile}
             onChange={(e) => { setMobile(e.target.value.replace(/\D/g, '').slice(0, 10)); setMobileError(null) }}
             placeholder="9876543210"
-            className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text text-[15px] focus:border-accent outline-none placeholder:text-text-faint font-mono"
+            aria-invalid={mobileError !== null}
+            aria-describedby={mobileError ? 'ck-mobile-err' : 'ck-mobile-help'}
+            className="player-input w-full px-4 py-3.5 bg-player-felt-deep border border-player-ball-white/35 rounded text-player-ball-white text-[16px] font-mono min-h-[48px] focus:outline-none focus:border-player-cue-yellow focus:ring-[3px] focus:ring-player-cue-yellow/15 placeholder:text-player-cue-cream/40 tracking-wider"
           />
-          {mobileError && <p className="text-busy text-[13px] mt-1.5">{mobileError}</p>}
+          {mobileError ? (
+            <p id="ck-mobile-err" className="font-body text-[12px] text-player-ball-red mt-1.5">{mobileError}</p>
+          ) : (
+            <p id="ck-mobile-help" className="font-body text-[12px] text-player-cue-cream/65 mt-1.5">
+              Staff uses this to find your wallet at the table.
+            </p>
+          )}
         </div>
 
         {/* Amount */}
         <div>
-          <label className="block text-[12px] font-mono font-bold uppercase tracking-widest text-text-faint mb-2">
-            Amount <span className="text-busy">*</span>
+          <label className="block font-body text-[13px] font-medium text-player-cue-cream mb-2">
+            Amount <span className="text-player-ball-red">*</span>
           </label>
-          <div className="flex gap-2 flex-wrap mb-3">
-            {AMOUNT_CHIPS.map((chip) => (
-              <button
-                key={chip}
-                onClick={() => handleAmountChip(chip)}
-                className={`min-h-[44px] px-4 rounded-full text-[14px] font-semibold border transition-colors ${
-                  amount === chip && !customAmount
-                    ? 'bg-accent text-bg border-accent'
-                    : 'bg-bg-card text-text border-border'
-                }`}
-              >
-                ₹{chip}
-              </button>
-            ))}
+          <div className="grid grid-cols-4 gap-2 mb-3">
+            {AMOUNT_CHIPS.map((chip) => {
+              const active = amount === chip && !customAmount
+              return (
+                <button
+                  key={chip}
+                  type="button"
+                  onClick={() => handleAmountChip(chip)}
+                  aria-pressed={active}
+                  className={`min-h-[48px] rounded font-mono font-semibold text-[14px] border transition-colors focus:outline-none focus:ring-2 focus:ring-player-cue-yellow/30 ${
+                    active
+                      ? 'bg-player-felt-light text-player-cue-yellow border-player-cue-yellow'
+                      : 'bg-player-felt-deep text-player-ball-white border-player-ball-white/35'
+                  }`}
+                >
+                  ₹{chip}
+                </button>
+              )
+            })}
           </div>
-          <input
-            type="text"
-            inputMode="numeric"
-            value={customAmount}
-            onChange={(e) => handleCustomAmount(e.target.value.replace(/\D/g, ''))}
-            placeholder="Other amount (₹100–₹10,000)"
-            className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text text-[15px] focus:border-accent outline-none placeholder:text-text-faint"
-          />
-          {amountError && <p className="text-busy text-[13px] mt-1.5">{amountError}</p>}
+          <div className="relative">
+            <IndianRupee
+              size={16}
+              strokeWidth={1.5}
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-player-cue-cream/65 pointer-events-none"
+              aria-hidden
+            />
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              value={customAmount}
+              onChange={(e) => handleCustomAmount(e.target.value.replace(/\D/g, ''))}
+              placeholder="Other amount (100–10,000)"
+              aria-label="Custom amount in rupees"
+              aria-invalid={amountError !== null}
+              aria-describedby={amountError ? 'ck-amt-err' : undefined}
+              className="player-input w-full pl-10 pr-4 py-3.5 bg-player-felt-deep border border-player-ball-white/35 rounded text-player-ball-white text-[16px] font-mono min-h-[48px] focus:outline-none focus:border-player-cue-yellow focus:ring-[3px] focus:ring-player-cue-yellow/15 placeholder:text-player-cue-cream/40"
+            />
+          </div>
+          {amountError && (
+            <p id="ck-amt-err" className="font-body text-[12px] text-player-ball-red mt-1.5">{amountError}</p>
+          )}
         </div>
 
-        {/* Coin earning preview. The player browser doesn't know the
-            owner-side welcome-bonus config, so we phrase the lower bound
-            ('at least N') and hint at the first-top-up bonus. The exact
-            total is surfaced server-side on the confirmation screen via
-            coins_credited. See #87 / Pattern P1. */}
+        {/* Coin earning preview. Player browser doesn't know the owner-side
+            welcome-bonus config; phrase as a lower bound. Exact total is
+            surfaced server-side via coins_credited on confirmation. See #87
+            / Pattern P1. */}
         {clubInfo?.coinsEnabled && amount > 0 && clubInfo.coinTiers.length > 0 && (() => {
           const coins = coinsEarnedForTopup(amount, clubInfo.coinTiers)
           if (coins <= 0) return null
           return (
-            <div className="flex flex-col gap-0.5 px-3 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl">
-              <span className="text-[14px] text-amber-400 font-semibold">
-                🪙 You'll earn at least {coins.toLocaleString('en-IN')} ClubCoins on this top-up
-              </span>
-              <span className="text-[11px] text-amber-300/80">
-                + welcome bonus if this is your first top-up here
-              </span>
+            <div
+              className="flex items-start gap-3 px-4 py-3 rounded"
+              style={{ background: 'rgba(244, 197, 66, 0.1)', border: '1px solid rgba(244, 197, 66, 0.3)' }}
+            >
+              <Coins size={18} strokeWidth={1.5} className="text-player-cue-yellow shrink-0 mt-0.5" aria-hidden />
+              <div className="flex-1 min-w-0">
+                <p className="font-body text-[14px] font-medium text-player-cue-yellow">
+                  Earn at least {coins.toLocaleString('en-IN')} ClubCoins
+                </p>
+                <p className="font-body text-[12px] text-player-cue-cream/65 mt-0.5">
+                  + welcome bonus on your first top-up here
+                </p>
+              </div>
             </div>
           )
         })()}
-
-        {/* Submit */}
-        <button
-          onClick={handleSubmit}
-          disabled={!isFormValid() || pageState === 'submitting'}
-          className={`w-full min-h-[52px] rounded-2xl font-bold text-[16px] flex items-center justify-center gap-2 transition-opacity ${
-            isFormValid() && pageState !== 'submitting'
-              ? 'bg-accent text-bg'
-              : 'bg-accent/40 text-bg/60 cursor-not-allowed'
-          }`}
-        >
-          {pageState === 'submitting' ? (
-            <>
-              <Spinner size={18} />
-              <span>Submitting…</span>
-            </>
-          ) : (
-            `Pay ₹${amount ? amount.toLocaleString('en-IN') : '—'} via UPI`
-          )}
-        </button>
 
         {/* Book a table — Phase 1, #84. Second CTA below the topup submit.
             Shown only when the club has opted in (`accepts_bookings=true` in
@@ -658,10 +740,11 @@ export default function PlayerScan() {
             (Part A defensive read — without ids we can't safely submit). */}
         {clubInfo?.acceptsBookings && clubInfo.tablesJson.some((t) => typeof t.id === 'number') && (
           <button
+            type="button"
             onClick={() => clubSlug && navigate(`/c/${clubSlug}/book`)}
-            className="w-full min-h-[52px] rounded-2xl font-bold text-[16px] bg-bg-card border border-accent/40 text-accent flex items-center justify-center gap-2"
+            className="w-full min-h-[48px] rounded font-body font-semibold text-[14px] bg-transparent border border-player-cue-yellow text-player-cue-yellow flex items-center justify-center gap-2 tracking-wide focus:outline-none focus:ring-2 focus:ring-player-cue-yellow/30 active:scale-[0.98] transition-transform"
           >
-            <span>📅</span>
+            <Calendar size={16} strokeWidth={1.5} aria-hidden />
             <span>Book a table</span>
           </button>
         )}
@@ -671,6 +754,39 @@ export default function PlayerScan() {
         {clubInfo?.acceptsPricingDisplay && clubInfo.tablesJson.length > 0 && (
           <PricingCard tables={clubInfo.tablesJson} />
         )}
+      </div>
+
+      {/* Sticky bottom CTA (design system §9). Lives outside the scrolling
+          content above so it stays visible while the form scrolls on small
+          phones. iOS safe-area inset honoured. */}
+      <div
+        className="fixed bottom-0 left-0 right-0 px-[18px] pt-3 pointer-events-none"
+        style={{
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)',
+          background:
+            'linear-gradient(to top, rgba(6, 36, 24, 0.95) 60%, rgba(6, 36, 24, 0))',
+        }}
+      >
+        <div className="mx-auto w-full max-w-[480px] pointer-events-auto">
+          <button
+            onClick={handleSubmit}
+            disabled={!formValid || submitting}
+            className={`w-full min-h-[52px] rounded font-body font-semibold text-[15px] tracking-wide flex items-center justify-center gap-2 transition-all focus:outline-none focus:ring-2 focus:ring-player-cue-yellow/50 focus:ring-offset-2 focus:ring-offset-player-felt ${
+              formValid && !submitting
+                ? 'bg-player-cue-yellow text-player-felt-deep active:scale-[0.98]'
+                : 'bg-player-cue-yellow/40 text-player-felt-deep/60 cursor-not-allowed'
+            }`}
+          >
+            {submitting ? (
+              <>
+                <PlayerLoader size={10} label="Submitting" />
+                <span>Submitting…</span>
+              </>
+            ) : (
+              <span>Top up {amount ? formatRupees(amount) : '—'}</span>
+            )}
+          </button>
+        </div>
       </div>
     </PlayerScanLayout>
   )

@@ -41,3 +41,31 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Player-only input adjustments. Scoped to .player-input so this never
+   touches any staff input. The Tailwind className on each <input/> already
+   sets bg-player-felt-deep, text-player-ball-white, and placeholder color
+   — do NOT set background or text-fill-color here in the default state;
+   that's what made typed text invisible. We only need:
+     - color-scheme: dark so the form control renders in dark mode (otherwise
+       Chrome's UA stylesheet paints fields with the system's light field
+       background, defeating Tailwind's bg utility on some versions).
+     - caret-color: visible cursor on dark felt. */
+.player-input {
+  color-scheme: dark;
+  caret-color: #f4c542;
+}
+/* Autofill ONLY: Chrome paints autofilled inputs with its own yellow/cream
+   background and forces -webkit-text-fill-color, both of which override
+   Tailwind. Repaint the background with an inset box-shadow matching
+   --felt-deep and restore the cream text fill. The long transition delay
+   keeps autofill from re-flashing the yellow on focus. */
+.player-input:-webkit-autofill,
+.player-input:-webkit-autofill:hover,
+.player-input:-webkit-autofill:focus,
+.player-input:-webkit-autofill:active {
+  -webkit-box-shadow: inset 0 0 0 1000px #062418 !important;
+  -webkit-text-fill-color: #f8f4e8 !important;
+  caret-color: #f4c542 !important;
+  transition: background-color 9999s ease-out 0s;
+}
