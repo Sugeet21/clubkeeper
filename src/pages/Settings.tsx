@@ -1137,6 +1137,25 @@ export default function Settings() {
           </div>
         </SettingsSection>
 
+        {/* ── DEV ONLY: Phase C Chunk 3 smoke-test entry point ───────────── */}
+        {/* Stripped from production bundles by Vite tree-shaking when         */}
+        {/* import.meta.env.DEV is false. Lets you click into the sync wrapper */}
+        {/* test page without typing the URL (RequireAccess bounces fresh-tab  */}
+        {/* direct-URL navigation to /signup before dbReady resolves).         */}
+        {import.meta.env.DEV && (
+          <div className="mt-6 p-3 border border-dashed border-accent/40 rounded-xl">
+            <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint mb-2">
+              Dev tools
+            </p>
+            <button
+              onClick={() => navigate('/__dev/test-outbox')}
+              className="w-full min-h-[44px] py-3 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold active:bg-bg transition-colors"
+            >
+              Open /__dev/test-outbox
+            </button>
+          </div>
+        )}
+
       </div>
 
       {/* ── Rounding confirm modal ──────────────────────────────────────── */}
