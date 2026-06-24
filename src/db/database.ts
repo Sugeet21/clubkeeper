@@ -516,12 +516,21 @@ export class ClubKeeperDB extends Dexie {
         }
       })
 
-      // bookings — top-level tableId FK
+      // bookings — top-level tableId FK + consumedSessionId FK
+      // consumedSessionId points into sessions (just rewritten in Phase 2), so
+      // any legacy numeric value must be remapped through idMaps.sessions or
+      // the post-upgrade Booking row will hold a stale stringified-number that
+      // no longer resolves. Type-narrowed Booking declares string for both
+      // fields; the callback sees raw upgrade-time data which may be number.
       await tx.table('bookings').toCollection().modify((booking: {
         tableId: number | string
+        consumedSessionId?: number | string
       }) => {
         if (typeof booking.tableId === 'number') {
           booking.tableId = idMaps.gameTables.get(booking.tableId) ?? String(booking.tableId)
+        }
+        if (typeof booking.consumedSessionId === 'number') {
+          booking.consumedSessionId = idMaps.sessions.get(booking.consumedSessionId) ?? String(booking.consumedSessionId)
         }
       })
     })

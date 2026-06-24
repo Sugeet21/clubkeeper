@@ -2,6 +2,20 @@
 
 ---
 
+## 25 Jun 2026 — Phase C Chunk 0: Step 2 audit fixups
+
+- `fix(types): Phase C Chunk 0 — Step 2 audit fixups (booking types, _migrationSeq, SyncTableName, §4.2 amend)`
+- **Why:** Phase C ramp-up surfaced 5 leftovers from the Step 2 audit. Shipping them as a standalone chunk before any sync engine code so the Chunk 1+ work doesn't compound on stale types.
+- **What shipped:**
+  - `src/types/booking.ts` — `Booking.tableId` and `Booking.consumedSessionId` narrowed `number` → `string` (post-v20 UUIDs).
+  - `src/types/index.ts` — `_migrationSeq?: number` added to `GameTable`, `Session`, `SessionItem`, `CanteenItem` (§10.4 resumable upload). New `SyncTableName` union exported in **snake_case Supabase format** (`'game_tables' | 'sessions' | ... | 'bookings'`) so `SyncRunner.pushOne` can pass directly to `supabase.from(table)` without a hot-path conversion. `OutboxRow.table` retyped from raw `string` → `SyncTableName`.
+  - `src/db/database.ts` — `.upgrade()` callback's bookings `.modify()` now remaps `consumedSessionId` legacy numerics through `idMaps.sessions` too. Previously only `tableId` was remapped, which would have left consumed-booking → session links pointing at stale stringified numbers post-upgrade.
+  - `references/sync_architecture_v2.md` — v3.2 amendment block added at top. §4.2 `session_items` DDL drops the invented `canteen_item_id UUID NOT NULL` column (Dexie SessionItem never carried that field — denormalised snapshot model). Notes that production uses `clubs.owner_id` (not `owner_user_id` as v2 §4.1 said).
+- **Decisions captured this chunk:** snake_case for `SyncTableName` (Sugeet's call — fewer drain-loop conversions). Production schema column name is `clubs.owner_id`; v2 doc was wrong.
+- `npm run build` clean (0 TS errors).
+
+---
+
 ## 24 Jun 2026 — Phase B step 2: v20 .upgrade() UUID migration complete
 
 - `ee40cda` — feat(db): Phase B step 2 — v20 .upgrade() UUID migration + collapse number|string unions

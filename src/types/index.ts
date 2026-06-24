@@ -48,6 +48,7 @@ export interface GameTable {
   rateCard?: RateTier[]        // if present + non-empty → tier-based billing
   toleranceMinutes?: number    // default 10 when rateCard exists; ignored when absent
   rateCardBilling?: 'minimum' | 'prorated'  // v11: default 'prorated' if omitted
+  _migrationSeq?: number       // set by v20 .upgrade(), used by §10.4 upload
 }
 
 export interface TableMove {
@@ -81,6 +82,7 @@ export interface Session {
   isBackEntry?: boolean               // v12: true if logged via Back Entry flow, not live timer
   paymentBreakdown?: PaymentBreakdown // v13: cash/UPI/wallet split captured at stopSession; sum === amount
   paymentInProgress?: boolean         // true while session is paused waiting for staff to confirm payment
+  _migrationSeq?: number              // set by v20 .upgrade(), used by §10.4 upload
 }
 
 /**
@@ -196,6 +198,7 @@ export interface CanteenItem {
   createdAt: number
   sortOrder: number
   peakPrice?: number     // v18: optional peak-hour price, integer rupees, 1-9999. Undefined = item never uses peak pricing.
+  _migrationSeq?: number // set by v20 .upgrade(), used by §10.4 upload
 }
 
 export interface SessionItem {
@@ -205,16 +208,34 @@ export interface SessionItem {
   price: number         // integer rupees, 0-99999
   quantity: number      // integer, 1-99
   addedAt: number       // Date.now() at creation
+  _migrationSeq?: number // set by v20 .upgrade(), used by §10.4 upload
 }
 
 // ─── Outbox (Phase C sync queue — local-only, never exported) ────────────────
 // _outbox rows represent pending Supabase writes. Phase B declares the table;
 // Phase C adds the worker that drains it. No code writes to _outbox yet.
 
+/**
+ * The 9 synced tables in their Supabase (snake_case) names. The outbox stores
+ * the wire-format name so the Phase C SyncRunner.pushOne can pass it directly
+ * to `supabase.from(table)` without a per-row conversion. A Dexie-side mapper
+ * lives next to syncRunner.ts when Phase C ships.
+ */
+export type SyncTableName =
+  | 'game_tables'
+  | 'sessions'
+  | 'session_items'
+  | 'canteen_items'
+  | 'customers'
+  | 'wallet_transactions'
+  | 'canteen_sales'
+  | 'stock_purchases'
+  | 'bookings'
+
 export interface OutboxRow {
   seq?: number              // auto-inc, ensures FIFO ordering
   idempotencyKey: string    // UUID, used as Supabase upsert conflict key (Phase C)
-  table: string             // 'sessions' | 'customers' | etc.
+  table: SyncTableName      // Supabase snake_case name; pushOne passes directly to .from()
   op: 'insert' | 'update' | 'soft_delete'
   rowId: string             // the data row's UUID
   payload: unknown          // for insert/update: full row body; for soft_delete: { deleted_at }

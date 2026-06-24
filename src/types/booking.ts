@@ -11,7 +11,7 @@ export type BookingStatus = 'confirmed' | 'consumed' | 'no_show' | 'cancelled'
 
 export interface Booking {
   id: string                       // = Supabase booking_intents.id (UUID)
-  tableId: number                  // Dexie GameTable.id at the time of booking
+  tableId: string                  // Dexie GameTable.id (UUID v20+) at the time of booking
   playerName: string | null
   playerPhone: string              // 10-digit Indian, validated upstream
   slotStart: number                // Unix ms — Pattern T1 / timestamps not counters
@@ -21,7 +21,7 @@ export interface Booking {
   tierPrice: number                // integer ₹ — the tier price shown to player at booking
   advanceAmount: number            // integer ₹ — the advance the player paid up-front
   status: BookingStatus
-  consumedSessionId?: number       // set when status='consumed' — links to sessions.id
+  consumedSessionId?: string       // set when status='consumed' — links to sessions.id (UUID v20+)
   confirmedAt: number              // Unix ms when owner confirmed
   notes?: string
 }

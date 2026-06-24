@@ -8,6 +8,16 @@
 
 This document is the source of truth for the multi-device sync + staff login project. Every architectural decision lives here. If we deviate during build, we update this doc first, then code. No exceptions.
 
+### v3.2 amendment — Phase C Chunk 0 (25 Jun 2026)
+
+§4.2 `session_items` DDL **drops the `canteen_item_id UUID NOT NULL` column**. Reason: the Dexie `SessionItem` interface has never carried a `canteenItemId` field — session items are denormalised snapshots (`name`, `price`, `quantity`) captured at add-time, and the canteen master row is intentionally NOT referenced post-write (so renaming/repricing a canteen item leaves history unchanged). The original v2 DDL invented a column that has no source. Adding `NOT NULL` would break every sync push because the Dexie row provides no value. The snapshot fields are authoritative; the FK adds nothing.
+
+Also added in Chunk 0: `_migrationSeq?: number` typed on `GameTable`, `Session`, `SessionItem`, `CanteenItem` interfaces (§10.4 resumable upload). New `SyncTableName` union exported from `src/types/index.ts` using **snake_case Supabase names** so `SyncRunner.pushOne` can pass the wire-format string directly to `supabase.from(table)` without a hot-path conversion. `OutboxRow.table` retyped from raw `string` → `SyncTableName`. `Booking.tableId` and `Booking.consumedSessionId` narrowed `number` → `string` (Step 2 audit miss). Defensive: `.upgrade()` callback's bookings .modify() now remaps `consumedSessionId` legacy numerics through `idMaps.sessions` (it only remapped `tableId` before).
+
+Also: production `clubs.owner_id` (not `owner_user_id` as v2 §4.1 said) — Chunk 1 + Chunk 2 use the existing column name.
+
+---
+
 ### v3.1 addendum — Phase B step 1.5, after BUG-B1 (#107, 24 Jun 2026 evening)
 
 Step 1 was specified as "schema + polyfill + runtime guards, ZERO data change." That promise broke on the first dev-server run because **seed.ts pre-assigns UUIDs to gameTables rows** (correctly, per §5.2). With v20 schema in force on a fresh IndexedDB, every seeded row was UUID-keyed immediately — meaning the "no data change yet" assumption only held for upgrading users, not new/empty DBs. Two downstream ripples were missed in the v3 audit and surfaced as crashes:
@@ -265,11 +275,15 @@ CREATE INDEX idx_sessions_club_started ON sessions(club_id, started_at DESC) WHE
 CREATE INDEX idx_sessions_customer ON sessions(customer_id) WHERE deleted_at IS NULL;
 
 -- 3. session_items (canteen items billed to a session)
+-- v3.2 AMENDMENT (Phase C Chunk 0): canteen_item_id column DROPPED. The Dexie
+-- SessionItem interface never carried this field — items are denormalised
+-- snapshots so a renamed/repriced canteen item leaves history intact. Adding
+-- NOT NULL would break every sync push because the row has no value to send.
+-- The name_snapshot + price_snapshot fields are authoritative.
 CREATE TABLE session_items (
   id UUID PRIMARY KEY,
   club_id UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
   session_id UUID NOT NULL,                  -- soft FK to sessions
-  canteen_item_id UUID NOT NULL,             -- soft FK to canteen_items
   name_snapshot TEXT NOT NULL,               -- denormalised for historical accuracy
   price_snapshot NUMERIC(10,2) NOT NULL,
   quantity INTEGER NOT NULL,
