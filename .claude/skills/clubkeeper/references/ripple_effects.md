@@ -79,7 +79,8 @@ Invariants:
 - `ClubSettings.legacyAdjustmentsBackfilled?` is the v6 audit flag — read-only after migration.
 - v13 `.upgrade()` items-revenue gap: `paymentBreakdown.cash` understates pre-v13 sessions (used `session.amount` alone, not grand total). Tracked, deferred.
 - Renaming a table = existing users' data is gone. Use soft-delete + new-name migration instead.
-- **Current version: v19.** v19 (22 Jun 2026, #106) adds per-club operating hours + per-30-min-slot advance — `ClubSettings.bookingOpenMinutes?`, `bookingCloseMinutes?`, `bookingAdvancePerSlot?`. `bookingAdvanceAmount` retained as @deprecated for Dexie/Supabase back-compat. Additive only, no `.upgrade()`, no index changes (schema string identical to v18). v18 (19 Jun 2026) added Peak Hour Pricing optional fields — `CanteenItem.peakPrice?` and `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`.
+- **Current version: v20 (Phase B step 1, 24 Jun 2026).** v20 declares UUID migration schema (4 tables `gameTables/sessions/sessionItems/canteenItems` flip from `++id` to `id`; adds `_outbox` for Phase C). NO `.upgrade()` yet — that is Step 2. `CURRENT_SCHEMA_VERSION = 20`. `ClubKeeperBackupV20` primary; V19/V18/V17/V16 aliased. `confirmPaymentAndStop` + `recordSessionPaymentBreakdown` have transitional dual-accept guards. `seed.ts` pre-assigns UUIDs. Step 2 gate: `.upgrade()` that rewrites existing numeric rows.
+- **Previous: v19 (22 Jun 2026, #106)** adds per-club operating hours + per-30-min-slot advance — `ClubSettings.bookingOpenMinutes?`, `bookingCloseMinutes?`, `bookingAdvancePerSlot?`. `bookingAdvanceAmount` retained as @deprecated for Dexie/Supabase back-compat. Additive only, no `.upgrade()`, no index changes (schema string identical to v18). v18 (19 Jun 2026) added Peak Hour Pricing optional fields — `CanteenItem.peakPrice?` and `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`.
 
 Cross-feature ripples:
 - → [Import / Export / Reset](#import--export--reset): adding a Dexie table requires updates in `CURRENT_SCHEMA_VERSION`, `getAllDataForExport`, `importEverythingFromFile`, AND `resetEverything` (Pattern: three-way drift causes silent data loss — see #78, #81).
@@ -87,7 +88,7 @@ Cross-feature ripples:
 
 See also: `bug_patterns.md` (Dexie patterns), full Dexie version history in `SKILL.md`.
 
-Last updated: 19 Jun 2026 (v18 — Peak Hour Pricing additive fields)
+Last updated: 24 Jun 2026 (v20 Phase B step 1 — schema declared, no migration yet)
 
 ---
 

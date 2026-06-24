@@ -75,7 +75,10 @@ export async function seedIfEmpty(): Promise<void> {
   const ops: Promise<unknown>[] = []
 
   if (tableCount === 0) {
-    ops.push(db.gameTables.bulkAdd(SAMPLE_TABLES))
+    // Pre-assign UUIDs so seed rows work on both v19 (++id accepts caller-supplied id)
+    // and v20 (plain id schema requires caller to supply id — no auto-generation).
+    const tablesWithIds = SAMPLE_TABLES.map(t => ({ ...t, id: crypto.randomUUID() }))
+    ops.push(db.gameTables.bulkAdd(tablesWithIds))
   }
 
   if (settingsCount === 0) {

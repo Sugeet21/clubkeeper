@@ -102,11 +102,12 @@ One entry per module. Overwrite in place when status changes — never append a 
 - **Alarm / Notify-at (Phase 2)** — Per-session optional alarm, `Session.notifyAtMs` (absolute Unix ms, wall-clock semantics — pause does NOT shift). Snooze anchors to original `notifyAtMs`.
 - **Summary dashboard** — End-of-day dashboard with revenue deltas, split bar, hourly heatmap, top tables/items, low stock, PAYMENT MODE + CASH FLOW strips. Pattern T4 — DB-static deps, running sessions in render body. Pattern T9 — Quick Sale included in topItems / hourly / topTables (synthetic 'Walk-in Canteen' row, sentinel `WALKIN_TABLE_ID=-1`) / per-date `dateRevenues` for deltas (#93, 20 Jun 2026 — pending owner verification). Date picker = Pattern U9.
 - **Auth + cardless trial** — Supabase + Google OAuth, `select_account` enforced. 7-day cardless trial via Postgres `handle_new_user()` trigger. Three-branch Subscribe headline (`expired` / `early` / `welcome`). `useAccessGuard` returns `subscription_loading` while `subscriptionLoaded === false` to prevent race.
-- **Subscription (Razorpay)** — TEST mode verified end-to-end on production. Serverless `api/create-subscription`, `api/razorpay-webhook`, `api/cancel-subscription`. V1-LAUNCH filter shows only Standard Monthly (₹599) — Starter + Pro hidden via `VISIBLE_PLAN_IDS`.
+- **Subscription (Razorpay)** — **LIVE mode in production (corrected 24 Jun 2026)**. Auto-pay (NACH) collecting ₹599 successfully. Razorpay fee ~₹4 + GST per txn (planned: charge ₹599 + GST after sync ships). Serverless `api/create-subscription`, `api/razorpay-webhook`, `api/cancel-subscription`. V1-LAUNCH filter shows only Standard Monthly (₹599) — Starter + Pro hidden via `VISIBLE_PLAN_IDS`. Pending bug "Razorpay LIVE mode switch" in Pending section is DONE — keep the key-rotation warning, drop the switch line.
 - **Settings** — Collapsible section cards in order: Club Info (name / currency one-liner / UPI / time rounding), Tables, Canteen (low-stock + peak pricing), Alerts, Subscription, Piggy, Player Hub, Data & Backup, About, Account. Only one section open at a time. Subscribe header shows live status badge. Club Name + UPI Save use `<SaveIndicator>` (Pattern U10). All clubs-row mirrors go through `mirrorToSupabaseBySlug` (Pattern S11).
 - **Import / Export** — `getAllDataForExport` covers all stores incl. `schemaVersion` + `exportedAt`. `importEverythingFromFile` is single atomic tx with 7 typed failure reasons. DEV-only round-trip self-test on `window.__importEverythingFromFile`.
 - **PWA + deployment** — `vercel.json` SPA rewrite (excludes `/api/*`), all PWA icons in `public/`. Per-user IndexedDB `ClubKeeperDB_<userId>` (two Gmail accounts on one browser = isolated data). `db` is a Proxy; `authStore` manages `initDbForUser` / `closeDb`.
 - **Bug tracking** — All bugs as GitHub issues at github.com/Sugeet21/clubkeeper/issues. `bug_archive.md` has one-line pointers only.
+- **Sync project (Phase B step 1 shipped, 24 Jun 2026)** — Multi-device sync + staff login. Architecture doc at `references/sync_architecture_v2.md`. Phase B step 1 committed: Dexie v20 schema declared (no `.upgrade()` yet), `crypto.randomUUID` polyfill installed, dual-accept runtime guards in `confirmPaymentAndStop` + `recordSessionPaymentBreakdown`, `id` types widened to `number | string` on 4 tables, `_outbox` table declared, `seed.ts` pre-assigns UUIDs, `CURRENT_SCHEMA_VERSION = 20`, `ClubKeeperBackupV20` type added. Step 2 (next session): add `.upgrade()` callback to rewrite existing rows to UUIDs + narrow all `number | string` unions to `string`. Two hazards found vs. one expected: `recordSessionPaymentBreakdown` also had the `typeof !== 'number'` guard (line ~1240). Both fixed. Razorpay LIVE verified in production — auto-pay collecting ₹599.
 
 ## Pending — load-bearing, delete when done
 
@@ -119,7 +120,7 @@ Things that BLOCK something if forgotten. Delete the line the moment it's resolv
 - **Migration: `supabase/migrations/20260610_player_hub.sql`** — creates `clubs` + `topup_intents` + `get_club_public_info` RPC. ⚠ Confirm if already run in production.
 - **Migration: `supabase/migrations/20260610_clubcoins.sql`** — adds `coins_enabled` + `coin_tiers_json`. ⚠ Confirm if already run.
 - **Migration: `supabase/migrations/20260602_cardless_trial.sql`** — cardless trial broken until done (new signups land on `/subscribe`, not `/tables`).
-- **Razorpay LIVE mode switch** — needs KYC first.
+- **Razorpay LIVE mode switch** — DONE (24 Jun 2026, owner confirmation). Auto-pay collecting in production.
 - **Vercel webhook config** — Razorpay Dashboard → add `/api/razorpay-webhook` URL + `RAZORPAY_WEBHOOK_SECRET` → redeploy.
 - **GST invoicing + email notifications** — next sprint.
 - **PWA update banner (S6)** — needs `useRegisterSW` + banner UI; without it, users on old SW don't get new deploys without hard refresh.
@@ -137,9 +138,11 @@ Things that BLOCK something if forgotten. Delete the line the moment it's resolv
 
 ## Dexie schema — current
 
-**Current version: v19** — adds per-club operating hours + per-30-min-slot advance (#106) as optional `ClubSettings.bookingOpenMinutes?/bookingCloseMinutes?/bookingAdvancePerSlot?`. `bookingAdvanceAmount` retained as @deprecated for back-compat. Additive only, no `.upgrade()`, no index changes (schema string identical to v18).
+**Current version: v20 (Phase B step 1, 24 Jun 2026)** — schema declared for UUID migration. 4 tables (`gameTables`, `sessions`, `sessionItems`, `canteenItems`) schema strings changed from `++id` to `id`. `_outbox` table added (`++seq, table, op, rowId, createdAt`) for Phase C sync queue. NO `.upgrade()` callback yet — that is Step 2. Existing rows keep numeric ids; `Table<>` types widened to `number | string` (transitional). `CURRENT_SCHEMA_VERSION = 20`. DB naming stays `ClubKeeperDB_${userId}`.
 
-Full version history (v1–v17) lives in `changelog.md`. When bumping the version, also update `CURRENT_SCHEMA_VERSION` in `queries.ts`, the backup interface alias, `getAllDataForExport` + `importEverythingFromFile` + `resetEverything` + `importExportRoundTrip` (Pattern D10).
+**v20 step 2 (pending)** — `.upgrade()` callback that rewrites existing numeric-id rows in the 4 tables to UUID strings. After that: narrow all `number | string` unions to `string`, remove dual-accept runtime guards, change `add()` call sites to pre-generate UUIDs. Pre-v20 forced auto-backup (via `getAllDataForExport`) ships in Step 2.
+
+Full version history (v1–v19) lives in `changelog.md`. When bumping the version, also update `CURRENT_SCHEMA_VERSION` in `queries.ts`, the backup interface alias, `getAllDataForExport` + `importEverythingFromFile` + `resetEverything` + `importExportRoundTrip` (Pattern D10).
 
 ## Bug Tracking — GitHub Issues
 

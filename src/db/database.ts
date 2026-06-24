@@ -7,6 +7,7 @@ import type {
   CanteenItem,
   CanteenSale,
   StockPurchase,
+  OutboxRow,
 } from '../types'
 import type { Customer } from '../types/customer'
 import type { WalletTransaction } from '../types/walletTransaction'
@@ -19,16 +20,20 @@ import type { Booking } from '../types/booking'
 // so a one-time migration can be written later if needed.
 
 export class ClubKeeperDB extends Dexie {
-  gameTables!: Table<GameTable, number>
-  sessions!: Table<Session, number>
+  // Transitional: number on v19 (++id), string UUID on v20 — TODO(phase-b-step-2): narrow to string after .upgrade()
+  gameTables!: Table<GameTable, number | string>
+  sessions!: Table<Session, number | string>
+  sessionItems!: Table<SessionItem, number | string>
+  canteenItems!: Table<CanteenItem, number | string>
+  // Already string id from v5/v13/v17 — no change
   settings!: Table<ClubSettings, number>
-  sessionItems!: Table<SessionItem, number>
   customers!: Table<Customer, string>
   walletTransactions!: Table<WalletTransaction, string>
-  canteenItems!: Table<CanteenItem, number>
   canteenSales!: Table<CanteenSale, string>
   stockPurchases!: Table<StockPurchase, string>
   bookings!: Table<Booking, string>
+  // Phase C sync queue — local-only, never exported, unused until Phase C
+  _outbox!: Table<OutboxRow, number>
 
   constructor(dbName: string) {
     super(dbName)
@@ -364,6 +369,25 @@ export class ClubKeeperDB extends Dexie {
       canteenSales: 'id, createdAt, customerId',
       stockPurchases: 'id, createdAt, canteenItemId, source',
       bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
+    })
+    // Version 20: UUID migration — PHASE B STEP 1 (schema only, no .upgrade() yet).
+    // The 4 ++id tables flip to caller-supplied string id. Step 2 (next session)
+    // adds the .upgrade() callback that actually rewrites existing rows.
+    // Until Step 2 ships, this is a no-op upgrade — existing rows keep their
+    // numeric ids in IndexedDB, and the app continues to use them.
+    // Also adds _outbox table for Phase C sync (no Phase B logic uses it yet).
+    this.version(20).stores({
+      gameTables: 'id, name, gameType, sortOrder, outOfService',
+      sessions: 'id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: 'id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: 'id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+      bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
+      _outbox: '++seq, table, op, rowId, createdAt',
     })
   }
 }

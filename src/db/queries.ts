@@ -23,10 +23,10 @@ import type { Booking } from '../types/booking'
  * Current Dexie schema version. Mirror of `this.version(N)` in `database.ts`.
  * Used by export/import to gate forward-compatibility. Bump when database.ts bumps.
  */
-export const CURRENT_SCHEMA_VERSION = 19
+export const CURRENT_SCHEMA_VERSION = 20
 
-export interface ClubKeeperBackupV19 {
-  schemaVersion: 19
+export interface ClubKeeperBackupV20 {
+  schemaVersion: 20
   exportedAt: number
   tables: GameTable[]
   sessions: Session[]
@@ -40,12 +40,13 @@ export interface ClubKeeperBackupV19 {
   bookings: Booking[]
 }
 
-// Kept exported under the old names for any downstream code that hasn't been
-// updated yet — TS structural typing means the V19 superset is assignable
-// where V16/V17/V18 were required (no field shapes changed; only optional fields added).
-export type ClubKeeperBackupV18 = ClubKeeperBackupV19
-export type ClubKeeperBackupV17 = ClubKeeperBackupV19
-export type ClubKeeperBackupV16 = ClubKeeperBackupV19
+// Backwards-compat aliases — structurally identical because no field shapes changed
+// in v20 (only id types widened to unions, which are assignable from the prior types).
+// V19 consumers stay source-compatible without changes.
+export type ClubKeeperBackupV19 = ClubKeeperBackupV20
+export type ClubKeeperBackupV18 = ClubKeeperBackupV20
+export type ClubKeeperBackupV17 = ClubKeeperBackupV20
+export type ClubKeeperBackupV16 = ClubKeeperBackupV20
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -58,6 +59,8 @@ export async function getTableById(id: number): Promise<GameTable | undefined> {
 }
 
 export async function addTable(data: Omit<GameTable, 'id'>): Promise<number> {
+  // TODO(phase-b-step-2): after v20 .upgrade() lands, change return type to Promise<string>,
+  // switch to pre-generating UUID: const id = crypto.randomUUID(); return db.gameTables.add({ ...data, id }) as Promise<string>
   return db.gameTables.add(data)
 }
 
@@ -125,6 +128,8 @@ export async function startSession(
         }
       : {}
 
+  // TODO(phase-b-step-2): after v20 .upgrade() lands, change return type to Promise<string>,
+  // switch to: const id = crypto.randomUUID(); return db.sessions.add({ ...data, id, startedAt, ... }) as Promise<string>
   return db.sessions.add({
     ...data,
     startedAt,
@@ -298,8 +303,13 @@ export async function confirmPaymentAndStop(
   breakdown: { cash: number; upi: number; wallet: number },
   customerId?: string,
 ): Promise<void> {
-  if (typeof sessionId !== 'number' || !Number.isFinite(sessionId) || sessionId <= 0) {
-    throw new Error(`confirmPaymentAndStop: invalid sessionId (got ${typeof sessionId} ${String(sessionId)})`)
+  // Transitional guard: accepts v19 numeric ids AND v20 UUID strings.
+  // TODO(phase-b-step-2): narrow to `typeof sessionId !== 'string' || sessionId.length !== 36`
+  // once .upgrade() has rewritten all existing rows to UUIDs.
+  const isLegacyNumber = typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
+  const isUuidString = typeof sessionId === 'string' && sessionId.length === 36
+  if (!isLegacyNumber && !isUuidString) {
+    throw new Error(`confirmPaymentAndStop: invalid sessionId (got ${typeof sessionId} "${String(sessionId)}")`)
   }
   const { cash, upi, wallet } = breakdown
   if (
@@ -511,6 +521,7 @@ export async function resetEverything(): Promise<void> {
       db.canteenSales,
       db.stockPurchases,
       db.bookings,
+      db._outbox,
     ],
     async () => {
       await Promise.all([
@@ -524,13 +535,14 @@ export async function resetEverything(): Promise<void> {
         db.canteenSales.clear(),
         db.stockPurchases.clear(),
         db.bookings.clear(),
+        db._outbox.clear(), // Phase C sync queue — local-only, clear on full reset
       ])
     },
   )
   await seedIfEmpty()
 }
 
-export async function getAllDataForExport(): Promise<ClubKeeperBackupV19> {
+export async function getAllDataForExport(): Promise<ClubKeeperBackupV20> {
   const [
     tables,
     sessions,
@@ -555,7 +567,7 @@ export async function getAllDataForExport(): Promise<ClubKeeperBackupV19> {
     db.bookings.toArray(),
   ])
   return {
-    schemaVersion: CURRENT_SCHEMA_VERSION,
+    schemaVersion: 20 as const,
     exportedAt: Date.now(),
     tables,
     sessions,
@@ -593,6 +605,8 @@ export async function addSessionItem(
   if (!Number.isInteger(data.quantity) || data.quantity < 1 || data.quantity > 99) {
     throw new Error('Quantity must be 1–99')
   }
+  // TODO(phase-b-step-2): after v20 .upgrade() lands, change return type to Promise<string>,
+  // switch to: const id = crypto.randomUUID(); return db.sessionItems.add({ ...data, id, name: ..., addedAt: ... }) as Promise<string>
   return db.sessionItems.add({
     ...data,
     name: data.name.trim(),
@@ -739,6 +753,8 @@ export async function addOrIncrementSessionItem(input: {
       return existing.id
     }
 
+    // TODO(phase-b-step-2): after v20 .upgrade() lands, pre-generate UUID:
+    // const id = crypto.randomUUID(); return db.sessionItems.add({ id, sessionId, name: name.trim(), price, quantity, addedAt: Date.now() }) as Promise<string>
     return db.sessionItems.add({
       sessionId,
       name: name.trim(),
@@ -846,6 +862,8 @@ export async function addCanteenItem(
   const last = await db.canteenItems.orderBy('sortOrder').last()
   const sortOrder = last ? last.sortOrder + 1 : 1
 
+  // TODO(phase-b-step-2): after v20 .upgrade() lands, change return type to Promise<string>,
+  // switch to: const id = crypto.randomUUID(); return db.canteenItems.add({ id, name: trimmedName, ... }) as Promise<string>
   return db.canteenItems.add({
     name: trimmedName,
     defaultPrice: input.defaultPrice,
@@ -1057,6 +1075,8 @@ export async function createBackEntry(input: BackEntryInput): Promise<number> {
     const elapsedMs = input.endedAt - input.startedAt
     proto.amount = calculateAmount(proto, elapsedMs, rounding)
 
+    // TODO(phase-b-step-2): after v20 .upgrade() lands, change cast to `as string`
+    // and switch to: const sessionId = crypto.randomUUID(); await db.sessions.add({ ...proto, id: sessionId })
     const sessionId = (await db.sessions.add(proto)) as number
 
     // ---- 4. Process items INLINE (Pattern D7 — no calls to addSessionItem /
@@ -1232,8 +1252,13 @@ export async function recordSessionPaymentBreakdown(
   // sneaking in via untyped JS or route param leakage. db.sessions.get('2')
   // silently returns undefined (autoincrement keys are numbers), which causes
   // session.amount to read as 0 downstream — exact bug shipped in Phase 2.
-  if (typeof sessionId !== 'number' || !Number.isFinite(sessionId) || sessionId <= 0) {
-    throw new Error(`recordSessionPaymentBreakdown: invalid sessionId (got ${typeof sessionId} ${String(sessionId)})`)
+  // Transitional guard: accepts v19 numeric ids AND v20 UUID strings.
+  // TODO(phase-b-step-2): narrow to `typeof sessionId !== 'string' || sessionId.length !== 36`
+  // once .upgrade() has rewritten all existing rows to UUIDs.
+  const isLegacyNumberRspb = typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
+  const isUuidStringRspb = typeof sessionId === 'string' && sessionId.length === 36
+  if (!isLegacyNumberRspb && !isUuidStringRspb) {
+    throw new Error(`recordSessionPaymentBreakdown: invalid sessionId (got ${typeof sessionId} "${String(sessionId)}")`)
   }
   const { cash, upi, wallet } = breakdown
   if (

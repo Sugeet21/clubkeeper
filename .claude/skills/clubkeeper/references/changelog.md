@@ -2,6 +2,20 @@
 
 ---
 
+## 24 Jun 2026 — v20 schema declared, polyfill installed, hazards fixed (Phase B step 1)
+
+- `feat(db): declare v20 schema + UUID polyfill + transitional id type widening (Phase B step 1)`
+- `src/db/database.ts` — Dexie v20 declared (no `.upgrade()` yet — Step 2). 4 tables (`gameTables`, `sessions`, `sessionItems`, `canteenItems`) schema strings flipped from `++id` to `id`. All 10 stores declared. `_outbox` table added (`++seq, table, op, rowId, createdAt`) for Phase C sync queue (unused until Phase C). `Table<>` generic types widened to `number | string` on the 4 migrated tables (transitional). `OutboxRow` type imported from `src/types/index.ts`.
+- `src/types/index.ts` — `GameTable.id`, `Session.id`, `SessionItem.id`, `CanteenItem.id` widened to `number | string | undefined` (transitional — Step 2 narrows to `string`). `OutboxRow` interface added (Phase C sync queue schema).
+- `src/db/queries.ts` — `CURRENT_SCHEMA_VERSION` bumped 19→20. `ClubKeeperBackupV20` added as primary backup interface; `ClubKeeperBackupV19/V18/V17/V16` aliased to it. `getAllDataForExport` return type updated to `ClubKeeperBackupV20`. Dual-accept transitional guard in `confirmPaymentAndStop` (line ~301) and `recordSessionPaymentBreakdown` (line ~1235) — both now accept numeric v19 ids AND UUID v20 strings. `TODO(phase-b-step-2)` comments added to all 5 `add()` call sites on the 4 migrated tables. `resetEverything` extended to clear `_outbox` (Pattern D10).
+- `src/db/seed.ts` — `seedIfEmpty()` pre-assigns UUIDs to sample tables via `.map(t => ({ ...t, id: crypto.randomUUID() }))` — required for v20 where `id` schema no longer auto-generates; also forward-safe on v19 since `++id` accepts caller-supplied ids.
+- `src/main.tsx` — `crypto.randomUUID` polyfill installed at boot (before DEV imports) for iOS Safari < 15.4. Fixes latent bug already present in 4 lib files (`coinExpiry`, `nudge`, `streak`, `walkInCode`). One `// @ts-expect-error` used as allowed.
+- `npm run build` passes after each chunk (5/5). Zero TS errors. No behavior change for existing v19 users — schema bump is a no-op without `.upgrade()`.
+- **Two hazards found vs. one documented:** `recordSessionPaymentBreakdown` also had the `typeof sessionId !== 'number'` guard (line ~1235, not just line 301). Both fixed.
+- **Pattern D10 applied:** `_outbox` added to `resetEverything` store list + clear call immediately upon declaring the table.
+
+---
+
 ## 22 Jun 2026 — Per-club booking hours + per-30-min-slot advance (#106) [R4, S11, U10, T1, P2]
 
 - `feat(booking): per-club hours + per-slot advance (closes #106 — pending owner verification)`. Two linked changes shipped together so the migration + UI + RPC contract move as one atom.

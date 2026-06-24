@@ -37,7 +37,7 @@ export type BillingMode = 'per_hour' | 'per_frame'
 export type TableStatus = 'free' | 'busy' | 'paused' | 'out_of_service'
 
 export interface GameTable {
-  id?: number
+  id?: number | string  // transitional: number on v19, UUID string on v20 — TODO(phase-b-step-2): narrow to string
   name: string
   gameType: GameType
   ratePerHour: number
@@ -57,7 +57,7 @@ export interface TableMove {
 }
 
 export interface Session {
-  id?: number
+  id?: number | string  // transitional: number on v19, UUID string on v20 — TODO(phase-b-step-2): narrow to string
   tableId: number
   startedAt: number
   endedAt: number | null
@@ -187,7 +187,7 @@ export interface ClubSettings {
 }
 
 export interface CanteenItem {
-  id?: number
+  id?: number | string  // transitional: number on v19, UUID string on v20 — TODO(phase-b-step-2): narrow to string
   name: string           // 1-50 chars
   defaultPrice: number   // integer rupees, 1-9999
   stockEnabled: boolean  // default false
@@ -199,12 +199,29 @@ export interface CanteenItem {
 }
 
 export interface SessionItem {
-  id?: number
-  sessionId: number     // FK to sessions table
+  id?: number | string  // transitional: number on v19, UUID string on v20 — TODO(phase-b-step-2): narrow to string
+  sessionId: number     // FK to sessions table — TODO(phase-b-step-2): change to string after .upgrade() rewrites sessions
   name: string          // 1-50 chars after trim
   price: number         // integer rupees, 0-99999
   quantity: number      // integer, 1-99
   addedAt: number       // Date.now() at creation
+}
+
+// ─── Outbox (Phase C sync queue — local-only, never exported) ────────────────
+// _outbox rows represent pending Supabase writes. Phase B declares the table;
+// Phase C adds the worker that drains it. No code writes to _outbox yet.
+
+export interface OutboxRow {
+  seq?: number              // auto-inc, ensures FIFO ordering
+  idempotencyKey: string    // UUID, used as Supabase upsert conflict key (Phase C)
+  table: string             // 'sessions' | 'customers' | etc.
+  op: 'insert' | 'update' | 'soft_delete'
+  rowId: string             // the data row's UUID
+  payload: unknown          // for insert/update: full row body; for soft_delete: { deleted_at }
+  attempts: number
+  lastError: string | null
+  lastAttemptAt: number | null
+  createdAt: number
 }
 
 // ─── Auth & Subscription ──────────────────────────────────────────────────────
