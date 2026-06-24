@@ -2,6 +2,22 @@
 
 ---
 
+## 24 Jun 2026 — Phase B step 2: v20 .upgrade() UUID migration complete
+
+- `ee40cda` — feat(db): Phase B step 2 — v20 .upgrade() UUID migration + collapse number|string unions
+- **What shipped:**
+  - `src/db/database.ts` — `.upgrade()` callback added to `this.version(20)`. Atomic 3-phase migration: (1) build `Map<number, UUID>` for all 4 tables; (2) `clear()+add()` rewrites each table with new UUID ids + `_migrationSeq` counter; sessions phase handles nested `tableMoves[].fromTableId/.toTableId` (§5.6 landmine 2c); (3) `.modify()` rewrites FK fields in `canteenSales.items[].canteenItemId`, `stockPurchases.canteenItemId`, `bookings.tableId`. If anything throws, Dexie rolls back to v19 cleanly. `Table<>` generics narrowed from `number | string` to `string` for the 4 migrated tables.
+  - `src/types/index.ts` — all `number | string` transitional types collapsed to `string`: `GameTable.id`, `Session.id`/`tableId`, `SessionItem.id`/`sessionId`, `CanteenItem.id`, `TableMove.fromTableId`/`toTableId`, `CanteenSale.items[].canteenItemId`, `StockPurchase.canteenItemId`.
+  - `src/db/queries.ts` — dual-accept guards removed from `confirmPaymentAndStop` + `recordSessionPaymentBreakdown` (now validate `string uuid.length===36` only). All 13+ `number | string` widened signatures narrowed to `string`. `addOrIncrementSessionItem` + `createBackEntry` return type `Promise<string>`. `BackEntryInput.tableId`, `CanteenSaleLineInput.canteenItemId`, `recordStockPurchase` input narrowed. `Map<number,...>` → `Map<string,...>` internal types. `canteenItemId` validation: integer-check → uuid-string-check.
+  - `src/pages/StartSession.tsx` + `SessionDetail.tsx` — dual-accept route param parsers removed (Pattern R5 cleanup). `tid`/`sid` now straight string from `useParams`; `tidValid`/`sidValid` check `length === 36`.
+  - `src/pages/QuickSale.tsx` — `CartLine.canteenItemId`, `Map` key, `decrementLine`/`removeLine` param narrowed to `string`.
+  - `src/pages/Piggy.tsx` — `itemNameById` + `RestockList` prop narrowed to `Map<string, string>`.
+- **Three landmines handled** per §5.6: (2a) `addOrIncrementSessionItem` increment branch returns `existingRow.id` (already a string); (2b) `StockPurchase.canteenItemId` + `CanteenSale.items[].canteenItemId` narrowed to `string`; (2c) `tableMoves[]` nested FK remap in upgrade callback.
+- **No pre-v20 backup** — owner explicitly waived (solo dev, zero paying users on destructive path).
+- `npm run build` clean — zero TS errors after all changes.
+
+---
+
 ## 24 Jun 2026 — BUG-B1: route param + add() ripple from v20 schema flip (#107)
 
 - `8e4619c` — fix(routing): dual-accept route params for UUID-keyed Dexie rows (closes #107 — pending owner verification).

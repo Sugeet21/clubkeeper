@@ -79,7 +79,7 @@ Invariants:
 - `ClubSettings.legacyAdjustmentsBackfilled?` is the v6 audit flag — read-only after migration.
 - v13 `.upgrade()` items-revenue gap: `paymentBreakdown.cash` understates pre-v13 sessions (used `session.amount` alone, not grand total). Tracked, deferred.
 - Renaming a table = existing users' data is gone. Use soft-delete + new-name migration instead.
-- **Current version: v20 (Phase B step 1 + 1.5, 24 Jun 2026).** v20 declares UUID migration schema (4 tables `gameTables/sessions/sessionItems/canteenItems` flip from `++id` to `id`; adds `_outbox` for Phase C). NO `.upgrade()` yet — that is Step 2. `CURRENT_SCHEMA_VERSION = 20`. `ClubKeeperBackupV20` primary; V19/V18/V17/V16 aliased. `confirmPaymentAndStop` + `recordSessionPaymentBreakdown` have transitional dual-accept guards. `seed.ts` pre-assigns UUIDs. **Step 1.5 (#107, 24 Jun 2026):** all `.add()` sites on the 4 UUID-flipped tables pre-generate `crypto.randomUUID()` (Pattern D12); route boundaries dual-accept Number-or-string params (Pattern R5); 13 query-layer signatures widened to `number | string`. Step 2 (still owed): `.upgrade()` that rewrites existing numeric rows to UUIDs + collapses all `number | string` unions to `string`.
+- **Current version: v20 (Phase B step 2 COMPLETE, 24 Jun 2026).** v20 UUID migration fully shipped. 4 tables (`gameTables/sessions/sessionItems/canteenItems`) use `id` (caller-supplied UUID string). `.upgrade()` callback rewrites all existing numeric-id rows atomically — Phase 1 builds id maps, Phase 2 clear+add rewrites the 4 tables (sessions handles nested `tableMoves[].fromTableId/.toTableId`), Phase 3 `.modify()` rewrites FK fields in `canteenSales`, `stockPurchases`, `bookings`. `_outbox` table added for Phase C. All `number | string` transitional unions collapsed to `string` across `types/index.ts`, `queries.ts`, `StartSession.tsx`, `SessionDetail.tsx`, `QuickSale.tsx`, `Piggy.tsx`. Dual-accept guards removed from `confirmPaymentAndStop` + `recordSessionPaymentBreakdown`. Route-boundary dual-accept parsers removed (Pattern R5 cleanup). `CURRENT_SCHEMA_VERSION = 20`. `ClubKeeperBackupV20` primary; V19/V18/V17/V16 aliased. No pre-v20 auto-backup (owner waived — solo dev, zero paying users on destructive path).
 - **Previous: v19 (22 Jun 2026, #106)** adds per-club operating hours + per-30-min-slot advance — `ClubSettings.bookingOpenMinutes?`, `bookingCloseMinutes?`, `bookingAdvancePerSlot?`. `bookingAdvanceAmount` retained as @deprecated for Dexie/Supabase back-compat. Additive only, no `.upgrade()`, no index changes (schema string identical to v18). v18 (19 Jun 2026) added Peak Hour Pricing optional fields — `CanteenItem.peakPrice?` and `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`.
 
 Cross-feature ripples:
@@ -88,7 +88,7 @@ Cross-feature ripples:
 
 See also: `bug_patterns.md` (Dexie patterns), full Dexie version history in `SKILL.md`.
 
-Last updated: 24 Jun 2026 (v20 Phase B step 1 + 1.5 — schema declared, add() sites + route boundaries hardened, .upgrade() still owed)
+Last updated: 24 Jun 2026 (v20 Phase B step 2 — .upgrade() shipped, all number|string unions collapsed, dual-accept guards removed)
 
 ---
 
@@ -132,7 +132,7 @@ Cross-feature ripples:
 
 See also: `bug_patterns.md` Pattern T1/T4/T6/T7/T8/M3/P4, `decisions_active.md` (rounding model, snapshot model).
 
-Last updated: 14 Jun 2026
+Last updated: 24 Jun 2026 (Phase B step 2 — Session.id/.tableId now string; TableMove.fromTableId/.toTableId now string; dual-accept guards removed)
 
 ---
 

@@ -204,7 +204,7 @@ Do NOT rely on the `db.x.add(row)` return value to obtain the id post-v20 — ge
 
 **`crypto.randomUUID()` polyfill:** installed at boot in `src/main.tsx`. Always available — no need to feature-detect in call sites.
 
-**Ripple:** Function return types narrow from `Promise<number>` to `Promise<string>` for the 4 affected tables. Any caller storing the returned id needs widening if it still holds it as `number`. The skill warned about this work being scheduled for Step 2 — #107 forced it into Step 1.5.
+**Ripple (Step 2 DONE, 24 Jun 2026):** All `number | string` transitional types collapsed to `string` across `types/index.ts`, `queries.ts`, `StartSession.tsx`, `SessionDetail.tsx`, `QuickSale.tsx`, `Piggy.tsx`. Dual-accept route parsers removed. Return types for `addOrIncrementSessionItem`, `createBackEntry` narrowed to `Promise<string>`. `CanteenSaleLineInput.canteenItemId`, `StockPurchase.canteenItemId`, `BackEntryInput.tableId` narrowed to `string`. Internal `Map<number,...>` → `Map<string,...>` in `createBackEntry` and `createCanteenSale`. This pattern is fully resolved — no further migration work needed for the 4 UUID-flipped tables.
 
 **Files affected:** `src/db/queries.ts` (8 sites: `addTable`, `startSession`, `addSessionItem`, `addOrIncrementSessionItem`, `restoreSessionItem`, `addCanteenItem`, `createBackEntry` session + items), `src/components/AddItemBottomSheet.tsx` (freeform add). Import path (`src/lib/importEverything.ts`) does NOT need this treatment — exported rows carry their id verbatim.
 

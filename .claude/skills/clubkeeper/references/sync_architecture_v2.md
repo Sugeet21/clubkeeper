@@ -775,6 +775,38 @@ This is already string-safe but will produce a useless string post-v20 (`"a3f2c8
 
 ---
 
+### 5.6 Step 2 landmines — explicit inventory (24 Jun 2026)
+
+Three hazards that are easy to miss in the `.upgrade()` callback or the type-narrowing pass. Documented here so future reviewers can verify they were handled.
+
+**Landmine 2a — `addOrIncrementSessionItem` mixed return path**
+
+`addOrIncrementSessionItem` has two branches:
+1. "Increment existing" — calls `db.sessionItems.update(existingRow.id, { quantity: ... })`. `update()` returns `1` (count of rows updated), not the row id. Pre-Step-2 the caller didn't need the id from this branch.
+2. "New row" — calls `db.sessionItems.add({ ...data, id: crypto.randomUUID() })` and returns the new UUID string.
+
+After Step 2, the function signature narrows to `Promise<string>` on both branches. The increment branch MUST explicitly `return existingRow.id` — the `existingRow.id` is already a UUID string post-migration. Do NOT return `await db.sessionItems.update(...)` (that's a number). Do NOT cast to `any`. There is no union to paper over — just return the id you already have.
+
+**Landmine 2b — `StockPurchase.canteenItemId` and `CanteenSale.canteenItemId` still typed `number`**
+
+As of Step 1.5, these two FK fields in `src/types/index.ts` were left as `number` — the parent rows (`canteenItems`) flip to UUID in v20 but these FK fields were not widened during Step 1 because `canteenSales` and `stockPurchases` were already on string ids and didn't need the `number | string` transitional treatment applied to the 4 migrated tables.
+
+Step 2 must narrow both to `string`. The `.upgrade()` callback's Phase 3 (`rewriteFKsOnly` on `canteenSales` and `stockPurchases`) handles the VALUE rewrite for existing rows. The TYPE change in `src/types/index.ts` is the paired fix.
+
+**Landmine 2c — `Session.tableMoves[]` nested inline array**
+
+`Session.tableMoves?: TableMove[]` is stored as a JSON array inside the `sessions` row — NOT as a separate Dexie table. Each `TableMove` entry has:
+- `fromTableId: number | string` — FK → `gameTables.id`
+- `toTableId: number | string` — FK → `gameTables.id`
+
+The `.upgrade()` callback's Phase 2 rewrite of `sessions` rows iterates each row's `tableMoves` array and remaps BOTH `fromTableId` and `toTableId` through the `idMaps.gameTables` map. This is easy to miss because the FK is nested inside JSON, not a top-level column. Forgetting it leaves the Table Journey display in `SessionDetail.tsx` pointing at stale numeric ids that no longer exist in `gameTables`.
+
+**No-backup decision (Sugeet explicit, 24 Jun 2026)**
+
+The owner explicitly waived the pre-v20 auto-backup step described in §5.2 Phase 0 and §5.3. Rationale: zero paying customers on the destructive path; worst-case recovery is `npm run seed` + re-enter test data. `runPreV20Backup` is NOT implemented. No in-app banner. No download trigger. §5.2 Phase 0 step is SKIPPED for Step 2. This decision is final for the current solo-dev phase; revisit before onboarding the first paid multi-device customer.
+
+---
+
 ## 6. Sync engine — write path (Dexie → Supabase)
 
 ### 6.1 The outbox
