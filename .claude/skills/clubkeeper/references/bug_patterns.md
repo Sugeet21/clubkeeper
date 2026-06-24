@@ -186,6 +186,28 @@ Never hard-code these fallback chains inline in components. Centralize in the he
 
 Files most affected: `src/db/*`, any component that mutates and re-renders.
 
+### Pattern D12 — Dexie `.add()` on plain `id` schema (no `++`) requires caller-supplied key (#107, 24 Jun 2026)
+
+**Symptom signature:** `DataError: Failed to execute 'add' on 'IDBObjectStore': Evaluating the object store's key path did not yield a value.` Always thrown from a `db.<table>.add({...})` call site, never from `update`/`get`.
+
+**Root cause:** Dexie's store string distinguishes `'++id, ...'` (auto-increment integer; caller may omit `id`) from `'id, ...'` (plain primary key; caller MUST supply `id`). Phase B step 1 flipped 4 tables (`gameTables`, `sessions`, `sessionItems`, `canteenItems`) from `++id` to `id` for the UUID migration but the schema change ONLY takes effect — i.e. the v20 block is reached — when a brand-new IndexedDB is created OR when an existing DB upgrades past 19. The first user to hit v20 with empty Dexie immediately blows up at every legacy `.add()` because the caller-supplied id contract is now in force.
+
+**Detection:** Grep for `\.(sessions|sessionItems|gameTables|canteenItems)\.(add|bulkAdd)\b`. Every match is suspect unless it passes an `id` field in the object literal (or, for `bulkAdd`, the rows arrive pre-keyed from elsewhere — e.g. import paths).
+
+**Rule:** Every `.add()` call on the 4 UUID-flipped tables MUST pre-generate the id:
+```ts
+const id = crypto.randomUUID()
+await db.sessions.add({ ...data, id, /* rest */ })
+return id
+```
+Do NOT rely on the `db.x.add(row)` return value to obtain the id post-v20 — generate first, pass into the row, return your generated id. Same applies inside transactions (the `createBackEntry` pattern). The `restoreSessionItem` undo path mints a FRESH UUID — do not attempt to resurrect the deleted row's key, because the old id may now be a number that no longer satisfies the new schema's key path semantics in some edge cases, and Undo doesn't require key continuity (it's anchored on `addedAt`, not `id`).
+
+**`crypto.randomUUID()` polyfill:** installed at boot in `src/main.tsx`. Always available — no need to feature-detect in call sites.
+
+**Ripple:** Function return types narrow from `Promise<number>` to `Promise<string>` for the 4 affected tables. Any caller storing the returned id needs widening if it still holds it as `number`. The skill warned about this work being scheduled for Step 2 — #107 forced it into Step 1.5.
+
+**Files affected:** `src/db/queries.ts` (8 sites: `addTable`, `startSession`, `addSessionItem`, `addOrIncrementSessionItem`, `restoreSessionItem`, `addCanteenItem`, `createBackEntry` session + items), `src/components/AddItemBottomSheet.tsx` (freeform add). Import path (`src/lib/importEverything.ts`) does NOT need this treatment — exported rows carry their id verbatim.
+
 ### Pattern D1 — Close UI before mutating, OR null-guard the render
 **Symptom signature:** "Cannot read properties of undefined (reading 'name')" after delete/disable.
 **Root cause:** Modal stays open and re-renders with deleted-record state.
@@ -567,6 +589,31 @@ curl -u KEY_ID:KEY_SECRET https://api.razorpay.com/v1/plans/PLAN_ID
 ## Routing & Navigation
 
 Files most affected: `src/App.tsx`, `src/components/BottomNav.tsx`, any page with `navigate(...)`.
+
+### Pattern R5 — `Number(routeParam)` is a UUID landmine — dual-accept at the boundary (#107, 24 Jun 2026)
+
+**Symptom signature:** Crash on opening a detail route with a UUID id: `DataError: Failed to execute 'get' on 'IDBObjectStore': The parameter is not a valid key`. Stack trace points at the `useLiveQuery(() => db.X.get(...))` call near the top of the component.
+
+**Root cause:** The component does `const id = Number(routeParam)` at the boundary. When the route was created with a UUID (post-Phase-B-step-1 seed pre-assigns UUIDs to `gameTables`, and `startSession` now mints UUID `sessions` ids), `Number("bec04261-...")` evaluates to `NaN`. `db.X.get(NaN)` is invalid in IndexedDB → throws synchronously inside `useLiveQuery` → bubbles to ErrorBoundary. Same trap fires for ANY page that does `Number(useParams().X)` on a now-UUID-keyed table. Worse: the same `Number(session.id)` re-coercion frequently appears 3-4 times deeper in the same file inside action handlers (stop, pay, redeem), each one a separate landmine.
+
+**Detection:** `grep -n "Number\((sessionId|tableId|itemId|id|rawSessionId|rawTableId)\)" src/`. Also grep `Number(session\.id|table\.id|item\.id)` for downstream re-coercions.
+
+**Rule:** Parse route params with a dual-accept guard. A param is a legacy numeric id ONLY if it parses as a positive finite integer AND round-trips as `String(n) === raw`. Otherwise pass through as the UUID string:
+```ts
+const tid: number | string = (() => {
+  if (tableId === undefined || tableId === '') return NaN
+  const n = Number(tableId)
+  return Number.isFinite(n) && n > 0 && String(n) === tableId ? n : tableId
+})()
+const tidValid = typeof tid === 'string' ? tid.length > 0 : Number.isFinite(tid) && tid > 0
+```
+Gate `useLiveQuery` on `tidValid` (return `Promise.resolve(undefined)` when invalid — never call `db.X.get(NaN)`). The downstream Dexie API + every helper in `queries.ts` is widened to `number | string`, so the value flows through unchanged.
+
+**Don't re-coerce downstream.** If you have a loaded row `session` and need its id, pass `session.id!` (or stringify if you need a string specifically, e.g. for `referenceId`). NEVER write `Number(session.id)` inside the same file again — it's the same bug.
+
+**Files affected:** `src/pages/StartSession.tsx`, `src/pages/SessionDetail.tsx`. Clean reference (already string-native): `CustomerProfile`, `WalletTopup`, `Poster`, `PlayerScan`, `BookingScreen`.
+
+**Step 2 evolution:** once the v20 `.upgrade()` callback rewrites all existing numeric rows to UUIDs, the dual-accept can collapse to "treat everything as a UUID string." Until then, keep the round-trip guard — pre-v20 users still have numeric rows for the lifetime of their DB.
 
 ### Pattern R1 — After renaming a route, grep ALL `navigate('/old')` calls (BUG-009)
 **Symptom signature:** Some flows still go to the old route.

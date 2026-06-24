@@ -16,6 +16,12 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 24 Jun 2026 — Phase B step 1 fallout
+
+- **BUG-B1** (#107, fixed 8e4619c + 986ace0) — Tapping any table crashed with `DataError: parameter is not a valid key`; then second crash on Start Timer with `Evaluating the object store's key path did not yield a value`. Two-layer ripple from v20 schema flip: route params still coerced via `Number()` (UUID → NaN) AND `.add()` sites still expected `++id` auto-gen. Fix dual-accepted route params at boundary + pre-generated UUIDs at all `.add()` sites for the 4 UUID-flipped tables. See Patterns D12 + R5. — see GitHub
+
+---
+
 ## May 2026 — Initial bug sprint
 
 - **BUG-toggle** (#1, fixed) — Out-of-Service toggle knob misaligned (hand-rolled CSS) — see GitHub

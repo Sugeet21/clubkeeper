@@ -2,6 +2,21 @@
 
 ---
 
+## 24 Jun 2026 — BUG-B1: route param + add() ripple from v20 schema flip (#107)
+
+- `8e4619c` — fix(routing): dual-accept route params for UUID-keyed Dexie rows (closes #107 — pending owner verification).
+- `986ace0` — fix(db): caller-supplied UUIDs at all add() sites for 4 UUID-flipped tables (closes #107 followup).
+- **Why two commits:** the first fix unblocked the route boundary (`Number("uuid")` → NaN crash on every table tap). Owner then tried Start Timer and hit the next layer — `db.sessions.add(...)` with no `id` field. v20 schema is `'id, ...'` (no `++`), so caller MUST supply id. Both fixed.
+- **Files changed:**
+  - `src/pages/StartSession.tsx`, `src/pages/SessionDetail.tsx` — dual-accept route param parser at boundary (`Number()` only when round-trips as `String(n) === raw`; else UUID string). Removed 4 stale `Number(session.id)` re-coercions in SessionDetail action handlers.
+  - `src/db/queries.ts` — widened 13 function signatures from `number` → `number | string` (`getActiveSessionForTable`, `getLinkableBookingsForTable`, `getUpcomingBookingsForTable`, `acknowledgeNotify`, `snoozeNotify`, `updateSessionNotify`, `pauseSession`, `resumeSession`, `pauseForPayment`, `confirmPaymentAndStop`, `recordSessionPaymentBreakdown`, `linkBookingToSession`, `addOrIncrementSessionItem`). `addTable`, `addCanteenItem`, `addSessionItem`, `startSession` return type narrowed to `Promise<string>`. `createBackEntry` widened to `Promise<number | string>`. All 8 `.add()` sites on the 4 UUID-flipped tables now pre-generate `crypto.randomUUID()`.
+  - `src/components/AddItemBottomSheet.tsx` — freeform `db.sessionItems.add` now passes `id: crypto.randomUUID()`.
+- **Two new patterns logged:** Pattern D12 (Dexie `.add()` on plain `id` schema needs caller-supplied key) and Pattern R5 (route-param `Number()` coercion is a UUID landmine).
+- **Step 2 implication:** this commit effectively pulled the "switch `add()` sites to UUIDs" item from Step 2 forward to Step 1.5. Step 2 still owes the `.upgrade()` callback to rewrite pre-existing numeric-id rows. Pre-existing rows currently coexist with new UUID rows because the runtime guards + widened signatures dual-accept both.
+- `npm run build` green after each commit.
+
+---
+
 ## 24 Jun 2026 — v20 schema declared, polyfill installed, hazards fixed (Phase B step 1)
 
 - `feat(db): declare v20 schema + UUID polyfill + transitional id type widening (Phase B step 1)`

@@ -79,7 +79,7 @@ Invariants:
 - `ClubSettings.legacyAdjustmentsBackfilled?` is the v6 audit flag — read-only after migration.
 - v13 `.upgrade()` items-revenue gap: `paymentBreakdown.cash` understates pre-v13 sessions (used `session.amount` alone, not grand total). Tracked, deferred.
 - Renaming a table = existing users' data is gone. Use soft-delete + new-name migration instead.
-- **Current version: v20 (Phase B step 1, 24 Jun 2026).** v20 declares UUID migration schema (4 tables `gameTables/sessions/sessionItems/canteenItems` flip from `++id` to `id`; adds `_outbox` for Phase C). NO `.upgrade()` yet — that is Step 2. `CURRENT_SCHEMA_VERSION = 20`. `ClubKeeperBackupV20` primary; V19/V18/V17/V16 aliased. `confirmPaymentAndStop` + `recordSessionPaymentBreakdown` have transitional dual-accept guards. `seed.ts` pre-assigns UUIDs. Step 2 gate: `.upgrade()` that rewrites existing numeric rows.
+- **Current version: v20 (Phase B step 1 + 1.5, 24 Jun 2026).** v20 declares UUID migration schema (4 tables `gameTables/sessions/sessionItems/canteenItems` flip from `++id` to `id`; adds `_outbox` for Phase C). NO `.upgrade()` yet — that is Step 2. `CURRENT_SCHEMA_VERSION = 20`. `ClubKeeperBackupV20` primary; V19/V18/V17/V16 aliased. `confirmPaymentAndStop` + `recordSessionPaymentBreakdown` have transitional dual-accept guards. `seed.ts` pre-assigns UUIDs. **Step 1.5 (#107, 24 Jun 2026):** all `.add()` sites on the 4 UUID-flipped tables pre-generate `crypto.randomUUID()` (Pattern D12); route boundaries dual-accept Number-or-string params (Pattern R5); 13 query-layer signatures widened to `number | string`. Step 2 (still owed): `.upgrade()` that rewrites existing numeric rows to UUIDs + collapses all `number | string` unions to `string`.
 - **Previous: v19 (22 Jun 2026, #106)** adds per-club operating hours + per-30-min-slot advance — `ClubSettings.bookingOpenMinutes?`, `bookingCloseMinutes?`, `bookingAdvancePerSlot?`. `bookingAdvanceAmount` retained as @deprecated for Dexie/Supabase back-compat. Additive only, no `.upgrade()`, no index changes (schema string identical to v18). v18 (19 Jun 2026) added Peak Hour Pricing optional fields — `CanteenItem.peakPrice?` and `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`.
 
 Cross-feature ripples:
@@ -88,7 +88,7 @@ Cross-feature ripples:
 
 See also: `bug_patterns.md` (Dexie patterns), full Dexie version history in `SKILL.md`.
 
-Last updated: 24 Jun 2026 (v20 Phase B step 1 — schema declared, no migration yet)
+Last updated: 24 Jun 2026 (v20 Phase B step 1 + 1.5 — schema declared, add() sites + route boundaries hardened, .upgrade() still owed)
 
 ---
 
@@ -917,6 +917,7 @@ Invariants:
 - Renaming `/tables` ripples to: `BottomNav`, `SessionDetail` navigate calls, `Settings` navigate calls, `AuthCallback`, `Landing` "Go to App" button.
 - New private route that runs Dexie queries on mount: gated automatically by `<RequireAccess>` + the `subscriptionLoaded` flag. Verify no Dexie call fires before `dbReady`.
 - `AppLayout` hides BottomNav on public paths via `isPublicRoute(pathname)`. New public route → add prefix to `isPublicRoute`.
+- **Route param boundary parses with dual-accept (Pattern R5).** Any param that maps to a UUID-flipped Dexie table (`gameTables`, `sessions`, `sessionItems`, `canteenItems`) MUST go through the round-trip Number check, NOT a bare `Number(useParams().X)`. The same rule applies to downstream re-coercions — if you have a loaded row, pass `row.id!` directly; do not write `Number(row.id)` anywhere. Verify with `grep "Number\(\(sessionId\|tableId\|itemId\|rawSessionId\|rawTableId\)\)"`. The 13 query-layer signatures in `queries.ts` already accept `number | string` — no widening needed at the call site.
 - PWA manifest "shortcuts" require `vite.config.ts` update.
 - Most-common-mistake list (kept here as cross-cutting reminder):
   1. Add Session field, forget `startSession()` — undefined on new rows.
@@ -929,8 +930,10 @@ Invariants:
 
 Cross-feature ripples:
 - → All feature sections (route additions/renames).
+- → [Schema & Migrations](#schema--migrations): UUID-flipped tables require Pattern R5 at every route boundary that uses the table's id.
+- → [Bug patterns](bug_patterns.md): Pattern R5 (route-param `Number()` UUID landmine), Pattern D12 (caller-supplied keys at `.add()`).
 
-Last updated: 14 Jun 2026
+Last updated: 24 Jun 2026 (Pattern R5 added — route-param dual-accept after #107)
 
 ---
 
