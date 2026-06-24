@@ -1,0 +1,274 @@
+// Phase C Chunk 3 — manual smoke-test page for the sync wrappers.
+//
+// DEV-only route mounted at /__dev/test-outbox (guarded in App.tsx by
+// import.meta.env.DEV). Provides four buttons that exercise each wrapper
+// against the live per-user Dexie instance and dump the resulting outbox
+// rows + data rows so you can visually verify atomic-tx behavior.
+//
+// Uses a `_test_` id prefix on every row so production UI never picks these
+// up as real customers / etc. A "Clean test rows" button purges them.
+//
+// Run pipeline:
+//   1. Sign in (Chunk 1 useCurrentUser must report 'signed_in') — wrappers
+//      require dbReady which depends on auth.
+//   2. Visit http://localhost:5173/__dev/test-outbox
+//   3. Click each test button in order, eyeball the output.
+//   4. Click "Clean test rows" to purge.
+
+import { useState } from 'react'
+import { db } from '../../db/database'
+import {
+  syncedCreate,
+  syncedUpdate,
+  syncedSoftDelete,
+  syncedCreateBatch,
+} from '../../db/syncWrappers'
+
+const TEST_PREFIX = '_test_'
+
+interface LogEntry {
+  ts: string
+  label: string
+  ok: boolean
+  detail: unknown
+}
+
+export default function TestOutbox() {
+  const [logs, setLogs] = useState<LogEntry[]>([])
+
+  const log = (label: string, ok: boolean, detail: unknown) => {
+    setLogs((prev) => [
+      { ts: new Date().toISOString().slice(11, 23), label, ok, detail },
+      ...prev,
+    ])
+  }
+
+  const runCreateTest = async () => {
+    try {
+      const id = `${TEST_PREFIX}${crypto.randomUUID()}`
+      const row = {
+        id,
+        phone: null,
+        name: 'TEST Customer A',
+        walkInCode: null,
+        walletBalance: 0,
+        createdAt: Date.now(),
+        lastVisitAt: Date.now(),
+        updated_at: new Date().toISOString(),
+      }
+      await syncedCreate('customers', row)
+
+      // Read back from BOTH tables
+      const dataRow = await db.customers.get(id)
+      const outboxRows = await db._outbox.where('rowId').equals(id).toArray()
+
+      const passed = !!dataRow && outboxRows.length === 1 && outboxRows[0].op === 'insert'
+      log('syncedCreate', passed, { dataRow, outboxRows })
+    } catch (e) {
+      log('syncedCreate', false, String(e))
+    }
+  }
+
+  const runUpdateTest = async () => {
+    try {
+      const id = `${TEST_PREFIX}${crypto.randomUUID()}`
+      // Seed a row first (via wrapper so outbox has a baseline)
+      await syncedCreate('customers', {
+        id,
+        phone: null,
+        name: 'TEST Customer B',
+        walkInCode: null,
+        walletBalance: 100,
+        createdAt: Date.now(),
+        lastVisitAt: Date.now(),
+        updated_at: new Date().toISOString(),
+      })
+      // Now update
+      await syncedUpdate('customers', id, { name: 'TEST Customer B (renamed)', walletBalance: 250 })
+
+      const dataRow = await db.customers.get(id)
+      const outboxRows = await db._outbox.where('rowId').equals(id).toArray()
+
+      const updateRow = outboxRows.find((r) => r.op === 'update')
+      const payload = updateRow?.payload as { name: string; walletBalance: number } | undefined
+
+      const passed =
+        outboxRows.length === 2 &&
+        !!updateRow &&
+        dataRow?.name === 'TEST Customer B (renamed)' &&
+        dataRow?.walletBalance === 250 &&
+        payload?.name === 'TEST Customer B (renamed)' &&
+        payload?.walletBalance === 250
+
+      log('syncedUpdate', passed, { dataRow, outboxRows })
+    } catch (e) {
+      log('syncedUpdate', false, String(e))
+    }
+  }
+
+  const runSoftDeleteTest = async () => {
+    try {
+      const id = `${TEST_PREFIX}${crypto.randomUUID()}`
+      await syncedCreate('customers', {
+        id,
+        phone: null,
+        name: 'TEST Customer C',
+        walkInCode: null,
+        walletBalance: 0,
+        createdAt: Date.now(),
+        lastVisitAt: Date.now(),
+        updated_at: new Date().toISOString(),
+      })
+      await syncedSoftDelete('customers', id)
+
+      const dataRow = await db.customers.get(id)
+      const outboxRows = await db._outbox.where('rowId').equals(id).toArray()
+
+      const deleteRow = outboxRows.find((r) => r.op === 'soft_delete')
+      const payload = deleteRow?.payload as { deleted_at: string } | undefined
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dataDeletedAt = (dataRow as any)?.deleted_at as string | undefined
+
+      const passed =
+        outboxRows.length === 2 &&
+        !!deleteRow &&
+        typeof dataDeletedAt === 'string' &&
+        typeof payload?.deleted_at === 'string' &&
+        dataDeletedAt === payload.deleted_at
+
+      log('syncedSoftDelete', passed, { dataRow, outboxRows })
+    } catch (e) {
+      log('syncedSoftDelete', false, String(e))
+    }
+  }
+
+  const runBatchTest = async () => {
+    try {
+      const customerId = `${TEST_PREFIX}${crypto.randomUUID()}`
+      const saleId = `${TEST_PREFIX}${crypto.randomUUID()}`
+
+      await syncedCreateBatch([
+        {
+          table: 'customers',
+          row: {
+            id: customerId,
+            phone: null,
+            name: 'TEST Customer D',
+            walkInCode: null,
+            walletBalance: 50,
+            createdAt: Date.now(),
+            lastVisitAt: Date.now(),
+            updated_at: new Date().toISOString(),
+          },
+        },
+        {
+          table: 'canteen_sales',
+          row: {
+            id: saleId,
+            createdAt: Date.now(),
+            items: [{ name: 'TEST Item', price: 50, quantity: 1 }],
+            subtotal: 50,
+            paymentBreakdown: { cash: 0, upi: 0, wallet: 50 },
+            total: 50,
+            customerId,
+            updated_at: new Date().toISOString(),
+          },
+        },
+      ])
+
+      const customer = await db.customers.get(customerId)
+      const sale = await db.canteenSales.get(saleId)
+      const outboxRows = await db._outbox
+        .filter((r) => r.rowId === customerId || r.rowId === saleId)
+        .toArray()
+
+      const passed = !!customer && !!sale && outboxRows.length === 2
+      log('syncedCreateBatch', passed, { customer, sale, outboxRows })
+    } catch (e) {
+      log('syncedCreateBatch', false, String(e))
+    }
+  }
+
+  const cleanup = async () => {
+    try {
+      const customers = await db.customers.toArray()
+      const sales = await db.canteenSales.toArray()
+      const outboxAll = await db._outbox.toArray()
+
+      const customersToDelete = customers.filter((c) => c.id.startsWith(TEST_PREFIX))
+      const salesToDelete = sales.filter((s) => s.id.startsWith(TEST_PREFIX))
+      const outboxToDelete = outboxAll.filter(
+        (r) => typeof r.rowId === 'string' && r.rowId.startsWith(TEST_PREFIX),
+      )
+
+      await db.transaction('rw', [db.customers, db.canteenSales, db._outbox], async () => {
+        await Promise.all(customersToDelete.map((c) => db.customers.delete(c.id)))
+        await Promise.all(salesToDelete.map((s) => db.canteenSales.delete(s.id)))
+        await Promise.all(outboxToDelete.map((r) => db._outbox.delete(r.seq as number)))
+      })
+
+      log('cleanup', true, {
+        customersDeleted: customersToDelete.length,
+        salesDeleted: salesToDelete.length,
+        outboxDeleted: outboxToDelete.length,
+      })
+    } catch (e) {
+      log('cleanup', false, String(e))
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-900 text-slate-100 p-6">
+      <div className="max-w-5xl mx-auto">
+        <h1 className="text-xl font-semibold mb-2">/__dev/test-outbox</h1>
+        <p className="text-slate-400 text-sm mb-6">
+          Phase C Chunk 3 — sync wrapper smoke tests. Requires you to be signed
+          in (dbReady === true). Test rows use <code>_test_</code> id prefix.
+        </p>
+
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
+          <button onClick={runCreateTest} className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-sm">
+            syncedCreate
+          </button>
+          <button onClick={runUpdateTest} className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-sm">
+            syncedUpdate
+          </button>
+          <button onClick={runSoftDeleteTest} className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-sm">
+            syncedSoftDelete
+          </button>
+          <button onClick={runBatchTest} className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-sm">
+            syncedCreateBatch
+          </button>
+          <button onClick={cleanup} className="bg-red-700 hover:bg-red-600 px-3 py-2 rounded text-sm">
+            Clean test rows
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          {logs.length === 0 && <p className="text-slate-500 text-sm">No runs yet.</p>}
+          {logs.map((entry, i) => (
+            <div
+              key={i}
+              className={`border rounded p-3 ${
+                entry.ok ? 'border-emerald-700 bg-emerald-900/20' : 'border-red-700 bg-red-900/20'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-mono text-sm">
+                  {entry.ts} — {entry.label}
+                </span>
+                <span className={`text-xs font-semibold ${entry.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {entry.ok ? 'PASS' : 'FAIL'}
+                </span>
+              </div>
+              <pre className="text-[11px] text-slate-300 overflow-x-auto bg-slate-950/50 p-2 rounded">
+                {JSON.stringify(entry.detail, null, 2)}
+              </pre>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}

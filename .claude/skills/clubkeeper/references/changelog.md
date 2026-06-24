@@ -2,6 +2,36 @@
 
 ---
 
+## 25 Jun 2026 — Phase C Chunk 3: sync wrappers (Dexie-only, no Supabase yet)
+
+- `feat(sync): Phase C Chunk 3 — syncedCreate/Update/SoftDelete wrappers`
+- **New files:**
+  - `src/db/syncTableMap.ts` — single source of truth for snake_case (Supabase wire format) ↔ camelCase (Dexie table key) mapping. `dexieTableFor(syncTable)` + reverse + `SYNC_TABLES_PULL_ORDER`. Every Phase C consumer (wrappers, runner, reader) goes through here.
+  - `src/db/scheduleDrain.ts` — stub for Chunk 4. Logs once in DEV. Lets wrappers compile + smoke-test without coupling to a runner.
+  - `src/db/syncWrappers.ts` — 4 functions: `syncedCreate`, `syncedUpdate`, `syncedSoftDelete`, `syncedCreateBatch`. Each opens a Dexie `rw` tx over (data table + `_outbox`), writes both rows atomically, then calls `scheduleDrain()` after commit. Generic over `SyncedRow extends { id: string }`. Top-of-file Pattern D7 warning: never call from inside another `db.transaction()`.
+  - `src/pages/__dev__/TestOutbox.tsx` — DEV-only smoke-test page at `/__dev/test-outbox`. Four buttons exercise each wrapper; output dumps data row + outbox row(s) with PASS/FAIL gate. `_test_` id prefix isolates from production data. "Clean test rows" purges.
+- **App.tsx:** `/__dev/test-outbox` route added under `import.meta.env.DEV` block. Production bundle unchanged (Vite tree-shakes the test page).
+- **Pattern enforcement:** all 4 wrappers route through `dexieTableFor()` — direct camelCase string access is forbidden. The outbox `payload` is the FULL merged row (not just the patch on update), so SyncRunner can do a clean upsert in Chunk 4.
+- **NOT done in this chunk** (deferred to Chunk 4+ per the prompt):
+  - `scheduleDrain()` is a stub — no actual drain runs.
+  - No queries.ts call sites have been migrated yet (Chunk 7 cutover).
+  - No code outside the test page calls the wrappers yet — they're standalone.
+- `npm run build` clean (0 TS errors). Production bundle 1056.16 KB (unchanged from Chunks 1-2).
+
+**Blocking note for Chunk 4:** JWT custom-claims (`user_club_id` + `user_role`) still missing from production tokens despite #108 patch. Tracked as **#109 BUG-S13**. Chunk 4 (SyncRunner — actually hits Supabase) cannot ship until #109 is resolved, because every push will RLS-403. Chunk 3 wrappers are Dexie-only so this session was safe to ship.
+
+---
+
+## 25 Jun 2026 — BUG-S12 (#108): JWT hook field-ref bug, sign-in bricked
+
+- `86d45d3` — `fix(auth): JWT custom-claims hook must use FOUND, not nonexistent record field (closes #108)`
+- `public.add_user_meta_to_jwt` referenced `meta.user_id` in an `IF` guard but `user_id` was NOT in the `SELECT INTO meta` list (only `club_id, role, active` were). PL/pgSQL raised `record "meta" has no field "user_id"` on every invocation. Supabase Auth treats any hook exception as fatal token-issue, silently rejects the session, app bounces back to sign-in screen.
+- Fix: use `FOUND` auto-set var; wrap body in `EXCEPTION WHEN OTHERS THEN RAISE WARNING + RETURN event` so any future hook bug degrades gracefully (sign-in succeeds without sync claims, client renders NoClubScreen) rather than bricking auth.
+- Migration file in repo updated to match the `CREATE OR REPLACE` that Sugeet pasted into Dashboard SQL Editor.
+- Verified by owner. Closed.
+
+---
+
 ## 25 Jun 2026 — Phase C Chunks 1 + 2: owner auth hook + DDL (manual deploy pending)
 
 **Chunk 1 — `feat(auth): Phase C Chunk 1 — Supabase owner sign-in + useCurrentUser`**

@@ -31,6 +31,8 @@ import BookingScreen from './pages/player/BookingScreen'
 import Poster from './pages/Poster'
 import { TopupRealtimeBridge } from './components/TopupRealtimeBridge'
 import { BookingRealtimeBridge } from './components/BookingRealtimeBridge'
+// Phase C Chunk 3 — sync wrapper smoke-test page, DEV-only route.
+import TestOutbox from './pages/__dev__/TestOutbox'
 
 const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback', '/auth/login']
 // /c/ and /poster/ are public but use path prefixes — checked via startsWith in AppLayout
@@ -163,6 +165,11 @@ function AppLayout() {
             <Route path="/quick-sale" element={<QuickSale />} />
             <Route path="/piggy" element={<Piggy />} />
             <Route path="/bookings" element={<Bookings />} />
+            {/* Phase C Chunk 3 — DEV-only sync wrapper smoke test. Gated on
+                import.meta.env.DEV so production never serves this. */}
+            {import.meta.env.DEV && (
+              <Route path="/__dev/test-outbox" element={<TestOutbox />} />
+            )}
           </Route>
         </Routes>
       </div>
