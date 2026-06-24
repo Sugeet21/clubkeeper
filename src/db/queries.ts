@@ -78,7 +78,7 @@ export async function deleteTable(id: number): Promise<void> {
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
 export async function getActiveSessionForTable(
-  tableId: number,
+  tableId: number | string,
 ): Promise<Session | undefined> {
   return db.sessions
     .where('tableId')
@@ -110,7 +110,7 @@ export async function startSession(
     | 'framesPlayed'
   >,
   notifyAfterMs?: number | null,
-): Promise<number> {
+): Promise<number | string> {
   const startedAt = Date.now()
   const alarmFields =
     typeof notifyAfterMs === 'number' && notifyAfterMs > 0
@@ -143,11 +143,11 @@ export async function startSession(
   })
 }
 
-export async function acknowledgeNotify(sessionId: number): Promise<void> {
+export async function acknowledgeNotify(sessionId: number | string): Promise<void> {
   await db.sessions.update(sessionId, { notifyAcknowledgedAt: Date.now() })
 }
 
-export async function snoozeNotify(sessionId: number, snoozeMs: number): Promise<void> {
+export async function snoozeNotify(sessionId: number | string, snoozeMs: number): Promise<void> {
   const session = await db.sessions.get(sessionId)
   if (!session) return
   const original = session.notifyAtMs ?? Date.now()
@@ -167,7 +167,7 @@ export async function snoozeNotify(sessionId: number, snoozeMs: number): Promise
  * notifyAfterMs = duration FROM NOW. Pass null to clear the alarm entirely.
  */
 export async function updateSessionNotify(
-  sessionId: number,
+  sessionId: number | string,
   notifyAfterMs: number | null,
 ): Promise<void> {
   if (notifyAfterMs === null) {
@@ -183,7 +183,7 @@ export async function updateSessionNotify(
   })
 }
 
-export async function pauseSession(sessionId: number): Promise<void> {
+export async function pauseSession(sessionId: number | string): Promise<void> {
   const session = await db.sessions.get(sessionId)
   if (!session) throw new Error(`Session ${sessionId} not found`)
   if (session.status !== 'running') return
@@ -194,7 +194,7 @@ export async function pauseSession(sessionId: number): Promise<void> {
   })
 }
 
-export async function resumeSession(sessionId: number): Promise<void> {
+export async function resumeSession(sessionId: number | string): Promise<void> {
   const session = await db.sessions.get(sessionId)
   if (!session) throw new Error(`Session ${sessionId} not found`)
   if (session.status !== 'paused' || session.pausedAt === null) return
@@ -255,7 +255,7 @@ export async function stopSession(sessionId: number): Promise<Session> {
  * Does NOT write endedAt or amount — those are written only in confirmPaymentAndStop.
  */
 export async function pauseForPayment(
-  sessionId: number,
+  sessionId: number | string,
 ): Promise<{ billableMs: number; grandTotal: number }> {
   const session = await db.sessions.get(sessionId)
   if (!session) throw new Error(`Session ${sessionId} not found`)
@@ -299,7 +299,7 @@ export async function pauseForPayment(
  * in a single Dexie transaction. Wallet debit inlined in the same tx (Pattern D7).
  */
 export async function confirmPaymentAndStop(
-  sessionId: number,
+  sessionId: number | string,
   breakdown: { cash: number; upi: number; wallet: number },
   customerId?: string,
 ): Promise<void> {
@@ -1244,7 +1244,7 @@ export class WalletInsufficientError extends Error {
  * helpers are inlined here — never call this from inside another transaction.
  */
 export async function recordSessionPaymentBreakdown(
-  sessionId: number,
+  sessionId: number | string,
   breakdown: { cash: number; upi: number; wallet: number },
   customerId?: string,
 ): Promise<void> {
@@ -1930,7 +1930,7 @@ export class BookingAlreadyConsumedError extends Error {
  * prompt. Excludes anything already consumed/cancelled/no_show.
  */
 export async function getLinkableBookingsForTable(
-  tableId: number,
+  tableId: number | string,
   now: number,
   windowMs: number,
 ): Promise<Booking[]> {
@@ -1950,7 +1950,7 @@ export async function getLinkableBookingsForTable(
  * never blocks the walk-in.
  */
 export async function getUpcomingBookingsForTable(
-  tableId: number,
+  tableId: number | string,
   now: number,
   lookaheadMs: number,
 ): Promise<Booking[]> {
@@ -1973,7 +1973,7 @@ export async function getUpcomingBookingsForTable(
  */
 export async function linkBookingToSession(
   bookingId: string,
-  sessionId: number,
+  sessionId: number | string,
 ): Promise<{ customerId: string }> {
   return db.transaction('rw', db.bookings, db.customers, async () => {
     const booking = await db.bookings.get(bookingId)

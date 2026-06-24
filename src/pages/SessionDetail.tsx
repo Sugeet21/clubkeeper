@@ -364,9 +364,15 @@ function formatPlayers(s: Session): string {
 export default function SessionDetail() {
   const { sessionId: rawSessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
-  // Coerce route param at the boundary. Anything downstream gets `sid: number`.
-  const sid = Number(rawSessionId)
-  const sidValid = Number.isFinite(sid) && sid > 0
+  // Dual-accept route param (Phase B step 1.5 — #107). Legacy v19 = number,
+  // v20-seeded = UUID string. Round-trip check prevents "123abc" → 123 truncation.
+  const sid: number | string = (() => {
+    if (rawSessionId === undefined || rawSessionId === '') return NaN
+    const n = Number(rawSessionId)
+    return Number.isFinite(n) && n > 0 && String(n) === rawSessionId ? n : rawSessionId
+  })()
+  const sidValid =
+    typeof sid === 'string' ? sid.length > 0 : Number.isFinite(sid) && sid > 0
 
   // undefined = loading, null = not found, Session = loaded
   const session = useLiveQuery<Session | null>(
@@ -490,8 +496,7 @@ export default function SessionDetail() {
       setFinalRoundedMs(billableMs)
       setFinalGrandTotal(grandTotal)
       if (grandTotal === 0) {
-        const sid = Number(session.id)
-        void confirmPaymentAndStop(sid, { cash: 0, upi: 0, wallet: 0 })
+        void confirmPaymentAndStop(session.id!, { cash: 0, upi: 0, wallet: 0 })
           .then(() => {
             setBreakdownRecorded(true)
             setConfirmedBreakdown({ cash: 0, upi: 0, wallet: 0 })
@@ -515,8 +520,7 @@ export default function SessionDetail() {
         ((session.endedAt ?? Date.now()) - session.startedAt - session.pausedTotalMs),
     )
     if (grandTotal === 0) {
-      const sid = Number(session.id)
-      void recordSessionPaymentBreakdown(sid, { cash: 0, upi: 0, wallet: 0 })
+      void recordSessionPaymentBreakdown(session.id!, { cash: 0, upi: 0, wallet: 0 })
         .then(() => setBreakdownRecorded(true))
         .catch(() => {})
     } else {
@@ -623,8 +627,7 @@ export default function SessionDetail() {
       setLinkedCustomer(null)
       // Open split sheet directly — no pre-record QR screen (#77)
       if (grandTotal === 0) {
-        const sid = Number(session.id)
-        await confirmPaymentAndStop(sid, { cash: 0, upi: 0, wallet: 0 })
+        await confirmPaymentAndStop(session.id!, { cash: 0, upi: 0, wallet: 0 })
         setBreakdownRecorded(true)
         setConfirmedBreakdown({ cash: 0, upi: 0, wallet: 0 })
       } else {
@@ -1278,7 +1281,7 @@ export default function SessionDetail() {
                 }
               }}
               onConfirm={async (breakdown, customerId) => {
-                const numericSessionId = Number(session.id)
+                const effectiveSessionId = session.id!
                 const effectiveCustomerId = customerId ?? linkedCustomer?.id ?? null
                 if (coinsApplied > 0 && linkedCustomer) {
                   await redeemCoins({
@@ -1286,7 +1289,7 @@ export default function SessionDetail() {
                     coins: coinsApplied,
                     rupeeEquivalent: coinDiscount,
                     referenceType: 'coin_redemption',
-                    referenceId: numericSessionId.toString(),
+                    referenceId: String(effectiveSessionId),
                   })
                 }
                 // P1e: when a booking advance was applied, the sheet collected
@@ -1313,7 +1316,7 @@ export default function SessionDetail() {
                   }
                 }
                 await confirmPaymentAndStop(
-                  numericSessionId,
+                  effectiveSessionId,
                   writeBreakdown,
                   effectiveCustomerId ?? undefined,
                 )

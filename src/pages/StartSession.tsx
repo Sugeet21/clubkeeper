@@ -61,8 +61,19 @@ export default function StartSession() {
   const { tableId } = useParams<{ tableId: string }>()
   const navigate = useNavigate()
 
-  const tid = Number(tableId)
-  const table = useLiveQuery(() => db.gameTables.get(tid), [tid])
+  // Dual-accept route param (Phase B step 1.5 — #107).
+  // Legacy v19 rows use numeric ids; v20-seeded rows use UUID strings. Round-trip
+  // check ensures "123abc" doesn't get silently truncated to 123.
+  const tid: number | string = (() => {
+    if (tableId === undefined || tableId === '') return NaN
+    const n = Number(tableId)
+    return Number.isFinite(n) && n > 0 && String(n) === tableId ? n : tableId
+  })()
+  const tidValid = typeof tid === 'string' ? tid.length > 0 : Number.isFinite(tid) && tid > 0
+  const table = useLiveQuery(
+    () => (tidValid ? db.gameTables.get(tid) : Promise.resolve(undefined)),
+    [tid, tidValid],
+  )
 
   // Form state
   const [billingMode, setBillingMode] = useState<BillingMode>('per_hour')
@@ -95,7 +106,7 @@ export default function StartSession() {
   // change — `Date.now()` inside the effect is fine because StartSession is a
   // mount-and-stay page; users don't sit on it for >30 min.
   useEffect(() => {
-    if (!Number.isFinite(tid)) return
+    if (!tidValid) return
     const now = Date.now()
     let cancelled = false
     Promise.all([
@@ -111,7 +122,7 @@ export default function StartSession() {
       setUpcomingBookings(upcoming.filter((b) => !linkable.some((l) => l.id === b.id)))
     }).catch(() => { /* swallow — non-critical lookup */ })
     return () => { cancelled = true }
-  }, [tid])
+  }, [tid, tidValid])
 
   function applyLinkedBooking(b: Booking) {
     setLinkedBooking(b)
