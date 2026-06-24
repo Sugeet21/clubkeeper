@@ -109,7 +109,12 @@ begin
   -- No users_meta row → user is signed in but not provisioned. Let the JWT
   -- issue without sync claims; the client will see clubId=null via
   -- useCurrentUser() and render NoClubScreen.
-  if meta.user_id is null then
+  -- NB: must use `not found` (the auto-set PL/pgSQL var). A previous version
+  -- of this function referenced `meta.user_id`, which doesn't exist in the
+  -- record because user_id is NOT in the SELECT list — that raised on every
+  -- sign-in, the hook bricked the auth callback, and the app bounced back to
+  -- the sign-in screen silently.
+  if not found then
     return event;
   end if;
 
@@ -124,6 +129,13 @@ begin
   claims := jsonb_set(claims, '{user_role}',    to_jsonb(meta.role));
 
   return jsonb_set(event, '{claims}', claims);
+
+exception when others then
+  -- Defensive: a bug in this hook must NOT brick sign-in. The Phase C client
+  -- degrades gracefully when claims are missing (no sync, but the app still
+  -- works offline). Logged for forensics; visible in Postgres logs.
+  raise warning 'add_user_meta_to_jwt failed: % %', sqlstate, sqlerrm;
+  return event;
 end;
 $$;
 
