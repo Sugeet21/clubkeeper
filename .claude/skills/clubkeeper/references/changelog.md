@@ -2,6 +2,25 @@
 
 ---
 
+## 26 Jun 2026 — Phase C Chunk 4: SyncRunner drain engine (real Supabase push)
+
+- `feat(sync): Phase C Chunk 4 — SyncRunner drain engine` (pending commit)
+- Replaces the Chunk 3 `scheduleDrain()` no-op stub with a real engine that pushes outbox rows to Supabase.
+- New file: `src/db/syncRunner.ts` (~210 LOC). Exports `syncRunner` singleton + `scheduleDrain` forwarder.
+- `start()` registers `window 'online'` listener + 30s heartbeat. `stop()` tears them down. Owned by new `<SyncRunnerBoot />` in `src/App.tsx`, gated on `dbReady + session + !isPlayerHubRoute` (mirrors `ExpirySweepRunner` pattern).
+- `scheduleDrain()` guards: not draining, online, started, `db.name !== 'ClubKeeperDB__pending'` (Pattern A1).
+- `drainOnce()` reads up to 50 non-stuck rows in seq order via streaming `.each()` with sentinel-throw break (NOT `.filter().limit()` — that pattern starves live rows once 50+ dead-letter rows accumulate; reviewer flagged, fixed). Pattern D7: tx closed before any `await supabase...`.
+- `pushOne()`: `insert`/`update` → `supabase.from(table).upsert(payload, { onConflict: 'id', ignoreDuplicates: false })`; `soft_delete` → `.update({ deleted_at, updated_at: deleted_at }).eq('id', rowId)`. Setting `updated_at = deleted_at` is deliberate so the Chunk 5 cursor pull picks up the deletion.
+- **Dead-letter:** when `attempts + 1 >= 10`, row flips `stuck: true` and runner does `continue` (skip-and-continue per owner choice). Other rows keep draining. Transient failures `throw` to trigger exponential backoff (1s → 60s).
+- **Large-backlog continuation:** if a drain pass returns a full BATCH_SIZE, runner immediately reschedules — a 500-row queue no longer waits 30s/batch.
+- Types: `OutboxRow.stuck?: boolean` added in `src/types/index.ts`.
+- `src/db/scheduleDrain.ts` now a one-line re-export from syncRunner so wrappers' import path is unchanged.
+- `src/pages/__dev__/TestOutbox.tsx` extended with 3 buttons: "Force drain now", "Show dead-letter", "RLS-fail test" (seeds row with `club_id: '00000000-...'`, kicks drain, asserts `attempts>0 + lastError`). Container fixed `max-w-5xl` → `max-w-[1400px]` (Critical Rule 13).
+- Reviewer (clubkeeper-reviewer agent) returned REQUEST_CHANGES with 2 blockers + 4 concerns; all blockers fixed, all 4 concerns either fixed (large-backlog, sleep-removal) or documented inline (void-dispatch comment, soft_delete updated_at intent).
+- Build clean. **Pending owner E2E verification** before declaring chunk 4 verified.
+
+---
+
 ## 26 Jun 2026 — Project agents + skill integration (when to delegate vs main-thread)
 
 - `chore(agents): three project agents (explorer, reviewer, skill-auditor)` (9783db3)

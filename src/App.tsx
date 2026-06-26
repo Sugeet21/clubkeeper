@@ -8,6 +8,7 @@ import { useAuthStore } from './store/authStore'
 import { unlockAudio } from './lib/alarm'
 import { applyExpirySweep } from './lib/coinExpiry'
 import { applyNoShowSweep } from './db/queries'
+import { syncRunner } from './db/syncRunner'
 import Home from './pages/Home'
 import Summary from './pages/Summary'
 import History from './pages/History'
@@ -119,6 +120,26 @@ function ExpirySweepRunner() {
   return null
 }
 
+// Phase C Chunk 4 — owns the SyncRunner lifecycle. Mirrors ExpirySweepRunner
+// gating: only starts once dbReady + session land AND we're not on a player-hub
+// route (which must never touch owner Supabase). On unmount / sign-out the
+// runner stops cleanly so the online listener + 30s heartbeat are torn down.
+function SyncRunnerBoot() {
+  const { dbReady, session } = useAuthStore()
+
+  useEffect(() => {
+    if (isPlayerHubRoute()) return
+    if (!dbReady || !session) return
+
+    syncRunner.start()
+    return () => {
+      syncRunner.stop()
+    }
+  }, [dbReady, session])
+
+  return null
+}
+
 // Inner layout — needs to be inside BrowserRouter to use useLocation
 function AppLayout() {
   const location = useLocation()
@@ -185,6 +206,7 @@ export default function App() {
         <AuthInitializer />
         <AudioUnlocker />
         <ExpirySweepRunner />
+        <SyncRunnerBoot />
         <TopupRealtimeBridge />
         <BookingRealtimeBridge />
         <AppLayout />

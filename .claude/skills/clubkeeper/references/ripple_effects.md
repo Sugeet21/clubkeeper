@@ -58,6 +58,7 @@ If you're changing... → Read sections...
 | `validation.ts` rules and validators | [Validation](#validation) |
 | `getAllDataForExport`, `importEverythingFromFile`, `resetEverything`, `ClubKeeperBackupV16` | [Import / Export / Reset](#import--export--reset) |
 | Dexie version bump, `.upgrade()` callbacks, new store | [Schema & Migrations](#schema--migrations) |
+| `syncedCreate/Update/SoftDelete/CreateBatch`, `OutboxRow`, `SyncRunner`, `scheduleDrain`, `SyncRunnerBoot`, `_outbox` table, snake_case ↔ camelCase mapping | [Sync (Phase C — outbox + drain engine)](#sync-phase-c--outbox--drain-engine) |
 
 ---
 
@@ -1318,6 +1319,44 @@ Cross-feature ripples:
 - → If the Supabase project is replaced entirely (URL changes): update YAML, `.env.local`, Vercel env, AND `src/lib/supabase.ts` / `src/lib/supabasePublic.ts` env consumers.
 
 Last updated: 16 Jun 2026
+
+---
+
+## Sync (Phase C — outbox + drain engine)
+
+The multi-device sync write path. Dexie wrappers (Chunk 3) write data + outbox atomically; the SyncRunner (Chunk 4) drains outbox rows to Supabase. The runner is the only thing in the codebase that calls `supabase.from(<synced-table>)` for owner-data writes.
+
+Files in scope:
+- `src/types/index.ts` — `SyncTableName` union (9 snake_case names) + `OutboxRow` interface with `stuck?: boolean` dead-letter marker.
+- `src/db/syncTableMap.ts` — snake_case ↔ camelCase mapping. Used ONLY by wrappers. `SYNC_TABLES_PULL_ORDER` reserved for Chunk 5 initial pull.
+- `src/db/syncWrappers.ts` — `syncedCreate / syncedUpdate / syncedSoftDelete / syncedCreateBatch`. Each opens its OWN Dexie 'rw' tx over `(dataTable + _outbox)` (Pattern D7). Calls `scheduleDrain()` AFTER tx commit. Never called from inside another `db.transaction()`.
+- `src/db/scheduleDrain.ts` — one-line re-export from syncRunner. Indirection layer so future queue-coalescing drops in here without touching wrappers.
+- `src/db/syncRunner.ts` — the engine. `start() / stop() / scheduleDrain() / drainOnce() / pushOne()`. Module-level `syncRunner` singleton.
+- `src/App.tsx` — `<SyncRunnerBoot />` component owns the lifecycle (start on `dbReady + session + !playerHub`, stop on cleanup).
+- `src/pages/__dev__/TestOutbox.tsx` — DEV-only `/__dev/test-outbox` page with smoke-test buttons.
+
+Invariants:
+- Wrappers MUST NOT be called from inside an outer `db.transaction()` — Dexie throws "Transaction is already closed" on nested 'rw' over the same stores. Multi-table atomic ops use `syncedCreateBatch`.
+- SyncRunner.drainOnce closes its Dexie read tx BEFORE the first `await supabase...` (Pattern D7). Per-row delete/update on success/failure each get their own short tx.
+- SyncRunner stays quiet on the placeholder DB. `scheduleDrain()` checks `db.name === 'ClubKeeperDB__pending'` first and exits early. Without this guard, scheduleDrain from test pages / dev hot-reloads pre-auth would target the placeholder Dexie instance.
+- SyncRunner stays quiet on player-hub routes (`/c/*`, `/poster/*`). SyncRunnerBoot's `isPlayerHubRoute()` check enforces this — same gate as AuthInitializer / ExpirySweepRunner.
+- Dead-letter threshold = 10 attempts. When `attempts + 1 >= 10`, the row gets `stuck: true` and is SKIPPED on subsequent drains. Stuck rows are surfaced via the DEV TestOutbox "Show dead-letter" button until Chunk 6 ships a sync-indicator UI.
+- drainOnce uses streaming `.each()` with a sentinel-throw break (NOT `.filter().limit()`) to avoid stuck-row starvation when ≥50 dead-letter rows accumulate.
+- Backoff: 1s → 60s exponential. Resets to 1s on a successful drain pass. A drain that contains only dead-letter skips is treated as success (backoff resets).
+- `pushOne` on `soft_delete` updates BOTH `deleted_at` AND `updated_at`. Required so Chunk 5's cursor-based pull (`WHERE updated_at > cursor`) sees the deletion on peer devices.
+- Idempotency: `upsert({ onConflict: 'id', ignoreDuplicates: false })` for insert/update. Safe to retry forever. Outbox can be replayed from scratch.
+- TestOutbox uses `_test_<uuid>` id prefix on every row. Cleanup button purges by prefix. Production UI never reads `_test_*` rows. When Chunk 4 is live, these rows DO get pushed to Supabase — manual cleanup via SQL Editor / Dashboard is the only path back.
+
+Cross-feature ripples:
+- → If a new Dexie synced table is added: extend `SyncTableName` union in `src/types/index.ts`, both maps in `src/db/syncTableMap.ts`, the `DexieSyncTableName` union, AND the `SYNC_TABLES_PULL_ORDER` array (Chunk 5 will use it).
+- → If the OutboxRow shape changes: bump Dexie schema (current v20) — `_outbox` index string lives in `src/db/database.ts`. Also update `buildOutboxRow` in `syncWrappers.ts` so new fields are populated on every queue.
+- → If a queries.ts mutation site is converted from raw `db.X.add/put/update/delete` to a wrapper (Chunk 7): the call MUST move OUT of any surrounding `db.transaction()` block, because the wrapper opens its own tx. If atomic multi-table behavior is required, use `syncedCreateBatch`.
+- → If `clubs.sync_enabled` kill-switch is wired (later chunk): the check goes at the top of `SyncRunner.scheduleDrain()` (or in `SyncRunnerBoot`'s gate) — do not scatter it across wrappers.
+- → If `BATCH_SIZE` is raised in `syncRunner.ts`: review the `drainOnce` streaming loop's memory footprint and the "large-backlog continuation" tail-call pattern; both currently assume bounded batch.
+- → If the Supabase schema renames any of the 9 synced tables: update `SyncTableName` literal + the `SYNC_TO_DEXIE` / `DEXIE_TO_SYNC` maps. Wrappers' `syncTable` argument is a literal type — TS will fail loudly.
+- → If a wrapper signature changes (e.g. `syncedCreate` gains an option): update `TestOutbox.tsx` test callers AND check Chunk 7's eventual queries.ts migration plan.
+
+Last updated: 26 Jun 2026 (Chunk 4 — SyncRunner ships, pending owner E2E verification)
 
 ---
 

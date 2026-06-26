@@ -23,6 +23,7 @@ import {
   syncedSoftDelete,
   syncedCreateBatch,
 } from '../../db/syncWrappers'
+import { syncRunner } from '../../db/syncRunner'
 
 const TEST_PREFIX = '_test_'
 
@@ -190,6 +191,70 @@ export default function TestOutbox() {
     }
   }
 
+  // Phase C Chunk 4 — force a drain pass immediately (bypasses the 30s
+  // heartbeat wait so smoke-tests are interactive).
+  const forceDrain = async () => {
+    try {
+      await syncRunner.scheduleDrain()
+      const remaining = await db._outbox.count()
+      log('forceDrain', true, { outboxRemaining: remaining })
+    } catch (e) {
+      log('forceDrain', false, String(e))
+    }
+  }
+
+  // Phase C Chunk 4 — show every dead-letter row (stuck === true). These
+  // never drain again on their own; manual intervention required.
+  const showDeadLetter = async () => {
+    try {
+      const all = await db._outbox.toArray()
+      const stuck = all.filter((r) => r.stuck === true)
+      log('showDeadLetter', true, { stuckCount: stuck.length, stuck })
+    } catch (e) {
+      log('showDeadLetter', false, String(e))
+    }
+  }
+
+  // Phase C Chunk 4 — RLS-failure smoke test. Seeds a customer row with a
+  // hard-coded wrong club_id (all-zeros UUID), kicks the runner, and waits a
+  // moment. Expected: outbox row stays with attempts > 0 and lastError set.
+  // Eventually (after 10 attempts via repeated drains) the row would flip to
+  // stuck=true. This single click only proves attempt #1 lands in lastError.
+  const rlsFailTest = async () => {
+    try {
+      const id = `${TEST_PREFIX}${crypto.randomUUID()}`
+      const wrongClubId = '00000000-0000-0000-0000-000000000000'
+      await syncedCreate('customers', {
+        id,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        club_id: wrongClubId as any,
+        phone: null,
+        name: 'TEST RLS-fail Customer',
+        walkInCode: null,
+        walletBalance: 0,
+        createdAt: Date.now(),
+        lastVisitAt: Date.now(),
+        updated_at: new Date().toISOString(),
+      })
+
+      // scheduleDrain awaits the full drainOnce internally — by the time it
+      // resolves, the outbox row's attempts/lastError are already committed
+      // to Dexie. No external sleep needed.
+      await syncRunner.scheduleDrain()
+
+      const outboxRow = (await db._outbox.where('rowId').equals(id).toArray())[0]
+      const passed =
+        !!outboxRow &&
+        outboxRow.attempts > 0 &&
+        typeof outboxRow.lastError === 'string' &&
+        outboxRow.lastError.length > 0
+
+      log('rlsFailTest', passed, { outboxRow })
+    } catch (e) {
+      log('rlsFailTest', false, String(e))
+    }
+  }
+
   const cleanup = async () => {
     try {
       const customers = await db.customers.toArray()
@@ -220,14 +285,14 @@ export default function TestOutbox() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 p-6">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-[1400px] mx-auto">
         <h1 className="text-xl font-semibold mb-2">/__dev/test-outbox</h1>
         <p className="text-slate-400 text-sm mb-6">
           Phase C Chunk 3 — sync wrapper smoke tests. Requires you to be signed
           in (dbReady === true). Test rows use <code>_test_</code> id prefix.
         </p>
 
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
           <button onClick={runCreateTest} className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-sm">
             syncedCreate
           </button>
@@ -239,6 +304,17 @@ export default function TestOutbox() {
           </button>
           <button onClick={runBatchTest} className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-sm">
             syncedCreateBatch
+          </button>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
+          <button onClick={forceDrain} className="bg-emerald-700 hover:bg-emerald-600 px-3 py-2 rounded text-sm">
+            Force drain now
+          </button>
+          <button onClick={showDeadLetter} className="bg-amber-700 hover:bg-amber-600 px-3 py-2 rounded text-sm">
+            Show dead-letter
+          </button>
+          <button onClick={rlsFailTest} className="bg-purple-700 hover:bg-purple-600 px-3 py-2 rounded text-sm">
+            RLS-fail test
           </button>
           <button onClick={cleanup} className="bg-red-700 hover:bg-red-600 px-3 py-2 rounded text-sm">
             Clean test rows

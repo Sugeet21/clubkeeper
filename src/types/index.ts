@@ -243,6 +243,11 @@ export interface OutboxRow {
   lastError: string | null
   lastAttemptAt: number | null
   createdAt: number
+  // Phase C Chunk 4 — set to true once attempts hits the dead-letter threshold
+  // (>=10). Stuck rows stay in the outbox but are SKIPPED by SyncRunner.drainOnce
+  // so a single bad row can't block the rest of the queue. Surfaced to the
+  // sync-indicator UI in a later chunk; manual unstick via DEV TestOutbox page.
+  stuck?: boolean
 }
 
 // ─── Auth & Subscription ──────────────────────────────────────────────────────
