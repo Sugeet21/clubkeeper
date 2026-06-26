@@ -25,6 +25,8 @@
 
 import { db } from './database'
 import { supabase } from '../lib/supabase'
+import { toSupabaseRow } from './syncPayloadMapper'
+import { getOwnerClubIdFromJwt } from './syncClubId'
 import type { OutboxRow } from '../types'
 
 const PLACEHOLDER_DB_NAME = 'ClubKeeperDB__pending'
@@ -159,10 +161,15 @@ class SyncRunner {
 
     if (batch.length === 0) return 0
 
+    // One JWT decode per batch (cached internally per access_token), not per
+    // row. If this throws (no session / missing claim), we abort the whole
+    // drain — every row would have failed for the same reason.
+    const clubId = await getOwnerClubIdFromJwt()
+
     let successCount = 0
     for (const row of batch) {
       try {
-        await this.pushOne(row)
+        await this.pushOne(row, clubId)
         // Success → drop the outbox row in its own short tx.
         if (typeof row.seq === 'number') {
           await db._outbox.delete(row.seq)
@@ -199,15 +206,16 @@ class SyncRunner {
     return successCount
   }
 
-  private async pushOne(row: OutboxRow): Promise<void> {
+  private async pushOne(row: OutboxRow, clubId: string): Promise<void> {
     if (row.op === 'insert' || row.op === 'update') {
-      // Cast payload through unknown — caller-supplied row shape varies per
-      // table but always matches the Supabase column set.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const payload = row.payload as Record<string, any>
+      // Convert camelCase Dexie row → snake_case Supabase columns + stamp
+      // club_id from the JWT (RLS partition key, NOT NULL). Mapper throws
+      // on any not-yet-wired table — that's intentional, see
+      // syncPayloadMapper.ts header.
+      const wirePayload = toSupabaseRow(row.table, row.payload, clubId)
       const { error } = await supabase
         .from(row.table)
-        .upsert(payload, { onConflict: 'id', ignoreDuplicates: false })
+        .upsert(wirePayload, { onConflict: 'id', ignoreDuplicates: false })
       if (error) throw new Error(`${row.table}.upsert: ${error.message}`)
       return
     }

@@ -1332,6 +1332,8 @@ Files in scope:
 - `src/db/syncWrappers.ts` — `syncedCreate / syncedUpdate / syncedSoftDelete / syncedCreateBatch`. Each opens its OWN Dexie 'rw' tx over `(dataTable + _outbox)` (Pattern D7). Calls `scheduleDrain()` AFTER tx commit. Never called from inside another `db.transaction()`.
 - `src/db/scheduleDrain.ts` — one-line re-export from syncRunner. Indirection layer so future queue-coalescing drops in here without touching wrappers.
 - `src/db/syncRunner.ts` — the engine. `start() / stop() / scheduleDrain() / drainOnce() / pushOne()`. Module-level `syncRunner` singleton.
+- `src/db/syncPayloadMapper.ts` — Pattern S12. Per-table strict allowlist converting camelCase Dexie row → snake_case Supabase row. Only `customers` and `canteen_sales` wired; other 7 tables THROW until Chunk 7 maps them.
+- `src/db/syncClubId.ts` — Reads `user_club_id` JWT claim, cached per access_token. SyncRunner.drainOnce calls it once per batch.
 - `src/App.tsx` — `<SyncRunnerBoot />` component owns the lifecycle (start on `dbReady + session + !playerHub`, stop on cleanup).
 - `src/pages/__dev__/TestOutbox.tsx` — DEV-only `/__dev/test-outbox` page with smoke-test buttons.
 
@@ -1348,7 +1350,8 @@ Invariants:
 - TestOutbox uses `_test_<uuid>` id prefix on every row. Cleanup button purges by prefix. Production UI never reads `_test_*` rows. When Chunk 4 is live, these rows DO get pushed to Supabase — manual cleanup via SQL Editor / Dashboard is the only path back.
 
 Cross-feature ripples:
-- → If a new Dexie synced table is added: extend `SyncTableName` union in `src/types/index.ts`, both maps in `src/db/syncTableMap.ts`, the `DexieSyncTableName` union, AND the `SYNC_TABLES_PULL_ORDER` array (Chunk 5 will use it).
+- → If a new field is added to any of the 9 Dexie row interfaces and it should sync: ADD the field to its table's mapper in `src/db/syncPayloadMapper.ts`. The allowlist is strict — un-mapped fields are silently DROPPED on push (Pattern S12). Verify by pushing through TestOutbox and confirming the value lands in Supabase.
+- → If a new Dexie synced table is added: extend `SyncTableName` union in `src/types/index.ts`, both maps in `src/db/syncTableMap.ts`, the `DexieSyncTableName` union, the `SYNC_TABLES_PULL_ORDER` array (Chunk 5 will use it), AND add a mapper entry to `src/db/syncPayloadMapper.ts` (otherwise pushOne throws).
 - → If the OutboxRow shape changes: bump Dexie schema (current v20) — `_outbox` index string lives in `src/db/database.ts`. Also update `buildOutboxRow` in `syncWrappers.ts` so new fields are populated on every queue.
 - → If a queries.ts mutation site is converted from raw `db.X.add/put/update/delete` to a wrapper (Chunk 7): the call MUST move OUT of any surrounding `db.transaction()` block, because the wrapper opens its own tx. If atomic multi-table behavior is required, use `syncedCreateBatch`.
 - → If `clubs.sync_enabled` kill-switch is wired (later chunk): the check goes at the top of `SyncRunner.scheduleDrain()` (or in `SyncRunnerBoot`'s gate) — do not scatter it across wrappers.

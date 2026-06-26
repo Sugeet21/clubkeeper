@@ -255,6 +255,35 @@ export default function TestOutbox() {
     }
   }
 
+  // Phase C Chunk 4.1 — total reset. Used after the camelCase->snake_case
+  // fix lands to clear the 9 stuck rows from the first E2E pass so re-test
+  // starts from a clean outbox. Destroys ALL outbox rows (including any
+  // legitimate pre-Chunk-4 leftovers — fine in DEV) and any _test_* data
+  // rows. Does NOT touch Supabase.
+  const clearOutbox = async () => {
+    try {
+      const outboxBefore = await db._outbox.count()
+      const customers = await db.customers.toArray()
+      const sales = await db.canteenSales.toArray()
+      const customersToDelete = customers.filter((c) => c.id.startsWith(TEST_PREFIX))
+      const salesToDelete = sales.filter((s) => s.id.startsWith(TEST_PREFIX))
+
+      await db.transaction('rw', [db.customers, db.canteenSales, db._outbox], async () => {
+        await db._outbox.clear()
+        await Promise.all(customersToDelete.map((c) => db.customers.delete(c.id)))
+        await Promise.all(salesToDelete.map((s) => db.canteenSales.delete(s.id)))
+      })
+
+      log('clearOutbox', true, {
+        outboxRowsCleared: outboxBefore,
+        testCustomersCleared: customersToDelete.length,
+        testSalesCleared: salesToDelete.length,
+      })
+    } catch (e) {
+      log('clearOutbox', false, String(e))
+    }
+  }
+
   const cleanup = async () => {
     try {
       const customers = await db.customers.toArray()
@@ -306,7 +335,7 @@ export default function TestOutbox() {
             syncedCreateBatch
           </button>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
           <button onClick={forceDrain} className="bg-emerald-700 hover:bg-emerald-600 px-3 py-2 rounded text-sm">
             Force drain now
           </button>
@@ -315,6 +344,9 @@ export default function TestOutbox() {
           </button>
           <button onClick={rlsFailTest} className="bg-purple-700 hover:bg-purple-600 px-3 py-2 rounded text-sm">
             RLS-fail test
+          </button>
+          <button onClick={clearOutbox} className="bg-orange-700 hover:bg-orange-600 px-3 py-2 rounded text-sm">
+            Clear outbox (DEV)
           </button>
           <button onClick={cleanup} className="bg-red-700 hover:bg-red-600 px-3 py-2 rounded text-sm">
             Clean test rows

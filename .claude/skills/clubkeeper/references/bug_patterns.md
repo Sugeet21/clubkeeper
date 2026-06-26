@@ -885,6 +885,19 @@ Branch-specific fields (`updated_at`, `owner_id`, server-defaulted columns) stay
 **Files affected:** `src/lib/mirrorToSupabase.ts` (single source). Refactored callers: `syncCoinConfig`, `syncTablesJsonBySlug`, `syncBookingConfigBySlug`, `updateClubNameRemote` (signature now takes slug as first arg), `updateAcceptsTopups` (same).
 **When the helper does NOT fit:** topup_intents / booking_intents tables (those are routed by `intent.id`, never by club slug). Those mutations stay in `playerHubApi.ts` direct — but they're not mirrors, they're owner-side state changes.
 
+### Pattern S12 — Dexie camelCase row payloads CANNOT be pushed directly to Supabase (Phase C Chunk 4, 26 Jun 2026)
+**Symptom signature:** Every outbox row dead-letters with `"Could not find the '<camelCaseField>' column of '<table>' in the schema cache"`. Local Dexie writes succeed, `db._outbox` fills up, force-drain returns the same row count over and over, and zero rows reach Supabase. Found during Chunk 4 owner E2E — first push of a TEST customer failed with `'createdAt'` (and would have failed identically with `lastVisitAt`, `walletBalance`, every other camelCase field).
+**Root cause:** The Dexie row interfaces (`Customer`, `Session`, `CanteenSale`, ...) are declared camelCase because that's the TypeScript convention used everywhere in src/. Supabase columns are snake_case because that's the Postgres convention. The Chunk 3 wrappers wrote a literal copy of the Dexie row into `OutboxRow.payload`, and Chunk 4's `SyncRunner.pushOne` originally sent that copy to `supabase.from(table).upsert(payload)` unchanged. PostgREST rejected the unknown columns with the schema-cache error, the runner caught it as a transient failure, exponential backoff ran the full 10 attempts, then the row dead-lettered.
+**Rule:** Never call `supabase.from(<synced-table>).upsert(...)` with a raw Dexie row. The only legitimate path is `toSupabaseRow(table, row, clubId)` from `src/db/syncPayloadMapper.ts`, which:
+1. Looks up the per-table mapper. If the table has no mapper yet, throws — silent fallthrough would let half-mapped data hit Supabase.
+2. Maps every camelCase field to its declared snake_case column.
+3. DROPS any Dexie-only field (e.g. `_migrationSeq`, `walkInCode`, `framesPlayed`, engagement timestamps).
+4. Converts epoch-ms numbers to ISO strings for `timestamptz` columns.
+5. Stamps `club_id` from the JWT `user_club_id` claim (RLS partition key — NOT NULL on every synced table).
+**When a new field is added to a Dexie row that should sync:** update the table's mapper in `syncPayloadMapper.ts`. The allowlist is strict — a new field NOT added to the mapper will be silently dropped on push, which is the failure mode to watch for. Test by writing through TestOutbox and confirming the value lands in Supabase.
+**When a new synced table is wired up (Chunk 7 work):** add a mapper entry to `syncPayloadMapper.ts`. Until it's wired, every `syncedCreate('that_table', ...)` will throw on drain, which is the intended fail-loud behavior.
+**Files affected:** `src/db/syncPayloadMapper.ts` (single source of truth), `src/db/syncClubId.ts` (JWT claim reader), `src/db/syncRunner.ts:pushOne` (call site).
+
 ### Pattern S10 — HMAC / token / secret comparisons MUST use `crypto.timingSafeEqual` (#94, 20 Jun 2026)
 **Symptom signature:** No user-visible symptom. Code review or external security report flags a webhook / signed-token verifier that uses `===` / `!==` to compare a computed HMAC against a header value.
 **Root cause:** JS string and `Buffer` equality short-circuit on first byte mismatch, so the wall-clock duration leaks how many leading bytes matched. With enough samples an attacker can recover the signature byte-by-byte. Practical exploitability is low over the public internet against HMAC-SHA256, but the fix is one line and the cost of getting this wrong on a payments surface is high.
