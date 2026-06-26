@@ -10,7 +10,8 @@
 //   "Could not find the 'createdAt' column of '<table>' in the schema cache".
 //
 // Discovered during owner E2E of Chunk 4 (26 Jun 2026): 9 _test_ customer
-// rows dead-lettered with that exact error. See bug_patterns.md Pattern S12.
+// rows dead-lettered with that exact error. See bug_patterns.md Pattern S14
+// and GitHub issue #110.
 //
 // Design choices (Sugeet confirmed via questionnaire, Chunk 4 fix-up)
 // -------------------------------------------------------------------

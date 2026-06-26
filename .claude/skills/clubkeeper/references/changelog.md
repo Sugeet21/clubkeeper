@@ -5,7 +5,7 @@
 ## 26 Jun 2026 — Phase C Chunk 4.1: payload mapper + club_id stamp (fixes Chunk 4 E2E failure)
 
 - `fix(sync): camelCase Dexie row → snake_case Supabase payload mapper + JWT club_id stamp` (pending commit)
-- **Triggered by:** owner E2E of Chunk 4 — every `_test_` customer push dead-lettered with `"Could not find the 'createdAt' column of 'customers' in the schema cache"`. 9 rows stuck at attempts=10, zero rows in Supabase. New Pattern S12.
+- **Triggered by:** owner E2E of Chunk 4 — every `_test_` customer push dead-lettered with `"Could not find the 'createdAt' column of 'customers' in the schema cache"`. 9 rows stuck at attempts=10, zero rows in Supabase. New Pattern S14 (issue #110).
 - **Root cause:** Chunk 4's `pushOne` sent raw Dexie rows (camelCase, e.g. `createdAt`, `walletBalance`, `lastVisitAt`) to `supabase.from(table).upsert(...)`. Supabase columns are snake_case.
 - **Fix — three files, no schema changes:**
   - NEW `src/db/syncPayloadMapper.ts` — per-table strict allowlist. Maps Dexie camelCase → Supabase snake_case, drops Dexie-only fields (`_migrationSeq`, `walkInCode`, `framesPlayed`, etc.), converts epoch ms → ISO strings. `customers` and `canteen_sales` fully mapped (cover all TestOutbox smoke buttons). The other 7 tables throw "not yet mapped" — Chunk 7 wires them deliberately as queries.ts mutation sites cut over.
@@ -13,7 +13,7 @@
   - `src/db/syncRunner.ts` — `drainOnce` calls `getOwnerClubIdFromJwt()` once per batch (cached); `pushOne` calls `toSupabaseRow(table, row, clubId)` before `.upsert`.
 - **TestOutbox additions:**
   - New "Clear outbox (DEV)" button — wipes `_outbox` + any `_test_*` data rows so the post-fix re-test starts from zero. Does NOT touch Supabase.
-- New Pattern S12 added to `bug_patterns.md` documenting the trap + the strict-allowlist rule.
+- New Pattern S14 (issue #110) added to `bug_patterns.md` documenting the trap + the strict-allowlist rule.
 - Build clean. **Owner re-E2E pending** — Chunk 4 stays "SHIPPED pending owner E2E" until this fix verifies.
 
 ---
