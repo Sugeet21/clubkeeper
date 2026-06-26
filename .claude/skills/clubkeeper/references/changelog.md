@@ -2,6 +2,22 @@
 
 ---
 
+## 26 Jun 2026 — BUG-S13 (#109): JWT custom-claims still missing despite hook patch — RLS-on-users_meta at mint time
+
+- `fix(auth): supabase_auth_admin RLS policy on users_meta so JWT hook can read at mint time (closes #109 — pending owner verification)`
+- After #108 (hook field-ref bug, closed) was patched, the hook stopped throwing — but the JWT still issued with no `user_club_id` / `user_role` claims, blocking Phase C Chunks 4–7 (every Supabase upsert would RLS-403).
+- **Root cause:** The hook is `SECURITY INVOKER`, so its `SELECT FROM users_meta` runs as `supabase_auth_admin`. At token-mint time `auth.uid()` is NULL (the JWT being minted doesn't exist yet), so the existing `users_meta_select_self` policy (`user_id = auth.uid()`) matched zero rows. Hook hit `if not found then return event;` and silently emitted the bare JWT. No log warnings because no exception fired.
+- **The trap that fooled the prior diagnosis:** A direct in-editor `SELECT add_user_meta_to_jwt(...)` call runs as `postgres`, which bypasses RLS, and returned the correct claims. Made the function look fine. The only diagnosis that holds up is decoding a freshly-minted JWT at jwt.io.
+- **Fix — two layers, both required**, patched into `supabase/migrations/20260625_phase_c_sync_tables.sql`:
+  - `GRANT SELECT ON public.users_meta TO supabase_auth_admin;` (table-level)
+  - `CREATE POLICY users_meta_auth_admin_read ... TO supabase_auth_admin USING (true);` (row-level, scoped to that role only — does NOT widen anon/authenticated)
+- Both applied live in production by owner; verified end-to-end by decoding a fresh JWT after sign-out/in — both `user_club_id` (`87501f04-...`) and `user_role` (`owner`) present with `iat` post-policy-creation.
+- Skill updates: `sync_architecture_v2.md` §4.5 now documents the auth.uid()=NULL-at-mint gotcha and prescribes the two-layer fix for any future hook. New `bug_patterns.md` Pattern A9 — "Custom Access Token Hook reading a table with RLS must be granted BOTH table-SELECT and an auth-admin-scoped policy."
+- **Chunk 4–7 unblocked.** SyncRunner can now ship — every Supabase upsert authenticated as the owner will pass RLS.
+- **Stale row noted, not cleaned this session:** `users_meta` row for the old UUID `06533a78-...` (`sugeetjadhav7@gmail.com`) is orphaned (no matching `auth.users` row). Harmless; deferred to a separate one-line `DELETE` paste-block to avoid bundling unrelated changes into the #109 fix.
+
+---
+
 ## 25 Jun 2026 — Phase C Chunk 3: sync wrappers (Dexie-only, no Supabase yet)
 
 - `feat(sync): Phase C Chunk 3 — syncedCreate/Update/SoftDelete wrappers`

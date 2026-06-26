@@ -70,12 +70,34 @@ create index if not exists idx_users_meta_club_id on public.users_meta(club_id);
 
 alter table public.users_meta enable row level security;
 
--- SELECT: a user can read their own row (so the client can decide what to
--- render) but not other rows. Phase D widens this to "owner can read all
--- users_meta in their own club" for the staff management screen.
+-- SELECT (client path): a user can read their own row (so the client can
+-- decide what to render) but not other rows. Phase D widens this to "owner
+-- can read all users_meta in their own club" for the staff management screen.
 drop policy if exists users_meta_select_self on public.users_meta;
 create policy users_meta_select_self on public.users_meta
   for select using (user_id = auth.uid());
+
+-- SELECT (auth-hook path) — #109 BUG-S13. The JWT custom-claims hook below
+-- (add_user_meta_to_jwt) runs as supabase_auth_admin during token minting.
+-- At that moment auth.uid() is NULL (the JWT being minted does not exist
+-- yet), so users_meta_select_self matches ZERO rows, the hook silently hits
+-- `if not found then return event` and the token issues with NO custom
+-- claims — every Supabase write then RLS-403s. Two layers are required:
+--   (a) table-level GRANT (below) — supabase_auth_admin must have SELECT
+--   (b) row-level policy (this one) — narrowly scoped to supabase_auth_admin
+--       so anon / authenticated are NOT widened. The self-policy above still
+--       governs all real client reads.
+-- Don't fold these into a SECURITY DEFINER on the function: it works but is
+-- a bigger hammer and obscures the actual access path. The two-layer fix
+-- matches the Supabase-documented pattern for access-token hooks.
+grant select on public.users_meta to supabase_auth_admin;
+
+drop policy if exists users_meta_auth_admin_read on public.users_meta;
+create policy users_meta_auth_admin_read on public.users_meta
+  as permissive
+  for select
+  to supabase_auth_admin
+  using (true);
 
 -- INSERT / UPDATE / DELETE: locked to service-role for Phase C. Owners and
 -- staff cannot create users_meta rows from the client; provisioning happens

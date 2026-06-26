@@ -479,6 +479,27 @@ Same rule applies to any future async loading flag in this app (e.g. if a data-l
 
 ---
 
+### Pattern A9 — Custom Access Token Hook reading a table with RLS must be granted BOTH table-SELECT and an auth-admin-scoped policy (#109 BUG-S13, 26 Jun 2026)
+**Symptom signature:** Sign-in succeeds. JWT decoded at jwt.io has no custom claims (`user_club_id`, `user_role` missing) even after fresh sign-out/in + GRANT EXECUTE on the hook function. No errors logged. Direct invocation of the hook as `postgres` returns the correct claims (this is the trap — it masks the real bug).
+**Root cause:** The hook is `SECURITY INVOKER` by default (Supabase's recommendation). When Supabase Auth invokes it at token-mint time, it runs as `supabase_auth_admin`. The `SELECT FROM users_meta` inside the hook is therefore subject to `users_meta`'s RLS — and the only SELECT policy was `user_id = auth.uid()`. But `auth.uid()` is **NULL** during token minting (the JWT being minted does not exist yet), so the policy matches zero rows. The hook hits `if not found then return event;` and silently returns the bare JWT with no claims added. Direct calls as `postgres` bypass RLS, which is why the standalone test passed and fooled us.
+**Rule:** Any access-token hook that reads from a table with RLS enabled needs **two layers, both mandatory**:
+```sql
+-- Layer (a): table-level GRANT
+GRANT SELECT ON public.<table> TO supabase_auth_admin;
+
+-- Layer (b): RLS policy scoped to the auth-admin role only.
+-- Does NOT widen access for anon / authenticated.
+CREATE POLICY <table>_auth_admin_read ON public.<table>
+  AS PERMISSIVE FOR SELECT
+  TO supabase_auth_admin
+  USING (true);
+```
+**Do NOT** "fix" this by marking the hook `SECURITY DEFINER` — works for now, but obscures the real access path and creates a much bigger blast radius the moment a new table joins the access-control surface (Phase D staff). The two-layer fix is the Supabase-documented pattern.
+**Verification:** Don't trust the in-editor `SELECT add_user_meta_to_jwt(...)` test — it runs as `postgres` and bypasses RLS. The only true proof is decoding a freshly-minted access_token at jwt.io and seeing the claims present. Compare `iat` against the time the policy was applied.
+**Self-test for any future hook:** "Will this query return rows when run by `supabase_auth_admin` with `auth.uid()` = NULL?" If no, add the auth-admin policy.
+
+---
+
 ## Subscription & Razorpay (payments, fetch errors)
 
 Files most affected: `src/pages/Subscribe.tsx`, `src/components/subscribe/PaymentBottomSheet.tsx`, `api/create-subscription.ts`, `api/razorpay-webhook.ts`.

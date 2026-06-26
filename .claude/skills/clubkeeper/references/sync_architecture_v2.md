@@ -488,6 +488,25 @@ CREATE POLICY "<table>_insert_own_club" ON <table>
 
 **Trade-off:** Claims are baked into the JWT at sign-in. If we revoke staff (`active = false`), they keep working until their JWT expires (default 1 hour). For the "instant revoke" case (§9 — staff fired mid-shift), we also call `supabase.auth.admin.signOut(userId)` from the owner's device when removing them. Acceptable trade-off — instant revoke is the rare case, fast reads are the constant case.
 
+**⚠ Hook-must-bypass-RLS gotcha (#109 BUG-S13, 26 Jun 2026):** Because the hook is `SECURITY INVOKER` (Supabase-recommended for access-token hooks), the `SELECT FROM users_meta` runs as `supabase_auth_admin`. At token-mint time, `auth.uid()` is NULL (the JWT being minted does not exist yet). Any RLS policy of the form `user_id = auth.uid()` therefore matches **zero rows** for the hook, the function silently hits `if not found then return event;`, and the JWT issues with no custom claims. Every Supabase write then RLS-403s.
+
+The fix is **two layers, both required**:
+
+```sql
+-- Layer (a): table-level GRANT — supabase_auth_admin must have SELECT
+GRANT SELECT ON public.users_meta TO supabase_auth_admin;
+
+-- Layer (b): RLS policy narrowly scoped to the auth-admin role only.
+-- Does NOT widen access for anon / authenticated; the client-facing
+-- self-policy (user_id = auth.uid()) still governs all real client reads.
+CREATE POLICY users_meta_auth_admin_read ON public.users_meta
+  AS PERMISSIVE FOR SELECT
+  TO supabase_auth_admin
+  USING (true);
+```
+
+This is the Supabase-documented pattern for access-token hooks. Do **not** "fix" it by marking the function `SECURITY DEFINER` — works for now, but obscures the real access path and creates a much bigger blast radius the moment Phase D adds staff-facing RLS to `users_meta`. Any future hook that reads a new table is subject to the same trap — apply both layers.
+
 ---
 
 ### 4.6 Wallet append-only contract — explicit
