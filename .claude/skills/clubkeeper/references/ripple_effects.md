@@ -1347,7 +1347,7 @@ Invariants:
 - Backoff: 1s → 60s exponential. Resets to 1s on a successful drain pass. A drain that contains only dead-letter skips is treated as success (backoff resets).
 - `pushOne` on `soft_delete` updates BOTH `deleted_at` AND `updated_at`. Required so Chunk 5's cursor-based pull (`WHERE updated_at > cursor`) sees the deletion on peer devices.
 - Idempotency: `upsert({ onConflict: 'id', ignoreDuplicates: false })` for insert/update. Safe to retry forever. Outbox can be replayed from scratch.
-- TestOutbox uses `_test_<uuid>` id prefix on every row. Cleanup button purges by prefix. Production UI never reads `_test_*` rows. When Chunk 4 is live, these rows DO get pushed to Supabase — manual cleanup via SQL Editor / Dashboard is the only path back.
+- TestOutbox row ids are real `crypto.randomUUID()` (Chunk 4.2 — Supabase `uuid` columns reject anything else; see Pattern S14 watch-out). Test rows are identified by a `TEST ` prefix on the `name` field (or `items[0].name` for canteen_sales). Cleanup filters by that prefix. With Chunk 4 live the rows DO reach Supabase — manual cleanup there via SQL Editor / Dashboard is the only path back.
 
 Cross-feature ripples:
 - → If a new field is added to any of the 9 Dexie row interfaces and it should sync: ADD the field to its table's mapper in `src/db/syncPayloadMapper.ts`. The allowlist is strict — un-mapped fields are silently DROPPED on push (Pattern S14). Verify by pushing through TestOutbox and confirming the value lands in Supabase.
@@ -1359,7 +1359,7 @@ Cross-feature ripples:
 - → If the Supabase schema renames any of the 9 synced tables: update `SyncTableName` literal + the `SYNC_TO_DEXIE` / `DEXIE_TO_SYNC` maps. Wrappers' `syncTable` argument is a literal type — TS will fail loudly.
 - → If a wrapper signature changes (e.g. `syncedCreate` gains an option): update `TestOutbox.tsx` test callers AND check Chunk 7's eventual queries.ts migration plan.
 
-Last updated: 26 Jun 2026 (Chunk 4 — SyncRunner ships, pending owner E2E verification)
+Last updated: 26 Jun 2026 (Chunk 4.2 — TestOutbox real-UUID fix, pending owner re-E2E verification)
 
 ---
 

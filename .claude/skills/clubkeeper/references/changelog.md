@@ -2,6 +2,18 @@
 
 ---
 
+## 26 Jun 2026 — Phase C Chunk 4.2: TestOutbox uses real UUIDs (fixes Round 2 E2E blocker)
+
+- `fix(sync): Chunk 4.2 — TestOutbox uses real UUIDs, name-prefix for test marker (relates #110)` (pending commit)
+- **Triggered by:** owner E2E Round 2 after Chunk 4.1 landed. Every smoke push now failed with `invalid input syntax for type uuid: "_test_<uuid>"`. Supabase `customers.id` (and every synced table's `id`) is `uuid` — it rejects the `_test_` prefix string before RLS runs, masking the (working) Chunk 4.1 mapper fix.
+- **Owner decision:** real `crypto.randomUUID()` for ids; keep test-marker on the `name` field (every test row already starts with `"TEST "`). Cleanup filters by `name LIKE 'TEST %'`.
+- **Single file changed:** `src/pages/__dev__/TestOutbox.tsx`. `TEST_PREFIX = '_test_'` constant deleted; replaced with `TEST_NAME_PREFIX = 'TEST '`. All 5 id-generating sites now use bare `crypto.randomUUID()`. `clearOutbox()` and `cleanup()` filter customers by `name.startsWith('TEST ')` and canteen_sales by `items[0].name.startsWith('TEST ')`. Page subtitle updated.
+- No SyncRunner / mapper / wrapper / Dexie-schema changes.
+- Skipped reviewer agent per Rule J (single-file mechanical edit, intermediate work doesn't matter).
+- Build clean. **Owner re-E2E pending** — Chunk 4 / 4.1 / 4.2 collectively stay "SHIPPED pending owner E2E" until verified.
+
+---
+
 ## 26 Jun 2026 — Phase C Chunk 4.1: payload mapper + club_id stamp (fixes Chunk 4 E2E failure)
 
 - `fix(sync): camelCase Dexie row → snake_case Supabase payload mapper + JWT club_id stamp` (pending commit)

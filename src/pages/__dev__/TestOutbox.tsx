@@ -5,8 +5,10 @@
 // against the live per-user Dexie instance and dump the resulting outbox
 // rows + data rows so you can visually verify atomic-tx behavior.
 //
-// Uses a `_test_` id prefix on every row so production UI never picks these
-// up as real customers / etc. A "Clean test rows" button purges them.
+// Test rows use real `crypto.randomUUID()` ids (Supabase id columns are
+// `uuid` and reject anything else — see bug_patterns.md Pattern S14
+// watch-out). Identification is via the `TEST ` prefix on the `name` field
+// (or `items[0].name` for canteen_sales). Cleanup filters by that prefix.
 //
 // Run pipeline:
 //   1. Sign in (Chunk 1 useCurrentUser must report 'signed_in') — wrappers
@@ -25,7 +27,7 @@ import {
 } from '../../db/syncWrappers'
 import { syncRunner } from '../../db/syncRunner'
 
-const TEST_PREFIX = '_test_'
+const TEST_NAME_PREFIX = 'TEST '
 
 interface LogEntry {
   ts: string
@@ -46,7 +48,7 @@ export default function TestOutbox() {
 
   const runCreateTest = async () => {
     try {
-      const id = `${TEST_PREFIX}${crypto.randomUUID()}`
+      const id = crypto.randomUUID()
       const row = {
         id,
         phone: null,
@@ -72,7 +74,7 @@ export default function TestOutbox() {
 
   const runUpdateTest = async () => {
     try {
-      const id = `${TEST_PREFIX}${crypto.randomUUID()}`
+      const id = crypto.randomUUID()
       // Seed a row first (via wrapper so outbox has a baseline)
       await syncedCreate('customers', {
         id,
@@ -109,7 +111,7 @@ export default function TestOutbox() {
 
   const runSoftDeleteTest = async () => {
     try {
-      const id = `${TEST_PREFIX}${crypto.randomUUID()}`
+      const id = crypto.randomUUID()
       await syncedCreate('customers', {
         id,
         phone: null,
@@ -146,8 +148,8 @@ export default function TestOutbox() {
 
   const runBatchTest = async () => {
     try {
-      const customerId = `${TEST_PREFIX}${crypto.randomUUID()}`
-      const saleId = `${TEST_PREFIX}${crypto.randomUUID()}`
+      const customerId = crypto.randomUUID()
+      const saleId = crypto.randomUUID()
 
       await syncedCreateBatch([
         {
@@ -222,7 +224,7 @@ export default function TestOutbox() {
   // stuck=true. This single click only proves attempt #1 lands in lastError.
   const rlsFailTest = async () => {
     try {
-      const id = `${TEST_PREFIX}${crypto.randomUUID()}`
+      const id = crypto.randomUUID()
       const wrongClubId = '00000000-0000-0000-0000-000000000000'
       await syncedCreate('customers', {
         id,
@@ -255,18 +257,21 @@ export default function TestOutbox() {
     }
   }
 
-  // Phase C Chunk 4.1 — total reset. Used after the camelCase->snake_case
-  // fix lands to clear the 9 stuck rows from the first E2E pass so re-test
-  // starts from a clean outbox. Destroys ALL outbox rows (including any
-  // legitimate pre-Chunk-4 leftovers — fine in DEV) and any _test_* data
-  // rows. Does NOT touch Supabase.
+  // Phase C Chunk 4.2 — total reset. Wipes ALL outbox rows (including any
+  // legitimate pre-Chunk-4 leftovers — fine in DEV) plus any data rows
+  // whose name starts with "TEST ". Does NOT touch Supabase.
+  const isTestCustomer = (c: { name?: string | null }) =>
+    typeof c.name === 'string' && c.name.startsWith(TEST_NAME_PREFIX)
+  const isTestSale = (s: { items?: Array<{ name?: string | null }> }) =>
+    typeof s.items?.[0]?.name === 'string' && s.items[0].name.startsWith(TEST_NAME_PREFIX)
+
   const clearOutbox = async () => {
     try {
       const outboxBefore = await db._outbox.count()
       const customers = await db.customers.toArray()
       const sales = await db.canteenSales.toArray()
-      const customersToDelete = customers.filter((c) => c.id.startsWith(TEST_PREFIX))
-      const salesToDelete = sales.filter((s) => s.id.startsWith(TEST_PREFIX))
+      const customersToDelete = customers.filter(isTestCustomer)
+      const salesToDelete = sales.filter(isTestSale)
 
       await db.transaction('rw', [db.customers, db.canteenSales, db._outbox], async () => {
         await db._outbox.clear()
@@ -288,12 +293,16 @@ export default function TestOutbox() {
     try {
       const customers = await db.customers.toArray()
       const sales = await db.canteenSales.toArray()
-      const outboxAll = await db._outbox.toArray()
 
-      const customersToDelete = customers.filter((c) => c.id.startsWith(TEST_PREFIX))
-      const salesToDelete = sales.filter((s) => s.id.startsWith(TEST_PREFIX))
+      const customersToDelete = customers.filter(isTestCustomer)
+      const salesToDelete = sales.filter(isTestSale)
+      const testIds = new Set<string>([
+        ...customersToDelete.map((c) => c.id),
+        ...salesToDelete.map((s) => s.id),
+      ])
+      const outboxAll = await db._outbox.toArray()
       const outboxToDelete = outboxAll.filter(
-        (r) => typeof r.rowId === 'string' && r.rowId.startsWith(TEST_PREFIX),
+        (r) => typeof r.rowId === 'string' && testIds.has(r.rowId),
       )
 
       await db.transaction('rw', [db.customers, db.canteenSales, db._outbox], async () => {
@@ -318,7 +327,9 @@ export default function TestOutbox() {
         <h1 className="text-xl font-semibold mb-2">/__dev/test-outbox</h1>
         <p className="text-slate-400 text-sm mb-6">
           Phase C Chunk 3 — sync wrapper smoke tests. Requires you to be signed
-          in (dbReady === true). Test rows use <code>_test_</code> id prefix.
+          in (dbReady === true). Test rows use real UUIDs (Supabase requires
+          it); they're identified by the <code>TEST </code> prefix on the name
+          field.
         </p>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
