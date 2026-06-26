@@ -2,6 +2,25 @@
 
 ---
 
+## 26 Jun 2026 — Project agents + skill integration (when to delegate vs main-thread)
+
+- `chore(agents): three project agents (explorer, reviewer, skill-auditor)` (9783db3)
+- `docs(skill): document agent usage rules + Rule J + CLAUDE.md pointer`
+- Three Sonnet-default helper agents added under `.claude/agents/`:
+  - `clubkeeper-explorer` (Read/Grep/Glob, read-only) — "where is X called", reference-file fact lookups. Returns `file:line` citations.
+  - `clubkeeper-reviewer` (Read/Grep/Glob/Bash) — pre-commit diff review against Critical Rules 1–15 + bug patterns + ripple_effects. `VERDICT + violations`; no auto-fix.
+  - `clubkeeper-skill-auditor` (Read/Grep/Glob/Bash) — Phase 4 close gate: Rule B/E/G + memory-link + CLAUDE.md drift checks.
+- Decision rule (from `SubAgent.txt` on owner's desktop): "Does the intermediate work matter? YES → main thread; NO → subagent." Forbidden anti-patterns (debug, test-runner, sequential pipeline, expert persona, auto-fix) explicitly called out in SKILL.md `## Project Agents` section.
+- Skill updates so main-thread Opus trusts and uses agents correctly:
+  - SKILL.md new `## Project Agents` section between Response Style and Current State — loads early in every session.
+  - SKILL.md routing table row added pointing future sessions at the section.
+  - SKILL.md new **Rule J** (mandatory delegation reasoning before any `Agent()` call + forbidden/required delegations list).
+  - CLAUDE.md root-level summary added so the rule is visible even before SKILL.md loads.
+- All Sonnet 4.6 default — Opus on subagents burns tokens fast for scoped lookups; Haiku rejected by owner ("too basic, don't want more bugs").
+- No code changes; no migration changes.
+
+---
+
 ## 26 Jun 2026 — BUG-S13 (#109): JWT custom-claims still missing despite hook patch — RLS-on-users_meta at mint time
 
 - `fix(auth): supabase_auth_admin RLS policy on users_meta so JWT hook can read at mint time (closes #109 — pending owner verification)`

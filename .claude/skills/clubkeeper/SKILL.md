@@ -57,6 +57,7 @@ Sugeet's biggest fear: a fix in one file creates bugs in 3 other files because t
 | **ANY src/ code change** | **`references/session_loop.md` (mandatory 4-phase loop)** |
 | **About to touch a known-bug area** | **`bug_patterns.md` (mandatory for that area)** |
 | **About to add/touch a ClubSettings field** | **`checklists/new_settings_field.md` (mandatory)** |
+| **Considering delegating to a subagent** | **`## Project Agents` section below (mandatory before any Agent() call)** |
 | Architecture, file structure, library choices | `architecture.md` |
 | Colors, typography, spacing, components | `design_system.md` |
 | Database schema, types, queries | `data_model.md` |
@@ -79,6 +80,84 @@ Read MULTIPLE files when the question spans domains.
 - **Show the why briefly.** One line, not three paragraphs.
 - **Indian numbers.** ₹1,00,000 not ₹100,000.
 - **Match his informal tone.** Founder building fast, not a research paper.
+
+## Project Agents — when to delegate vs main-thread
+
+Three project agents live in `.claude/agents/`. They are SCOPE-RESTRICTED helper hands, NOT autonomous workers. **Default is main thread.** Delegate only when the decision rule below says yes — losing main-thread visibility into intermediate work is the failure mode that produced bug #109 (see `feedback_postgres_rls_diagnosis.md` in memory).
+
+### The decision rule (from `SubAgent.txt`)
+
+**Ask one question before delegating: "Does the intermediate work matter to me?"**
+
+| If… | Then… |
+|---|---|
+| You need the journey (each step depends on the last) | Main thread |
+| You only need the final answer | Subagent |
+| You need to see full error output (debugging, tests) | Main thread — ALWAYS |
+| You need to design / argue tradeoffs / negotiate with owner | Main thread |
+| You need to read a 30k-token reference file to extract one fact | Subagent |
+| You need fresh eyes on code YOU just wrote | Subagent (reviewer) |
+| You need to verify skill files at session close | Subagent (auditor) |
+
+### The three agents
+
+**1. `clubkeeper-explorer` (Sonnet, read-only — Read/Grep/Glob)**
+- USE FOR: "Where is X called?" "What does `ripple_effects.md` say about `gameTables`?" "Find every component importing from `src/db/queries.ts`." "List all places that read `auth.jwt() ->> 'user_club_id'`."
+- RETURNS: `file_path:line_number` citations + tight summary. No prose.
+- DO NOT USE FOR: design, debugging, code review, multi-step exploration where each step depends on the last.
+- **Why this exists:** Replaces ad-hoc `Grep+Read` chains that dump 5–20k tokens of file contents into main context for one fact.
+
+**2. `clubkeeper-reviewer` (Sonnet, Read/Grep/Glob/Bash)**
+- USE FOR: Fresh-eyes review of a diff AFTER `npm run build` is clean, BEFORE the commit. Runs `git diff`, reads modified files, cross-references Critical Rules 1–15 + bug patterns + ripple_effects.
+- RETURNS: `VERDICT: APPROVE | REQUEST_CHANGES | BLOCKED` + numbered violations with `file:line` + fix suggestions. Does NOT auto-fix.
+- DO NOT USE FOR: greenfield design, debugging, "is this approach right" questions before code exists.
+- **Why this exists:** The doc's "Code Reviews" use case — Claude reviews code more strictly when it didn't write it. Pairing with explicit project rules makes reviews consistent across sessions.
+
+**3. `clubkeeper-skill-auditor` (Sonnet, Read/Grep/Glob/Bash)**
+- USE FOR: End-of-session gate. Checks Rule B (paired src+skill commits), Rule E (changelog/issues/patterns), Rule G (Current State overwrite-not-append), memory-link integrity, CLAUDE.md drift.
+- RETURNS: `AUDIT VERDICT: PASS | FAIL` + action items.
+- DO NOT USE FOR: mid-session checks, code review, any writing.
+- **Why this exists:** Rule B/E/G in this skill exist BECAUSE past sessions skipped them. An automated final-gate agent makes "session closed" a verifiable state, not a vibe.
+
+### Anti-patterns — NEVER create or use
+
+Per `SubAgent.txt`, these subagent types make things WORSE:
+
+| Anti-pattern | Why it fails | What to do instead |
+|---|---|---|
+| **Debug agent** | Hides intermediate logs / error chains. #109 happened because I treated an SQL Editor test as proof — same failure mode at agent scale. | Main thread, always. Read full Supabase logs + stack traces directly. |
+| **Test-runner agent** | Returns "tests failed" — forces you to re-run for details that should have been visible the first time. | Run `npm run build` and any test suite in main thread; see full output. |
+| **Sequential pipeline agent** | "Repro → debug → fix" chains lose information at each handoff. | Sequential bug work IS the main thread. |
+| **"Expert" persona** ("you are a TypeScript expert") | Adds zero capability — main-thread Opus already knows TS. Just noise. | Don't. |
+| **Auto-fix agent** | Strips your veto on changes to production code. | Reviewer reports, main thread decides. |
+
+### How to actually invoke
+
+```
+Agent({
+  subagent_type: "clubkeeper-explorer",
+  description: "Locate scheduleDrain callers",
+  prompt: "Find every call site of scheduleDrain() in src/. Return file_path:line_number for each, plus the immediately surrounding 2 lines of context. Skip the definition file itself."
+})
+```
+
+Brief the agent like a colleague who just walked in — it has no memory of this conversation. State the goal, give file paths, cap the response length if needed. Vague prompts produce vague answers.
+
+### Model choice
+
+All three agents default to **Sonnet 4.6**. Opus on subagents burns tokens fast and they're scoped to "find X, return X" — Sonnet is the right size. Override to Opus per-call only if the specific job genuinely needs deeper reasoning (e.g. reviewer on a 600-line SyncRunner diff). Never use Haiku — accuracy > speed for project-specific work; owner explicitly rejected Haiku.
+
+### Gates — when delegation is FORBIDDEN
+
+- Anything in **Phase 3 EXECUTE** of session_loop.md beyond a discrete lookup. Implementation stays main-thread.
+- Anything where the owner is **debugging a live production issue** with you. Full logs in main thread, no summary handoffs.
+- Anything that **writes to files** outside the agent's defined tool list (explorer can never write; reviewer/auditor are reporting-only by design).
+- **Bug reproduction or root-cause analysis.** RCA is a sequential pipeline by definition — main thread.
+- **First exposure to a new ClubKeeper area you don't yet have a mental model for.** Subagents can give you the lookup but not the model — read the relevant file yourself the first time.
+
+### Updating an agent
+
+Agents live in `.claude/agents/*.md` and ride main → Vercel only as repo files; they don't deploy anywhere runtime. Update freely with normal commits. Pair the agent change with a skill update if you change WHEN to use the agent (Rule B applies). After updating, the change takes effect in any NEW session — existing sessions keep the old agent definition.
 
 ## Current State
 
@@ -255,3 +334,24 @@ Every change to `src/` MUST follow `references/session_loop.md` — Phase 1 GROU
 6. **Abbreviated loop (Phase 1 + 3 only)** is allowed ONLY for typo/comment/skill-markdown/revert work. Everything else, including "one-line fixes," runs the full loop. Pattern R4 came from a one-line fix.
 
 This rule exists because rules without gates get skipped — BUG-S1 through BUG-S8 and Pattern R4 all happened with the existing rules in place. The loop turns rules into checkpoints.
+
+### Rule J: Default is main thread — subagent delegation requires a reason
+
+Three project agents live in `.claude/agents/`. Before invoking ANY of them, state in the reply:
+
+1. **Which agent** (`clubkeeper-explorer` / `clubkeeper-reviewer` / `clubkeeper-skill-auditor`).
+2. **The decision-rule answer:** Does the intermediate work matter? If YES, do NOT delegate.
+3. **Why this is not an anti-pattern.** The skill's `## Project Agents` section enumerates the forbidden uses (debug, test runner, sequential pipeline, expert persona, auto-fix). Confirm your use is not one of those.
+
+Forbidden delegations (no exceptions):
+- **Debugging a live failure.** Read logs and full error output in main thread.
+- **Running `npm run build` or tests.** Output stays in main thread.
+- **Designing or planning** any code (Phase 1 + 2 of session_loop.md).
+- **Anything in Phase 3 EXECUTE** beyond a discrete read-only lookup.
+- **Bug RCA.** Sequential by nature — main thread.
+
+Required delegations (use the relevant agent — don't do these in main thread):
+- **End-of-session skill audit** → `clubkeeper-skill-auditor` (Phase 4 close).
+- **Pre-commit review of any chunk >100 LOC of new code** → `clubkeeper-reviewer`.
+
+This rule exists because the agent system is brand-new and the easy failure mode is the one `SubAgent.txt` warned about: spinning up agents for tasks where intermediate visibility matters. #109 is the recent example of what happens when you trust a summarised result. Don't repeat it at agent scale.

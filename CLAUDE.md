@@ -14,6 +14,20 @@ Full project memory lives in `.claude/skills/clubkeeper/` — load the skill bef
 2. `.claude/skills/clubkeeper/references/ripple_effects.md` — what breaks when you change X
 3. `.claude/skills/clubkeeper/references/bug_history.md` — bugs already fixed (don't repeat them)
 
+## Project agents — default is main thread
+
+Three scope-restricted helper agents live in `.claude/agents/`:
+
+- `clubkeeper-explorer` — read-only navigation (Read/Grep/Glob). Use for "where is X called", "what does ripple_effects say about Y". Returns `file:line` citations.
+- `clubkeeper-reviewer` — fresh-eyes diff review (Sonnet). Use BEFORE commit on chunks >100 LOC of new code. Returns `VERDICT + violations`; does NOT auto-fix.
+- `clubkeeper-skill-auditor` — Phase 4 close gate. Checks Rule B/E/G + memory-link integrity.
+
+**Decision rule:** "Does the intermediate work matter?" YES → main thread. NO → subagent.
+
+**NEVER create or use:** debug agent, test-runner agent, sequential pipeline agent, expert-persona agent, auto-fix agent. Forbidden delegations: live debugging, `npm run build`, design/planning, anything in Phase 3 EXECUTE beyond a discrete lookup, bug RCA.
+
+Full rules in SKILL.md `## Project Agents` section + Rule J.
+
 ## Hard rules (never violate)
 
 - **Tailwind v3.4 only.** Never upgrade to v4.
