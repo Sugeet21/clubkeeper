@@ -958,7 +958,7 @@ Files in scope:
 - Supabase `clubs` + `topup_intents` tables
 
 Invariants:
-- **Two-client rule (#83 fix):** Owner functions use `supabase`. Public anon RPCs (`getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`) use `supabasePublic`. NEVER call a public RPC on the owner client — it queues behind the owner's auth lock and hangs `/c/<slug>` when the owner is logged in in another tab. New public RPCs MUST use `supabasePublic` AND be wrapped in `withTimeout(..., 8000, label)`.
+- **Two-client rule (#83 fix) — now THREE clients after Chunk 4.3 / #111:** Owner auth + reads use `supabase`. Public anon RPCs (`getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`, etc.) use `supabasePublic` (distinct `storageKey: 'sb-clubkeeper-public'` per Pattern S16 — the three `auth: false` flags don't change the lock name). Owner-data WRITES from the sync drain use `supabaseSync` (lock-free via `accessToken` option, ONLY imported by `syncRunner.ts`). NEVER call a public RPC on the owner client — it queues behind the owner's auth lock and hangs `/c/<slug>` when the owner is logged in in another tab. New public RPCs MUST use `supabasePublic` AND be wrapped in `withTimeout(..., 8000, label)`.
 - `supabasePublic.ts`: imported by `playerHubApi.ts` ONLY. NO auth code. NEVER import from owner-side modules. NEVER use for realtime subscriptions (those are owner-side).
 - AuthInitializer + ExpirySweepRunner SKIP `/c/` and `/poster/` paths.
 - `PlayerScan` / `Poster` are PUBLIC — no auth, no Dexie. Keep it that way.
@@ -1324,22 +1324,32 @@ Last updated: 16 Jun 2026
 
 ## Sync (Phase C — outbox + drain engine)
 
-The multi-device sync write path. Dexie wrappers (Chunk 3) write data + outbox atomically; the SyncRunner (Chunk 4) drains outbox rows to Supabase. The runner is the only thing in the codebase that calls `supabase.from(<synced-table>)` for owner-data writes.
+The multi-device sync write path. Dexie wrappers (Chunk 3) write data + outbox atomically; the SyncRunner (Chunk 4) drains outbox rows to Supabase. The runner is the only thing in the codebase that calls `supabaseSync.from(<synced-table>)` for owner-data writes (Chunk 4.3 — was `supabase.from(...)` until the navigator-lock deadlock fix forced a dedicated client; Pattern S16).
+
+**Three-client rule (Chunk 4.3, Pattern S16):**
+- `supabase` (`src/lib/supabase.ts`) — owner AUTH + reads. Default storageKey. Used by authStore, sign-in/out, every owner-side read.
+- `supabasePublic` (`src/lib/supabasePublic.ts`) — anon player-hub RPCs only. Distinct `storageKey: 'sb-clubkeeper-public'`. Pattern A7.
+- `supabaseSync` (`src/lib/supabaseSync.ts`) — owner data-WRITE only. Lock-free via `accessToken` option. Used ONLY by SyncRunner. No `.auth` (Proxy throws), no realtime, no reads.
 
 Files in scope:
 - `src/types/index.ts` — `SyncTableName` union (9 snake_case names) + `OutboxRow` interface with `stuck?: boolean` dead-letter marker.
 - `src/db/syncTableMap.ts` — snake_case ↔ camelCase mapping. Used ONLY by wrappers. `SYNC_TABLES_PULL_ORDER` reserved for Chunk 5 initial pull.
 - `src/db/syncWrappers.ts` — `syncedCreate / syncedUpdate / syncedSoftDelete / syncedCreateBatch`. Each opens its OWN Dexie 'rw' tx over `(dataTable + _outbox)` (Pattern D7). Calls `scheduleDrain()` AFTER tx commit. Never called from inside another `db.transaction()`.
 - `src/db/scheduleDrain.ts` — one-line re-export from syncRunner. Indirection layer so future queue-coalescing drops in here without touching wrappers.
-- `src/db/syncRunner.ts` — the engine. `start() / stop() / scheduleDrain() / drainOnce() / pushOne()`. Module-level `syncRunner` singleton.
+- `src/db/syncRunner.ts` — the engine. `start() / stop() / scheduleDrain() / drainOnce() / pushOne()`. Module-level `syncRunner` singleton. Per-row 15s watchdog + `drainGeneration` counter (Pattern S15).
 - `src/db/syncPayloadMapper.ts` — Pattern S14. Per-table strict allowlist converting camelCase Dexie row → snake_case Supabase row. Only `customers` and `canteen_sales` wired; other 7 tables THROW until Chunk 7 maps them.
-- `src/db/syncClubId.ts` — Reads `user_club_id` JWT claim, cached per access_token. SyncRunner.drainOnce calls it once per batch.
+- `src/db/syncClubId.ts` — Lock-free token reader + `user_club_id` JWT claim decoder (Pattern S16). Exports `getOwnerClubIdFromJwt`, `readAccessTokenLockFree` (used by supabaseSync's `accessToken` getter), `_resetClubIdCache` (called from authStore.signOut).
+- `src/lib/supabaseSync.ts` — NEW (Chunk 4.3, Pattern S16). REST-only Supabase client for the drain. `createClient(url, key, { accessToken: async () => readAccessTokenLockFree() })`. Bypasses GoTrueClient entirely so it never acquires `lock:${storageKey}`. WRITE-ONLY, imported only by `syncRunner.ts`.
+- `src/store/authStore.ts` — sign-out calls `syncRunner.stop()` + `_resetClubIdCache()` + `_resetClubSyncSentinel()` BEFORE `closeDb()` (Pattern S15).
+- `src/hooks/useLiveData.ts` — exports `_resetClubSyncSentinel` for the sign-out cleanup.
 - `src/App.tsx` — `<SyncRunnerBoot />` component owns the lifecycle (start on `dbReady + session + !playerHub`, stop on cleanup).
 - `src/pages/__dev__/TestOutbox.tsx` — DEV-only `/__dev/test-outbox` page with smoke-test buttons.
 
 Invariants:
+- **`supabaseSync` is WRITE-ONLY for the drain — imported ONLY by `src/db/syncRunner.ts`.** Never import it from anywhere else. Never access `.auth` on it (Proxy throws). No realtime, no reads. The `accessToken` getter MUST stay lock-free (in-memory → synchronous localStorage; never `await supabase.auth.*` inside it). Violating any of these re-introduces the Pattern S16 deadlock.
 - Wrappers MUST NOT be called from inside an outer `db.transaction()` — Dexie throws "Transaction is already closed" on nested 'rw' over the same stores. Multi-table atomic ops use `syncedCreateBatch`.
-- SyncRunner.drainOnce closes its Dexie read tx BEFORE the first `await supabase...` (Pattern D7). Per-row delete/update on success/failure each get their own short tx.
+- SyncRunner.drainOnce closes its Dexie read tx BEFORE the first `await supabaseSync...` (Pattern D7). Per-row delete/update on success/failure each get their own short tx.
+- SyncRunner self-heals (Pattern S15): per-pushOne 15s watchdog (NOT per-batch — per-batch stacks concurrent drains on 50-row backlogs), `drainGeneration` bumped on start()/stop() with bail guards after each post-await point in drainOnce, sign-out resets module-level caches in order (`syncRunner.stop()` → `_resetClubIdCache()` → `_resetClubSyncSentinel()` → `closeDb()`).
 - SyncRunner stays quiet on the placeholder DB. `scheduleDrain()` checks `db.name === 'ClubKeeperDB__pending'` first and exits early. Without this guard, scheduleDrain from test pages / dev hot-reloads pre-auth would target the placeholder Dexie instance.
 - SyncRunner stays quiet on player-hub routes (`/c/*`, `/poster/*`). SyncRunnerBoot's `isPlayerHubRoute()` check enforces this — same gate as AuthInitializer / ExpirySweepRunner.
 - Dead-letter threshold = 10 attempts. When `attempts + 1 >= 10`, the row gets `stuck: true` and is SKIPPED on subsequent drains. Stuck rows are surfaced via the DEV TestOutbox "Show dead-letter" button until Chunk 6 ships a sync-indicator UI.
@@ -1358,8 +1368,10 @@ Cross-feature ripples:
 - → If `BATCH_SIZE` is raised in `syncRunner.ts`: review the `drainOnce` streaming loop's memory footprint and the "large-backlog continuation" tail-call pattern; both currently assume bounded batch.
 - → If the Supabase schema renames any of the 9 synced tables: update `SyncTableName` literal + the `SYNC_TO_DEXIE` / `DEXIE_TO_SYNC` maps. Wrappers' `syncTable` argument is a literal type — TS will fail loudly.
 - → If a wrapper signature changes (e.g. `syncedCreate` gains an option): update `TestOutbox.tsx` test callers AND check Chunk 7's eventual queries.ts migration plan.
+- → If a new owner-data WRITE path is added outside SyncRunner (e.g. a direct `.from(<synced-table>).upsert(...)` from queries.ts or a new admin tool): use `supabaseSync`, not `supabase`. Using `supabase` for owner writes risks re-introducing the navigator-lock deadlock under StrictMode / sign-out flips (Pattern S16). For non-synced owner reads / admin RPCs, `supabase` is still correct.
+- → If a NEW Supabase client is created anywhere: it MUST have a distinct `storageKey` AND should prefer the `accessToken` escape hatch if it does owner-data REST writes (avoid spawning a new GoTrueClient unless the file genuinely needs `.auth`). See `src/lib/supabaseSync.ts` for the template.
 
-Last updated: 26 Jun 2026 (Chunk 4.2 — TestOutbox real-UUID fix, pending owner re-E2E verification)
+Last updated: 27 Jun 2026 (Chunk 4.3 — supabaseSync client + self-healing drain runner, owner-verified end-to-end)
 
 ---
 

@@ -2,6 +2,33 @@
 
 ---
 
+## 27 Jun 2026 — Phase C Chunk 4.3: dedicated supabaseSync client (fixes deadlock; closes #111)
+
+- `fix(sync): Chunk 4.3 — dedicated supabaseSync client + lock-free clubId + distinct public storageKey + per-row watchdog + generation guard + sign-out cleanup (refs #111)` (pending commit)
+- **Triggered by:** owner E2E Round 3 after Chunk 4.2. Every Force drain returned PASS but `outboxRemaining` stayed > 0, `attempts: 0`, `lastError: null`, zero network requests. Distinct from #110 (which was Pattern S14 — camelCase mapper, already fixed).
+- **Root cause (single):** supabase-js v2 GoTrueClient acquires a `navigator.locks` lock keyed off `storageKey` (`lock:${storageKey}`) on every `auth.getSession()` call. `SupabaseClient._getAccessToken` (line 555 of SupabaseClient.ts) calls `this.auth.getSession()` internally to attach the Bearer header on EVERY PostgREST request. Our owner client and `supabasePublic` shared the same default storageKey → shared the same lock. Under React.StrictMode dev double-mount, an orphaned drain's auth call held the lock and never released it; every subsequent push hung at the same lock acquisition forever.
+- **First-attempt fix was INSUFFICIENT** (recorded as lesson in Pattern S16): patching only OUR own `getOwnerClubIdFromJwt` to be lock-free + giving `supabasePublic` a distinct storageKey did NOT cure the hang — supabase-js itself was still re-acquiring the OWNER client's lock on every `.from(...).upsert(...)`. The Supabase warning `Multiple GoTrueClient instances detected in the same browser context` was the canary; fixing only userspace lock acquisitions cannot dislodge a library-level lock.
+- **Real cure — dedicated REST client:**
+  - NEW `src/lib/supabaseSync.ts` — REST-only client configured with `accessToken: async () => readAccessTokenLockFree()`. supabase-js's `createClient` (lines 316-323 of SupabaseClient.ts) routes Bearer retrieval through OUR lock-free function when `accessToken` is set, replacing the GoTrueClient with a throwing Proxy. No `getSession()` call anywhere in the drain path = no lock acquisition.
+  - Constraints (enforced by file header + ripple_effects three-client rule): WRITE-ONLY, used ONLY by `src/db/syncRunner.ts`, no `.auth`, no realtime, no reads. The accessToken getter must stay lock-free.
+- **Defense in depth (kept):**
+  - `src/db/syncClubId.ts` — `getOwnerClubIdFromJwt` already lock-free (reads in-memory authStore session → synchronous localStorage fallback). `readAccessTokenLockFree` now exported for supabaseSync's accessToken getter.
+  - `src/lib/supabasePublic.ts` — distinct `storageKey: 'sb-clubkeeper-public'`. Two clients = two locks. Silences the multi-GoTrueClient warning. Reinforces Pattern A7's #83 fix.
+  - `src/db/syncRunner.ts` — per-pushOne 15s watchdog (NOT per-batch — per-batch fires mid-50-row backlog on 3G and stacks concurrent drains); `drainGeneration` counter bumped in start()/stop() so orphans bail after each post-await guard.
+  - `src/store/authStore.ts` — sign-out now calls `syncRunner.stop()` + `_resetClubIdCache()` + `_resetClubSyncSentinel()` BEFORE `closeDb()`. Order matters: bump generation first so no orphan touches a closing DB.
+  - `src/hooks/useLiveData.ts` — exposes `_resetClubSyncSentinel`. Also resolves the open Pending item `_clubSyncDone never-resets-on-sign-out`.
+- **Files affected:** `src/lib/supabaseSync.ts` (NEW), `src/lib/supabasePublic.ts`, `src/db/syncRunner.ts`, `src/db/syncClubId.ts`, `src/store/authStore.ts`, `src/hooks/useLiveData.ts`.
+- **Verification (owner E2E, all 5 paths passed before commit):**
+  1. Watchdog dormancy: single-row drain `outboxRemaining: 0`, `pushOne DONE ms: 236`. NO watchdog timeout.
+  2. 30s heartbeat: queued row drained without manual Force drain, `pushOne DONE ms: 1033`.
+  3. Player Hub: `/c/sugeet` + `/poster/sugeet` load within 1s with new storageKey.
+  4. Sign-out / sign-in: clean drain after re-auth, `outboxRemaining: 0`.
+  5. 50-row backlog: all 50 rows landed, every `pushOne DONE` between 162–475ms, zero duplicates in Supabase (MCP-verified: `count: 50, unique_ids: 50`).
+- New Patterns S15 (watchdog + generation guard under StrictMode singleton) and S16 (supabase-js library-level lock + `accessToken` escape hatch + 3-client rule) added to `bug_patterns.md`. Pattern A7 (#83) gets a forward-reference to S16.
+- Issue #111 filed with full corrected RCA; owner closes after verification.
+
+---
+
 ## 26 Jun 2026 — Phase C Chunk 4.2: TestOutbox uses real UUIDs (fixes Round 2 E2E blocker)
 
 - `fix(sync): Chunk 4.2 — TestOutbox uses real UUIDs, name-prefix for test marker (relates #110)` (pending commit)

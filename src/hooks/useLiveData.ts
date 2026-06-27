@@ -15,6 +15,15 @@ import type { GameTable, Session, ClubSettings, SessionItem } from '../types'
 // Keyed by userId so a second user signing in on the same tab gets their own sync.
 let _clubSyncDoneForUser: string | null = null
 
+/** Sign-out hook — clears the per-user sync sentinel so the next sign-in
+ *  (same user or different) re-pulls owner club data from Supabase.
+ *  Without this, signing out and signing back in as the SAME user skips
+ *  the Supabase→Dexie club sync (the userId guard matches the prior session).
+ *  Same class of bug as syncClubId's per-token cache (Pattern S16). */
+export function _resetClubSyncSentinel(): void {
+  _clubSyncDoneForUser = null
+}
+
 export function useSyncClubFromSupabase() {
   const { dbReady, session } = useAuthStore()
   const userId = session?.user?.id ?? null

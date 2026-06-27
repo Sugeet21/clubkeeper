@@ -24,7 +24,7 @@
 // re-runs are also idempotent (deleted_at = same ISO). Safe to retry forever.
 
 import { db } from './database'
-import { supabase } from '../lib/supabase'
+import { supabaseSync } from '../lib/supabaseSync'
 import { toSupabaseRow } from './syncPayloadMapper'
 import { getOwnerClubIdFromJwt } from './syncClubId'
 import type { OutboxRow } from '../types'
@@ -35,6 +35,19 @@ const INITIAL_RETRY_MS = 1_000
 const MAX_RETRY_MS = 60_000
 const HEARTBEAT_MS = 30_000
 const DEAD_LETTER_THRESHOLD = 10
+// Chunk 4.3 — Pattern S15. The watchdog is a hang-detector, not a latency SLA.
+// Indian 3G/4G round-trips routinely take 5-8s on congested networks; killing
+// a slow-but-alive request wastes mobile data and the user's row. 15s gives
+// ~2x headroom over the worst realistic round-trip and is well under the 30s
+// heartbeat (so an orphan-bail fires before the next kick).
+//
+// PER-ROW (not per-batch) on purpose: with 50-row backlogs after a long
+// offline stretch, a per-batch 15s watchdog would fire mid-batch even with
+// healthy 1s/row pings, reset draining=false, and the next heartbeat would
+// start a SECOND concurrent drain — stacking under exactly the conditions
+// we're trying to survive. Per-row + a generation guard (bumped on start/stop)
+// means orphans bail at the next await instead of stacking.
+const PUSH_WATCHDOG_MS = 15_000
 
 class SyncRunner {
   private draining = false
@@ -43,10 +56,18 @@ class SyncRunner {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private onlineHandler: (() => void) | null = null
   private started = false
+  // Bumped on every start()/stop(). drainOnce captures the value at entry and
+  // bails after each await if the current generation has moved on — kills
+  // orphaned drains aggressively under StrictMode unmount or sign-out flips.
+  private drainGeneration = 0
 
   start(): void {
     if (this.started) return
     this.started = true
+    // Bump generation: any orphaned drainOnce in flight from a prior
+    // stop()/start() cycle (StrictMode dev double-mount) bails at its next
+    // await without touching the new world.
+    this.drainGeneration += 1
 
     // `void` dispatch is intentional here: event-handler and setInterval
     // callbacks cannot `await` (the runtime ignores returned Promises). The
@@ -54,10 +75,6 @@ class SyncRunner {
     // awaiting; here the awaiting happens INSIDE scheduleDrain. The `void`
     // keyword silences ESLint no-floating-promises and signals intent.
     this.onlineHandler = () => {
-      if (import.meta.env.DEV) {
-        // eslint-disable-next-line no-console
-        console.log('[syncRunner] online event — scheduling drain')
-      }
       void this.scheduleDrain()
     }
     window.addEventListener('online', this.onlineHandler)
@@ -87,10 +104,12 @@ class SyncRunner {
       clearTimeout(this.retryTimer)
       this.retryTimer = null
     }
-    // Do not flip `this.draining` — let the in-flight drain unwind naturally
-    // on its next tick; new schedule calls are blocked by `started=false`
-    // because they go through wrappers, which still call scheduleDrain even
-    // when started=false (no-op in that case).
+    // Chunk 4.3 / Pattern S15 — bump generation + reset `draining`. The
+    // generation bump makes any in-flight drainOnce bail at its next
+    // post-await guard. Resetting `draining` (paired with the bump) means
+    // the next start() sees a clean slate even if the orphan never settles.
+    this.drainGeneration += 1
+    this.draining = false
   }
 
   /** Public entry — wrappers call this after every commit. Safe to call any
@@ -105,8 +124,9 @@ class SyncRunner {
 
     this.draining = true
     let drained = 0
+    const myGen = this.drainGeneration
     try {
-      drained = await this.drainOnce()
+      drained = await this.drainOnce(myGen)
       this.retryDelay = INITIAL_RETRY_MS
       // Large-backlog continuation (reviewer concern, Chunk 4): if drainOnce
       // returned a full batch, more rows likely remain. Re-kick on next tick
@@ -132,7 +152,7 @@ class SyncRunner {
     }
   }
 
-  private async drainOnce(): Promise<number> {
+  private async drainOnce(myGen: number): Promise<number> {
     // Pattern D7: read the batch in its own tx, then drop the tx before any
     // Supabase await.
     //
@@ -160,16 +180,26 @@ class SyncRunner {
     }
 
     if (batch.length === 0) return 0
+    // Generation guard — if start()/stop() bumped while we were reading the
+    // batch, an orphan from a prior cycle bails here.
+    if (myGen !== this.drainGeneration) return 0
 
     // One JWT decode per batch (cached internally per access_token), not per
     // row. If this throws (no session / missing claim), we abort the whole
-    // drain — every row would have failed for the same reason.
+    // drain — every row would have failed for the same reason. Lock-free per
+    // Pattern S16 — does NOT call supabase.auth.getSession().
     const clubId = await getOwnerClubIdFromJwt()
+    if (myGen !== this.drainGeneration) return 0
 
     let successCount = 0
     for (const row of batch) {
+      // Generation guard between rows — long batches let orphans exit early.
+      if (myGen !== this.drainGeneration) return successCount
       try {
-        await this.pushOne(row, clubId)
+        // Per-row watchdog (Pattern S15). 15s ceiling per pushOne — orphan
+        // bails fast under StrictMode/sign-out flip without ever firing on a
+        // healthy round-trip (typical 0.5–2s, worst-case 3G 5–8s).
+        await pushOneWithTimeout(this.pushOne.bind(this), row, clubId, PUSH_WATCHDOG_MS)
         // Success → drop the outbox row in its own short tx.
         if (typeof row.seq === 'number') {
           await db._outbox.delete(row.seq)
@@ -213,7 +243,7 @@ class SyncRunner {
       // on any not-yet-wired table — that's intentional, see
       // syncPayloadMapper.ts header.
       const wirePayload = toSupabaseRow(row.table, row.payload, clubId)
-      const { error } = await supabase
+      const { error } = await supabaseSync
         .from(row.table)
         .upsert(wirePayload, { onConflict: 'id', ignoreDuplicates: false })
       if (error) throw new Error(`${row.table}.upsert: ${error.message}`)
@@ -228,7 +258,7 @@ class SyncRunner {
       // syncedSoftDelete wrapper also stamps the local Dexie row's updated_at
       // to the same timestamp so local + remote agree.
       const payload = row.payload as { deleted_at: string }
-      const { error } = await supabase
+      const { error } = await supabaseSync
         .from(row.table)
         .update({ deleted_at: payload.deleted_at, updated_at: payload.deleted_at })
         .eq('id', row.rowId)
@@ -248,4 +278,27 @@ export const syncRunner = new SyncRunner()
 /** Bound forwarder used by syncWrappers via scheduleDrain.ts. */
 export function scheduleDrain(): void {
   void syncRunner.scheduleDrain()
+}
+
+// Per-row watchdog race. If pushOne never settles (hung fetch, lock deadlock,
+// etc.), rejecting the outer race lets drainOnce's catch increment attempts +
+// schedule backoff. The orphan pushOne keeps running; its eventual settle is
+// a no-op on the already-settled outer Promise (Promise spec).
+async function pushOneWithTimeout(
+  pushOne: (row: OutboxRow, clubId: string) => Promise<void>,
+  row: OutboxRow,
+  clubId: string,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    await new Promise<void>((resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`syncRunner: pushOne watchdog timeout (${timeoutMs}ms) on ${row.table}/${row.op}`))
+      }, timeoutMs)
+      pushOne(row, clubId).then(resolve, reject)
+    })
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }

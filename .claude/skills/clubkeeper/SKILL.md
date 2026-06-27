@@ -186,7 +186,7 @@ One entry per module. Overwrite in place when status changes — never append a 
 - **Import / Export** — `getAllDataForExport` covers all stores incl. `schemaVersion` + `exportedAt`. `importEverythingFromFile` is single atomic tx with 7 typed failure reasons. DEV-only round-trip self-test on `window.__importEverythingFromFile`.
 - **PWA + deployment** — `vercel.json` SPA rewrite (excludes `/api/*`), all PWA icons in `public/`. Per-user IndexedDB `ClubKeeperDB_<userId>` (two Gmail accounts on one browser = isolated data). `db` is a Proxy; `authStore` manages `initDbForUser` / `closeDb`.
 - **Bug tracking** — All bugs as GitHub issues at github.com/Sugeet21/clubkeeper/issues. `bug_archive.md` has one-line pointers only.
-- **Sync project (Phase C Chunks 0–3 VERIFIED, Chunk 4+4.1+4.2 SHIPPED pending owner re-E2E, 26 Jun 2026)** — Multi-device sync + owner auth. DDL deployed; JWT hook patched (#108 closed) AND the RLS-on-users_meta-at-mint-time bug resolved (#109 closed — Pattern A9). Chunk 4 adds `src/db/syncRunner.ts` (real drain engine), rewires `scheduleDrain.ts` as a re-export, mounts `<SyncRunnerBoot />` in `App.tsx`. Chunk 4.1 fixes camelCase↔snake_case via `src/db/syncPayloadMapper.ts` (strict per-table allowlist; `customers` + `canteen_sales` wired, other 7 throw to force Chunk 7 to wire deliberately) and `src/db/syncClubId.ts` (reads `user_club_id` JWT claim, cached, stamped on every payload). Chunk 4.2 fixes the Round-2 blocker: TestOutbox row ids now use real `crypto.randomUUID()` (Supabase `uuid` columns reject any non-UUID string — see Pattern S14 watch-out); test marker moved to `name` field (`TEST ` prefix); cleanup filters by name. Engine details: `upsert(..., { onConflict: 'id' })` for insert/update via mapped payload, targeted UPDATE for soft_delete (sets both `deleted_at` and `updated_at` so Chunk 5 cursor pull sees it); exponential backoff 1s→60s; dead-letter at attempts+1>=10 (skip-and-continue); large-backlog tail-call continuation; streaming `.each()` batch read avoids stuck-row starvation. Pattern D7 + Pattern A1 + Pattern S14 guards. Next session: Chunk 5 (SyncReader — initial pull + realtime).
+- **Sync project (Phase C Chunks 0–3 VERIFIED, Chunk 4.3 OWNER-VERIFIED localhost E2E, 27 Jun 2026)** — Write path live: 50-row backlog → 50 unique rows in Supabase, every `pushOne` 162–475ms, zero watchdog timeouts. Three-client architecture (Pattern S16): `supabase` (owner auth + reads, default storageKey), `supabasePublic` (anon player-hub RPCs, distinct `storageKey: 'sb-clubkeeper-public'`), `supabaseSync` (owner data-WRITE only, lock-free via `accessToken` option, imported ONLY by `syncRunner.ts`). Self-healing drain (Pattern S15): per-pushOne 15s watchdog + `drainGeneration` counter bumped on start()/stop() with post-await bail guards + sign-out tears down in order (`syncRunner.stop()` → `_resetClubIdCache()` → `_resetClubSyncSentinel()` → `closeDb()`). Earlier layers intact: payload mapper (S14), `user_club_id` JWT claim (A9 / #109 closed), real UUIDs for test rows (4.2), exponential backoff 1s→60s, dead-letter at attempts≥10 (skip-and-continue), streaming `.each()` read avoids starvation, Pattern D7 + A1 guards. Production push pending after Vercel deploy. Next session: Chunk 5 (SyncReader — initial pull + realtime).
 
 ## Pending — load-bearing, delete when done
 
@@ -205,7 +205,6 @@ Things that BLOCK something if forgotten. Delete the line the moment it's resolv
 - **PWA update banner (S6)** — needs `useRegisterSW` + banner UI; without it, users on old SW don't get new deploys without hard refresh.
 - **Wallet Phase 3 (refund UI)** — `referenceType: 'refund'` + mandatory notes.
 - **PAYMENT MODE backfill (v13 follow-up)** — `paymentBreakdown.cash` understates pre-v13 sessions by items value. Defer until Ball Bender notices.
-- **`_clubSyncDone` bug (`useLiveData`)** — module-level flag never resets on sign-out → second user to sign in on same tab skips club sync. Fix: reset flag in auth sign-out path.
 - **Session persistence** — `storage` option removed from `createClient` by linter. Monitor if session drops recur in production.
 - **Razorpay key rotation warning** — if `VITE_RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` is ever rotated or LIVE mode is enabled, the 6 plan IDs in `razorpayPlans.ts` MUST be re-verified. See Pattern S5.
 
@@ -247,8 +246,8 @@ Full version history (v1–v19) lives in `changelog.md`. When bumping the versio
 
 3. **Reply to Sugeet with the issue numbers and links** before writing fix code. Wait for his go-ahead.
 
-4. **Fix the bug.** Reference the issue number in the commit message:
-     git commit -m "fix(<area>): <one-line>  (closes #NN — pending owner verification)"
+4. **Fix the bug.** Reference the issue number in the commit message — use `refs`, NEVER `closes/fixes/resolves` (those auto-close the issue when the push lands on `main`, and only Sugeet closes after verifying):
+     git commit -m "fix(<area>): <one-line>  (refs #NN — pending owner verification)"
 
 5. **NEVER close the issue yourself.** After the commit, post a comment on the issue with the commit SHA and a one-line of what was changed. Then explicitly ask Sugeet:
      "Issue #NN — fix committed in <SHA>. Please verify on your device. Reply 'close #NN' (or 'closed') only after you've tested it. I will not close it until you do."

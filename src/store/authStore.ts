@@ -4,6 +4,9 @@ import type { Session, User } from '@supabase/supabase-js'
 import type { UserProfile, Subscription } from '../types'
 import { initDbForUser, closeDb } from '../db/database'
 import { seedIfEmpty } from '../db/seed'
+import { syncRunner } from '../db/syncRunner'
+import { _resetClubIdCache } from '../db/syncClubId'
+import { _resetClubSyncSentinel } from '../hooks/useLiveData'
 
 interface AuthState {
   session: Session | null
@@ -165,6 +168,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signOut: async () => {
     await supabase.auth.signOut()
+    // Chunk 4.3 / Pattern S15 + S16 — tear DOWN sync state BEFORE closeDb().
+    // Order matters: stop()/generation-bump first guarantees that any
+    // in-flight drainOnce bails at its next post-await guard, so no orphan
+    // tries to touch the DB while/after we're closing it. Reset the two
+    // module-level caches that survive a sign-out (clubId per-token, club
+    // sync per-user sentinel) so the next sign-in re-pulls cleanly.
+    syncRunner.stop()
+    _resetClubIdCache()
+    _resetClubSyncSentinel()
     // closeDb() is also called by onAuthStateChange on null session (Step 2),
     // but calling it here first is safe (idempotent) and ensures the DB is
     // closed before any redirect clears component state.
