@@ -2,9 +2,9 @@
 
 ---
 
-## 27 Jun 2026 — Phase C Chunk 4.3: dedicated supabaseSync client (fixes deadlock; closes #111)
+## 27 Jun 2026 — Phase C Chunk 4.3: dedicated supabaseSync client (fixes deadlock; refs #111)
 
-- `fix(sync): Chunk 4.3 — dedicated supabaseSync client + lock-free clubId + distinct public storageKey + per-row watchdog + generation guard + sign-out cleanup (refs #111)` (pending commit)
+- `fix(sync): Chunk 4.3 — dedicated supabaseSync client + lock-free clubId + distinct public storageKey + per-row watchdog + generation guard + sign-out cleanup (refs #111)`
 - **Triggered by:** owner E2E Round 3 after Chunk 4.2. Every Force drain returned PASS but `outboxRemaining` stayed > 0, `attempts: 0`, `lastError: null`, zero network requests. Distinct from #110 (which was Pattern S14 — camelCase mapper, already fixed).
 - **Root cause (single):** supabase-js v2 GoTrueClient acquires a `navigator.locks` lock keyed off `storageKey` (`lock:${storageKey}`) on every `auth.getSession()` call. `SupabaseClient._getAccessToken` (line 555 of SupabaseClient.ts) calls `this.auth.getSession()` internally to attach the Bearer header on EVERY PostgREST request. Our owner client and `supabasePublic` shared the same default storageKey → shared the same lock. Under React.StrictMode dev double-mount, an orphaned drain's auth call held the lock and never released it; every subsequent push hung at the same lock acquisition forever.
 - **First-attempt fix was INSUFFICIENT** (recorded as lesson in Pattern S16): patching only OUR own `getOwnerClubIdFromJwt` to be lock-free + giving `supabasePublic` a distinct storageKey did NOT cure the hang — supabase-js itself was still re-acquiring the OWNER client's lock on every `.from(...).upsert(...)`. The Supabase warning `Multiple GoTrueClient instances detected in the same browser context` was the canary; fixing only userspace lock acquisitions cannot dislodge a library-level lock.
