@@ -200,6 +200,7 @@ One entry per module. Overwrite in place when status changes — never append a 
 
 Things that BLOCK something if forgotten. Delete the line the moment it's resolved.
 
+- **Migration: `supabase/migrations/20260628_lww_guard.sql`** — server-side last-write-wins triggers on 8 of 9 synced tables (Phase C Chunk 5.1, refs #112). wallet_transactions is append-only and intentionally excluded. Until run on production Supabase, the drain can silently lose a peer's newer edit when a stale offline write reconnects (the unconditional `upsert(onConflict: 'id')` overwrites by row id with no timestamp guard). Verification: `select event_object_table, trigger_name from information_schema.triggers where trigger_name like 'lww_%'` should return 8 rows.
 - **Migration: `supabase/migrations/20260622_booking_hours_and_per_slot_advance.sql`** — per-club operating hours + per-30-min-slot advance + drop+recreate `get_club_public_info` + `submit_booking_intent` (#106). Until run, BookingScreen falls back to "Bookings not configured yet" state (NO hardcoded hours fallback). Owner UI also stays gated because Dexie hours fields default to undefined.
 - **Migration: `supabase/migrations/20260618_booking_cancel.sql`** — adds `cancel_booking_intent` RPC. Until run, player Cancel button surfaces generic "Could not cancel" error. Owner-side reconcile + no-show sweep work without it.
 - **Migration: `supabase/migrations/20260619_booked_slots_rpc.sql`** — anon `get_booked_slots` RPC for #90. Until run, player time picker shows everything available.
