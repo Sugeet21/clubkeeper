@@ -145,7 +145,15 @@ Brief the agent like a colleague who just walked in — it has no memory of this
 
 ### Model choice
 
-All three agents default to **Sonnet 4.6**. Opus on subagents burns tokens fast and they're scoped to "find X, return X" — Sonnet is the right size. Override to Opus per-call only if the specific job genuinely needs deeper reasoning (e.g. reviewer on a 600-line SyncRunner diff). Never use Haiku — accuracy > speed for project-specific work; owner explicitly rejected Haiku.
+Models are scoped to the job, not blanket-applied:
+
+- **`clubkeeper-reviewer` → Opus** (raised from Sonnet, 30 Jun 2026, sync phase). Pre-commit review of code the main thread just wrote is the high-stakes catch-the-bug surface — accuracy beats token cost. The Chunk 4.3 navigator-lock miss is the canonical example: a Sonnet review would not have flagged the supabase-js library-level lock acquisition because spotting it requires deep reasoning across the supabase-js source + our drain loop semantics.
+- **`clubkeeper-skill-auditor` → Opus** (raised from Sonnet, 30 Jun 2026, sync phase). Final session gate. Cross-references commits, ripple_effects, bug_patterns, Current State entries, and memory-link integrity — a Sonnet miss here ships a stale skill into the next session, which is the failure mode Rule B/E/G exist to prevent.
+- **`clubkeeper-explorer` → Sonnet.** Pure retrieval (`Read/Grep/Glob`, no Bash, no writes). Opus adds cost, not accuracy — there is nothing for Opus's deeper reasoning to do when the job is "return `file:line` citations for `scheduleDrain` callers."
+
+Never use Haiku — accuracy > speed for project-specific work; owner explicitly rejected Haiku.
+
+Frontmatter-level model changes only take effect in NEW sessions. For the current session, override to Opus per-call when invoking reviewer/auditor (`Agent({ model: "opus", subagent_type: "clubkeeper-reviewer", ... })`).
 
 ### Gates — when delegation is FORBIDDEN
 

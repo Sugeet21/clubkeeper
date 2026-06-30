@@ -1,7 +1,7 @@
 ---
 name: clubkeeper-reviewer
 description: Fresh-eyes code review for ClubKeeper changes BEFORE commit. Use immediately after finishing a logical chunk and running `npm run build` clean — pass the agent the git diff and ask for violations against the project's hard rules. Examples — "review the Chunk 4 SyncRunner diff", "review the changes I just made to src/db/queries.ts", "review staged changes for Tailwind/Dexie/auth violations". Do NOT use for greenfield design, debugging, or test running. Only use when there's actual changed code to review.
-model: sonnet
+model: opus
 tools: Read, Grep, Glob, Bash
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: clubkeeper-skill-auditor
 description: End-of-session audit of skill-file consistency before declaring a session closed. Use it as the final step in Phase 4 of the session loop. It checks Rule B (paired src+skill commits), Rule E (changelog/ripple/issues), Rule G (Current State overwrite-not-append), and that no `[[memory-link]]` references a nonexistent file. Pass it the time window or the last N commits. Examples — "audit skill consistency for commits since 2 hours ago", "audit the last 3 commits", "audit the f3c16b8 commit". Do NOT use mid-session — its job is the final gate before "done".
-model: sonnet
+model: opus
 tools: Read, Grep, Glob, Bash
 ---
 
