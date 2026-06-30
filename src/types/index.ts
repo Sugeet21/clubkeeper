@@ -186,6 +186,17 @@ export interface ClubSettings {
   peakStartMinute?: number        // 0-59, default 0
   peakEndHour?: number            // 0-23, default 6 (6 AM)
   peakEndMinute?: number          // 0-59, default 0
+  // v21: Phase C Chunk 5 — per-table initial-pull cursor map. Each entry is
+  // the highest `updated_at` (ISO string) the SyncReader has applied for that
+  // table. Used by the cursor-based initial pull (§7.1) so an interrupted pull
+  // resumes mid-table on the next sign-in instead of restarting from epoch.
+  // Realtime events also advance the cursor so a polling-fallback reconnect
+  // never re-pulls events realtime already delivered.
+  //
+  // WRITE PATH: must go through src/db/syncPullCursors.ts (raw db.settings.update)
+  // — never via a sync wrapper, or the cursor write itself would queue an
+  // outbox row. Read path is via getPullCursor / getAllPullCursors.
+  pullCursors?: Partial<Record<SyncTableName, string | null>>
 }
 
 export interface CanteenItem {

@@ -32,6 +32,7 @@ import BookingScreen from './pages/player/BookingScreen'
 import Poster from './pages/Poster'
 import { TopupRealtimeBridge } from './components/TopupRealtimeBridge'
 import { BookingRealtimeBridge } from './components/BookingRealtimeBridge'
+import { SyncReaderBoot } from './components/SyncReaderBoot'
 // Phase C Chunk 3 — sync wrapper smoke-test page, DEV-only route.
 import TestOutbox from './pages/__dev__/TestOutbox'
 
@@ -207,6 +208,7 @@ export default function App() {
         <AudioUnlocker />
         <ExpirySweepRunner />
         <SyncRunnerBoot />
+        <SyncReaderBoot />
         <TopupRealtimeBridge />
         <BookingRealtimeBridge />
         <AppLayout />

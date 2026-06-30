@@ -534,6 +534,25 @@ export class ClubKeeperDB extends Dexie {
         }
       })
     })
+    // Version 21: Phase C Chunk 5 — additive only, no .upgrade() block.
+    // Adds optional ClubSettings.pullCursors: per-table initial-pull cursor map
+    // used by SyncReader's resumable cursor logic (§7.1). Legacy rows read
+    // undefined; SyncReader treats undefined as "{}" and starts from epoch.
+    // No new indexes — pullCursors is a JSON blob on the settings singleton row,
+    // never queried. Schema string identical to v20 — no index changes.
+    this.version(21).stores({
+      gameTables: 'id, name, gameType, sortOrder, outOfService',
+      sessions: 'id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: 'id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, [customerId+createdAt]',
+      canteenItems: 'id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+      bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
+      _outbox: '++seq, table, op, rowId, createdAt',
+    })
   }
 }
 

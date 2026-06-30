@@ -23,10 +23,10 @@ import type { Booking } from '../types/booking'
  * Current Dexie schema version. Mirror of `this.version(N)` in `database.ts`.
  * Used by export/import to gate forward-compatibility. Bump when database.ts bumps.
  */
-export const CURRENT_SCHEMA_VERSION = 20
+export const CURRENT_SCHEMA_VERSION = 21
 
-export interface ClubKeeperBackupV20 {
-  schemaVersion: 20
+export interface ClubKeeperBackupV21 {
+  schemaVersion: 21
   exportedAt: number
   tables: GameTable[]
   sessions: Session[]
@@ -40,13 +40,14 @@ export interface ClubKeeperBackupV20 {
   bookings: Booking[]
 }
 
-// Backwards-compat aliases — structurally identical because no field shapes changed
-// in v20 (only id types widened to unions, which are assignable from the prior types).
-// V19 consumers stay source-compatible without changes.
-export type ClubKeeperBackupV19 = ClubKeeperBackupV20
-export type ClubKeeperBackupV18 = ClubKeeperBackupV20
-export type ClubKeeperBackupV17 = ClubKeeperBackupV20
-export type ClubKeeperBackupV16 = ClubKeeperBackupV20
+// Backwards-compat aliases — structurally identical because v21 is purely
+// additive (one optional field on ClubSettings). Prior-version consumers stay
+// source-compatible without changes.
+export type ClubKeeperBackupV20 = ClubKeeperBackupV21
+export type ClubKeeperBackupV19 = ClubKeeperBackupV21
+export type ClubKeeperBackupV18 = ClubKeeperBackupV21
+export type ClubKeeperBackupV17 = ClubKeeperBackupV21
+export type ClubKeeperBackupV16 = ClubKeeperBackupV21
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -540,7 +541,7 @@ export async function resetEverything(): Promise<void> {
   await seedIfEmpty()
 }
 
-export async function getAllDataForExport(): Promise<ClubKeeperBackupV20> {
+export async function getAllDataForExport(): Promise<ClubKeeperBackupV21> {
   const [
     tables,
     sessions,
@@ -565,7 +566,7 @@ export async function getAllDataForExport(): Promise<ClubKeeperBackupV20> {
     db.bookings.toArray(),
   ])
   return {
-    schemaVersion: 20 as const,
+    schemaVersion: 21 as const,
     exportedAt: Date.now(),
     tables,
     sessions,
