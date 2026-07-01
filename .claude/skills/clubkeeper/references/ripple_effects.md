@@ -1375,6 +1375,29 @@ Last updated: 27 Jun 2026 (Chunk 4.3 — supabaseSync client + self-healing drai
 
 ---
 
+## App-shell boot components (Pattern A10)
+
+Singleton-owning `<XyzBoot />` / `<XyzRunner />` components mounted at the top of `App.tsx` (or `src/components/`) that start a module-level runner or subscription on the authenticated session and tear it down on sign-out. Current members: `AuthInitializer`, `SyncRunnerBoot`, `SyncReaderBoot`, `ExpirySweepRunner`, `TopupRealtimeBridge`, `BookingRealtimeBridge`.
+
+Files in scope:
+- `src/App.tsx` — `AuthInitializer`, `SyncRunnerBoot`, `ExpirySweepRunner`, `TopupRealtimeBridge`, `BookingRealtimeBridge` mount points.
+- `src/components/SyncReaderBoot.tsx` — SyncReader lifecycle owner (Chunk 5.0+).
+- `src/components/TopupRealtimeBridge.tsx`, `src/components/BookingRealtimeBridge.tsx` — reference-correct examples of the userId-primitive dep pattern.
+
+Invariants:
+- **Pattern A10 — boot effects gate on stable identity (`session?.user?.id`), NEVER the raw `session` object.** `authStore.initialize()` and supabase-js's `onAuthStateChange('INITIAL_SESSION')` both fire a `set({ session })` on cold boot carrying identical `session.user.id` but different object references. Depping on the object churns the effect twice; depping on the primitive is stable. DEV StrictMode adds a third fire, also absorbed. Full RCA in `bug_patterns.md` Pattern A10.
+- **Do NOT dep on `session?.access_token`.** Background token refresh (every ~50 min) would tear the singleton down and restart, killing any in-flight drain / pull. Token-refresh reactivity belongs INSIDE the singleton as a dedicated `supabase.auth.onAuthStateChange(TOKEN_REFRESHED)` listener with teardown-before-register (see `SyncReader.deferForRefresh` for the template).
+- All boot effects must also `isPlayerHubRoute()`-gate — public routes (`/c/*`, `/poster/*`) never trigger owner-side machinery. Same gate as AuthInitializer.
+
+Cross-feature ripples:
+- → If a NEW app-shell boot component is added: copy the dep pattern from `TopupRealtimeBridge` or `BookingRealtimeBridge`. Extract `const userId = session?.user?.id ?? null` in the render body; dep the effect on `[dbReady, userId, ...]`. NOT `[dbReady, session, ...]`. Do NOT copy any pre-A10 code path (Wallet.tsx:74 / Bookings.tsx:110 are the surviving offenders — #113 tracks the sweep).
+- → If a boot component needs to react to a token refresh (e.g. deferred initial-pull retry when a JWT claim is missing): install a `supabase.auth.onAuthStateChange('TOKEN_REFRESHED')` listener INSIDE the runner class, not in the boot effect deps. Use teardown-before-register semantics at BOTH the top of the register function AND inside the fire handler so a synchronous re-defer inside the retry's catch cannot stack listeners.
+- → If `authStore` is refactored to fire fewer redundant `set({ session })` calls: Pattern A10 stops being load-bearing, but the primitive-dep discipline should stay — future auth-state churn (e.g. a new supabase-js version's event semantics) would silently re-open the bug.
+
+Last updated: 1 Jul 2026 (Chunk 5.2 pre-commit — Pattern A10 added, three boot effects converted)
+
+---
+
 ## How to add to this file
 
 When you discover a new ripple effect:
