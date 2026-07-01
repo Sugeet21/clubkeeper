@@ -85,13 +85,19 @@ function AudioUnlocker() {
 }
 
 // Runs the coin expiry sweep once per 4 hours per browser session.
-// Gated strictly on dbReady + session + subscriptionLoaded (Pattern D6 / A6).
+// Gated strictly on dbReady + userId + subscriptionLoaded (Pattern D6 / A6 /
+// A10). userId (not `session`) is the effect dep so a re-set of the same
+// session object doesn't re-run this pointlessly — a broken A10 dep would
+// re-fire on every INITIAL_SESSION replay; the 4h sessionStorage guard
+// currently masks that cost, but uniformity across boot components is
+// safer than per-file exceptions.
 function ExpirySweepRunner() {
   const { dbReady, session, subscriptionLoaded } = useAuthStore()
+  const userId = session?.user?.id ?? null
 
   useEffect(() => {
     if (isPlayerHubRoute()) return
-    if (!dbReady || !session || !subscriptionLoaded) return
+    if (!dbReady || !userId || !subscriptionLoaded) return
 
     const FOUR_HOURS = 4 * 60 * 60 * 1000
     const lastSweep = Number(sessionStorage.getItem('lastExpirySweep') ?? 0)
@@ -116,27 +122,37 @@ function ExpirySweepRunner() {
         }
       })
       .catch((err: unknown) => console.error('[booking] no-show sweep failed', err))
-  }, [dbReady, session, subscriptionLoaded])
+  }, [dbReady, userId, subscriptionLoaded])
 
   return null
 }
 
 // Phase C Chunk 4 — owns the SyncRunner lifecycle. Mirrors ExpirySweepRunner
-// gating: only starts once dbReady + session land AND we're not on a player-hub
+// gating: only starts once dbReady + userId land AND we're not on a player-hub
 // route (which must never touch owner Supabase). On unmount / sign-out the
 // runner stops cleanly so the online listener + 30s heartbeat are torn down.
+//
+// Pattern A10 — depends on userId (primitive) not `session` (object). A
+// zustand set({session}) creates a new reference even for the same signed-in
+// account (e.g. onAuthStateChange's INITIAL_SESSION delivering the same data
+// getSession() just returned). Depending on the raw ref would tear down and
+// re-start the runner on every such set, and each start bumps drainGeneration
+// — an in-flight drain would then bail as an orphan, wasting a Supabase
+// round-trip per redundant fire. TopupRealtimeBridge + BookingRealtimeBridge
+// are the reference-correct examples of this pattern.
 function SyncRunnerBoot() {
   const { dbReady, session } = useAuthStore()
+  const userId = session?.user?.id ?? null
 
   useEffect(() => {
     if (isPlayerHubRoute()) return
-    if (!dbReady || !session) return
+    if (!dbReady || !userId) return
 
     syncRunner.start()
     return () => {
       syncRunner.stop()
     }
-  }, [dbReady, session])
+  }, [dbReady, userId])
 
   return null
 }

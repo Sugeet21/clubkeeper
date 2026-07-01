@@ -27,6 +27,24 @@ let cached: { token: string; clubId: string } | null = null
 let expiryWarned = false
 
 /**
+ * Thrown by `getOwnerClubIdFromJwt` when the current access_token exists but
+ * has no `user_club_id` claim. Callers (SyncReader especially) check this
+ * with `instanceof NoUserClubIdClaimError` to distinguish a fixable
+ * configuration issue from a transient failure. `instanceof` is used instead
+ * of message-string matching so the guidance text can be rewritten later
+ * without silently breaking the reader's deferral logic.
+ */
+export class NoUserClubIdClaimError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'NoUserClubIdClaimError'
+    // Preserve prototype chain across the ES5 transpile target so `instanceof`
+    // works even when this file is bundled through tsc's older output.
+    Object.setPrototypeOf(this, NoUserClubIdClaimError.prototype)
+  }
+}
+
+/**
  * Returns the owner's club_id from the JWT user_club_id claim.
  * Lock-free — never calls supabase.auth.getSession().
  * @throws Error if there's no signed-in session, or the JWT has no claim.
@@ -52,8 +70,22 @@ export async function getOwnerClubIdFromJwt(): Promise<string> {
 
   const clubId = typeof claims.user_club_id === 'string' ? claims.user_club_id : null
   if (!clubId) {
-    throw new Error(
-      'getOwnerClubIdFromJwt: JWT has no user_club_id claim — sign out and back in to refresh the token (Pattern A9 / #109)',
+    // Configuration issue, not a transient failure. Two known root causes:
+    //   (a) The user has no row in public.users_meta, so the hook returns
+    //       the JWT unmodified (see add_user_meta_to_jwt at line 139 of the
+    //       Phase C schema migration).
+    //   (b) The Supabase project has never had the Custom Access Token Hook
+    //       enabled at Dashboard → Auth → Hooks (must point at
+    //       public.add_user_meta_to_jwt), so no token has ever been minted
+    //       with the claim.
+    // Neither is fixed by signing out and back in — that dance was previously
+    // suggested here and it MASKED the real bug (Pattern A9 / #109
+    // regression). SyncReader detects this specific error via `instanceof
+    // NoUserClubIdClaimError` and defers the pull, retrying automatically
+    // on the next `TOKEN_REFRESHED` event once the owner has fixed the
+    // configuration on Supabase's side.
+    throw new NoUserClubIdClaimError(
+      "JWT has no user_club_id claim. Either the signed-in user has no row in public.users_meta, or the Custom Access Token Hook is not enabled in Supabase Dashboard → Auth → Hooks (must be set to public.add_user_meta_to_jwt). Pattern A9 / #109. SyncReader will retry automatically when the token refreshes.",
     )
   }
   cached = { token, clubId }

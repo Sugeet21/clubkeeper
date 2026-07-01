@@ -502,6 +502,33 @@ CREATE POLICY <table>_auth_admin_read ON public.<table>
 
 ---
 
+### Pattern A10 — App-shell boot effects gate on stable identity (user_id), NEVER the raw session object reference (Phase C Chunk 5.2 pre-commit, 1 Jul 2026)
+**Symptom signature:** A React-mounted "boot" component at the app shell (`SyncRunnerBoot`, `SyncReaderBoot`, `ExpirySweepRunner`, or any future singleton owner) fires its `useEffect` cleanup → re-run pair MULTIPLE times per cold boot, EVEN in a production build with no StrictMode. Console shows `start → stop → start` sequences within milliseconds of each other. On the sync path this manifests as: two full 9-table initial pulls fired on the very first sign-in; on the drain path as extra `drainOnce` calls that bail via the generation guard as orphans — data cost doubled on 3G, no user-facing feature broken, so easy to miss.
+**Root cause:** The effect deps list `session` (a zustand object). Every `set({ session, ... })` in `authStore` creates a NEW object reference even when the underlying user identity is unchanged — because the reducer builds a fresh reference from Supabase's payload each time. `authStore.initialize()` fires one such set from its own `getSession()` result, and supabase-js's `onAuthStateChange('INITIAL_SESSION', ...)` fires a second set with the SAME data ~100 ms later. Both sets deliver identical `session.user.id`, but React sees two different reference values in the deps array and runs the cleanup + effect pair twice. In DEV, StrictMode adds a third fire. Each cycle bumps the singleton's `readerGeneration` / `drainGeneration`, invalidating the in-flight work as an orphan and forcing a rerun.
+**Rule:** Every app-shell boot effect MUST gate on a PRIMITIVE key extracted from the session — normally `session?.user?.id` — never on the `session` object itself.
+```tsx
+// ✅ Correct — user identity is a stable string
+const userId = session?.user?.id ?? null
+useEffect(() => {
+  if (!dbReady || !userId) return
+  runner.start()
+  return () => runner.stop()
+}, [dbReady, userId])
+
+// ❌ Wrong — object ref churns on every set({session}), even for same account
+useEffect(() => {
+  if (!dbReady || !session) return
+  runner.start()
+  return () => runner.stop()
+}, [dbReady, session])
+```
+**Reference-correct examples in the codebase:** `TopupRealtimeBridge` and `BookingRealtimeBridge`. Both read `const userId = session?.user?.id ?? null` and dep on `[dbReady, userId, subscriptionLoaded, onPublicRoute]`. When you copy a new boot component, copy one of THOSE two, not any code path that predates this pattern.
+**What NOT to do:** don't gate on `access_token` — a background token refresh (every ~50 min) would tear the singleton down and restart, killing any in-flight drain / pull. Token-refresh reactivity, if actually needed (e.g. deferred initial pull retry), belongs INSIDE the singleton as a dedicated `supabase.auth.onAuthStateChange(TOKEN_REFRESHED)` listener with its own teardown-before-register semantics — not in the boot effect deps.
+**Files affected (fix, 1 Jul 2026):** `src/App.tsx` (`SyncRunnerBoot`, `ExpirySweepRunner`), `src/components/SyncReaderBoot.tsx`.
+**Self-test for any future app-shell boot component:** "Will my effect re-run when `authStore` receives a `set({ session })` that carries the SAME user id?" If YES → dep on the raw session object; you have the bug. Extract the primitive key first.
+
+---
+
 ## Subscription & Razorpay (payments, fetch errors)
 
 Files most affected: `src/pages/Subscribe.tsx`, `src/components/subscribe/PaymentBottomSheet.tsx`, `api/create-subscription.ts`, `api/razorpay-webhook.ts`.

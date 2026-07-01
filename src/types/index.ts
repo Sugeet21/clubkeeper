@@ -187,16 +187,19 @@ export interface ClubSettings {
   peakEndHour?: number            // 0-23, default 6 (6 AM)
   peakEndMinute?: number          // 0-59, default 0
   // v21: Phase C Chunk 5 — per-table initial-pull cursor map. Each entry is
-  // the highest `updated_at` (ISO string) the SyncReader has applied for that
-  // table. Used by the cursor-based initial pull (§7.1) so an interrupted pull
-  // resumes mid-table on the next sign-in instead of restarting from epoch.
-  // Realtime events also advance the cursor so a polling-fallback reconnect
-  // never re-pulls events realtime already delivered.
+  // a COMPOUND cursor: the last (updated_at, id) tuple applied for that table.
+  // Compound is required because .gt('updated_at', cursor) skips rows sharing
+  // the exact cursor timestamp at a page boundary (silent data loss). The
+  // pull query is `(updated_at > ts) OR (updated_at = ts AND id > cursor.id)`
+  // ordered by (updated_at, id) — see syncReader.ts initialPull.
+  //
+  // Realtime events (Chunk 5.3) also advance the cursor so a polling-fallback
+  // reconnect (Chunk 5.4) never re-pulls events realtime already delivered.
   //
   // WRITE PATH: must go through src/db/syncPullCursors.ts (raw db.settings.update)
   // — never via a sync wrapper, or the cursor write itself would queue an
   // outbox row. Read path is via getPullCursor / getAllPullCursors.
-  pullCursors?: Partial<Record<SyncTableName, string | null>>
+  pullCursors?: Partial<Record<SyncTableName, { ts: string; id: string } | null>>
 }
 
 export interface CanteenItem {
