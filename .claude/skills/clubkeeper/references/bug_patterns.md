@@ -959,6 +959,29 @@ Branch-specific fields (`updated_at`, `owner_id`, server-defaulted columns) stay
 
 **Files affected:** `src/lib/supabaseSync.ts` (NEW), `src/lib/supabasePublic.ts` (storageKey), `src/db/syncRunner.ts` (import swap), `src/db/syncClubId.ts` (`readAccessTokenLockFree` exported for the new client).
 
+### Pattern S17 — LWW timestamps are compared as NUMBERS (epoch ms); never string-compare ISO timestamps across sources (#117, Phase C Chunk 5.2b, 2 Jul 2026)
+**Symptom signature:** None yet — caught at grounding before the Chunk 5.3 LWW handler shipped. Had it shipped: a peer device's genuinely-newer edit silently discarded on this device whenever the two timestamps shared a prefix, converging devices to DIFFERENT states with zero errors logged.
+**Root cause:** Two "ISO timestamp" sources produce incompatible string formats: locally-stamped `new Date().toISOString()` → `"2026-07-02T10:15:30.123Z"`; PostgREST/Supabase → `"2026-07-02T10:15:30.123456+00:00"`. Lexicographic comparison across the two is wrong at shared-second boundaries — `"Z"` (0x5A) sorts above every digit, so a local stamp always "wins" against a same-second server stamp. The original Chunk 5.2 read mapper persisted server ISO strings on Dexie rows precisely so 5.3 could string-compare them; the write wrappers stamped `toISOString()` — the two formats would have met in the comparison.
+**Rule (owner decision 2 Jul 2026 — "contract wins"):**
+1. On Dexie rows, LWW metadata is camelCase EPOCH MS: `updatedAt?: number`, `deletedAt?: number | null`. Declared on all 8 mutable synced interfaces (`WalletTransaction` excluded — append-only, has neither).
+2. ISO conversion happens ONLY at the wire boundary: `syncPayloadMapper` (`msToIso` on push), `syncReadMapper` (`isoToMs` on pull), `SyncRunner.pushOne` soft-delete branch.
+3. Any LWW comparison (Chunk 5.3 handler, tie-breaks) compares NUMBERS. If one side arrives as an ISO string (realtime payload), `Date.parse` it first.
+4. Raw snake_case `updated_at`/`deleted_at` must NEVER persist on a Dexie row — their presence means a mapper was bypassed.
+**Tie-break note:** epoch-ms truncates Postgres microseconds; equal-ms collisions fall to the 5.3 tie-break rule (server-authoritative, `updated_by !== currentUserId` per §7.3). The server-side LWW guard (20260628, `new.updated_at < old.updated_at`) keeps full microsecond precision — client truncation cannot lose a server-side decision.
+**Files affected:** `src/db/syncWrappers.ts`, `src/db/syncReadMapper.ts`, `src/db/syncPayloadMapper.ts`, `src/db/syncRunner.ts`, `src/types/index.ts` + `customer.ts` + `booking.ts`, `src/pages/__dev__/TestOutbox.tsx`.
+
+### Pattern S22 — Realtime channel lifecycle: subscribe on login, teardown-before-register, teardown on logout, main client only (Phase C Chunk 5.2b, 2 Jul 2026)
+**Symptom signature (prevented):** duplicate realtime channels after a TOKEN_REFRESHED-deferred retry or StrictMode re-mount — every event fires N handlers, N doorbell pulls, N× data cost; or channels silently dead after ~1h because the client that owns them cannot refresh the realtime token; or events for a signed-out user mutating the next user's Dexie.
+**Rule (the reserved S22 slot from sync_architecture_v2 Appendix H, now implemented in `SyncReader`):**
+1. **Channels live on the MAIN `supabase` client only.** supabase-js realtime gets its bearer via `realtime.setAuth` driven by the auth client's `onAuthStateChange`; `supabaseSync` has a throwing `.auth` Proxy (Pattern S16) so channels created on it die silently at first token expiry.
+2. **Subscribe on login, AFTER identity is resolved** — SyncReader subscribes inside `initialPull` once the `user_club_id` claim is decoded (channel names + filters need the clubId). Subscribing before the pull, not after, closes the event gap; mid-pull events just re-enqueue their table (dedup Set + idempotent bulkPut).
+3. **Teardown-before-register** at the top of `subscribeRealtime` — a deferred retry re-entering with the same generation must not stack a second channel set. Same discipline as `deferForRefresh`'s listener handling.
+4. **Teardown on logout** — `stop()` removes every channel, clears the pending-pull queue, drops the cached clubId. The generation bump makes in-flight event handlers bail (`myGen !== readerGeneration` guard INSIDE the event closure).
+5. **Handlers are doorbells, not writers** — they call `requestPull(table)`; they never `bulkPut(payload.new)`. Direct payload apply needs the full LWW + outbox-guard machinery (Chunk 5.3); the doorbell reuses the already-proven cursor pull path.
+6. Channel grouping is §7.2's 4-per-club (`operations`/`catalog`/`commerce`/`scheduling`) — per-table channels would 2.25× the concurrent-channel budget for nothing.
+**Reference implementations:** `SyncReader.subscribeRealtime/teardownRealtime` (grouped, generation-guarded), `realtimeTopups.ts`/`realtimeBookings.ts` (single-channel precedent with idempotent re-subscribe).
+**Files affected:** `src/db/syncReader.ts`.
+
 ### Pattern S10 — HMAC / token / secret comparisons MUST use `crypto.timingSafeEqual` (#94, 20 Jun 2026)
 **Symptom signature:** No user-visible symptom. Code review or external security report flags a webhook / signed-token verifier that uses `===` / `!==` to compare a computed HMAC against a header value.
 **Root cause:** JS string and `Buffer` equality short-circuit on first byte mismatch, so the wall-clock duration leaks how many leading bytes matched. With enough samples an attacker can recover the signature byte-by-byte. Practical exploitability is low over the public internet against HMAC-SHA256, but the fix is one line and the cost of getting this wrong on a payments surface is high.

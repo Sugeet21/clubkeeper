@@ -524,12 +524,6 @@ function reqBool(v: unknown, field: string): boolean {
   return v
 }
 
-function optStr(v: unknown): string | undefined {
-  if (v === null || v === undefined) return undefined
-  if (typeof v === 'string') return v
-  return undefined
-}
-
 /** Validates a string against a closed union. Fail-loud on anything else —
  *  a value outside the union means the server row was written by something
  *  other than this app's mappers, which needs to be SEEN. */

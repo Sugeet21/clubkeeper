@@ -35,6 +35,8 @@ import { BookingRealtimeBridge } from './components/BookingRealtimeBridge'
 import { SyncReaderBoot } from './components/SyncReaderBoot'
 // Phase C Chunk 3 — sync wrapper smoke-test page, DEV-only route.
 import TestOutbox from './pages/__dev__/TestOutbox'
+// Phase C Chunk 5.2b — SyncReader runtime-proof page, DEV-only route.
+import TestSyncReader from './pages/__dev__/TestSyncReader'
 
 const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback', '/auth/login']
 // /c/ and /poster/ are public but use path prefixes — checked via startsWith in AppLayout
@@ -207,6 +209,10 @@ function AppLayout() {
                 import.meta.env.DEV so production never serves this. */}
             {import.meta.env.DEV && (
               <Route path="/__dev/test-outbox" element={<TestOutbox />} />
+            )}
+            {/* Phase C Chunk 5.2b — DEV-only SyncReader runtime proof. */}
+            {import.meta.env.DEV && (
+              <Route path="/__dev/test-sync-reader" element={<TestSyncReader />} />
             )}
           </Route>
         </Routes>

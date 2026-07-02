@@ -264,7 +264,7 @@ export interface OutboxRow {
   table: SyncTableName      // Supabase snake_case name; pushOne passes directly to .from()
   op: 'insert' | 'update' | 'soft_delete'
   rowId: string             // the data row's UUID
-  payload: unknown          // for insert/update: full row body; for soft_delete: { deleted_at }
+  payload: unknown          // for insert/update: full row body; for soft_delete: { deletedAt } (epoch ms, #117)
   attempts: number
   lastError: string | null
   lastAttemptAt: number | null

@@ -1326,10 +1326,10 @@ Last updated: 16 Jun 2026
 
 The multi-device sync write path. Dexie wrappers (Chunk 3) write data + outbox atomically; the SyncRunner (Chunk 4) drains outbox rows to Supabase. The runner is the only thing in the codebase that calls `supabaseSync.from(<synced-table>)` for owner-data writes (Chunk 4.3 — was `supabase.from(...)` until the navigator-lock deadlock fix forced a dedicated client; Pattern S16).
 
-**Three-client rule (Chunk 4.3, Pattern S16):**
-- `supabase` (`src/lib/supabase.ts`) — owner AUTH + reads. Default storageKey. Used by authStore, sign-in/out, every owner-side read.
+**Three-client rule (Chunk 4.3 → promoted Chunk 5.0, Pattern S16):**
+- `supabase` (`src/lib/supabase.ts`) — owner AUTH + non-synced reads + ALL REALTIME (including SyncReader's 4 club channels — supabaseSync has no `.auth` and cannot drive realtime token refresh). Default storageKey.
 - `supabasePublic` (`src/lib/supabasePublic.ts`) — anon player-hub RPCs only. Distinct `storageKey: 'sb-clubkeeper-public'`. Pattern A7.
-- `supabaseSync` (`src/lib/supabaseSync.ts`) — owner data-WRITE only. Lock-free via `accessToken` option. Used ONLY by SyncRunner. No `.auth` (Proxy throws), no realtime, no reads.
+- `supabaseSync` (`src/lib/supabaseSync.ts`) — owner DATA PLANE (SyncRunner writes + SyncReader pulls). Lock-free via `accessToken` option. Imported ONLY by `syncRunner.ts` + `syncReader.ts`. No `.auth` (Proxy throws), no realtime.
 
 Files in scope:
 - `src/types/index.ts` — `SyncTableName` union (9 snake_case names) + `OutboxRow` interface with `stuck?: boolean` dead-letter marker.
@@ -1337,7 +1337,11 @@ Files in scope:
 - `src/db/syncWrappers.ts` — `syncedCreate / syncedUpdate / syncedSoftDelete / syncedCreateBatch`. Each opens its OWN Dexie 'rw' tx over `(dataTable + _outbox)` (Pattern D7). Calls `scheduleDrain()` AFTER tx commit. Never called from inside another `db.transaction()`.
 - `src/db/scheduleDrain.ts` — one-line re-export from syncRunner. Indirection layer so future queue-coalescing drops in here without touching wrappers.
 - `src/db/syncRunner.ts` — the engine. `start() / stop() / scheduleDrain() / drainOnce() / pushOne()`. Module-level `syncRunner` singleton. Per-row 15s watchdog + `drainGeneration` counter (Pattern S15).
-- `src/db/syncPayloadMapper.ts` — Pattern S14. Per-table strict allowlist converting camelCase Dexie row → snake_case Supabase row. Only `customers` and `canteen_sales` wired; other 7 tables THROW until Chunk 7 maps them.
+- `src/db/syncPayloadMapper.ts` — Pattern S14. Per-table strict allowlist converting camelCase Dexie row → snake_case Supabase row. ALL 9 tables wired as of Chunk 5.2b (2 Jul 2026). Paired 1:1 with `syncReadMapper.ts` — never add to one without the other (one-way sync = silent divergence).
+- `src/db/syncReadMapper.ts` — the pull-side inverse (Chunk 5.2b). ALL 9 tables. Contract (#117): every `*At` lands as camelCase epoch ms (`updatedAt`/`deletedAt` included); raw snake_case `updated_at`/`deleted_at` NEVER persist on a Dexie row; jsonb (items, paymentBreakdown, tableMoves, rateCard, config) always real objects, never JSON strings. Fail-loud helpers: `reqStr/reqNum/reqBool/reqEnum/optJsonObject/reqArray/isoToMs/parseBreakdown`.
+- `src/db/syncReader.ts` — serialized pull queue (insertion-ordered `pendingPulls` Set + single `runPullWorker` latch + S15 generation guards). Per-table cursor column via `cursorColumnFor()` — `created_at` for `wallet_transactions` (append-only, NO updated_at column; ordering on it would 400), `updated_at` for the other 8. Realtime: 4 grouped channels per §7.2 (`club:<id>:operations|catalog|commerce|scheduling`) on the MAIN `supabase` client, subscribed inside `initialPull` after the club_id claim resolves (teardown-before-register), torn down in `stop()` (Pattern S22). Handlers are DOORBELLS — `requestPull(table)` re-runs the cursor pull; they never apply `payload.new` directly (direct-apply LWW = Chunk 5.3, owner decision 2 Jul 2026).
+- `src/pages/__dev__/TestSyncReader.tsx` — DEV-only `/__dev/test-sync-reader` runtime-proof page (reset cursors / force pull / dump synced-table row shapes).
+- `supabase/migrations/20260702_sync_client_fields.sql` — sessions.config + bookings.config jsonb, canteen_items.stock_enabled, wallet_transactions coin columns + reference_id uuid→text. UNTIL APPLIED: read mappers THROW on sessions/bookings/canteen_items rows (fail-loud; empty tables no-op) and coin-row pushes 400.
 - `src/db/syncClubId.ts` — Lock-free token reader + `user_club_id` JWT claim decoder (Pattern S16). Exports `getOwnerClubIdFromJwt`, `readAccessTokenLockFree` (used by supabaseSync's `accessToken` getter), `_resetClubIdCache` (called from authStore.signOut).
 - `src/lib/supabaseSync.ts` — NEW (Chunk 4.3, Pattern S16). REST-only Supabase client for the drain. `createClient(url, key, { accessToken: async () => readAccessTokenLockFree() })`. Bypasses GoTrueClient entirely so it never acquires `lock:${storageKey}`. WRITE-ONLY, imported only by `syncRunner.ts`.
 - `src/store/authStore.ts` — sign-out calls `syncRunner.stop()` + `_resetClubIdCache()` + `_resetClubSyncSentinel()` BEFORE `closeDb()` (Pattern S15).
@@ -1355,13 +1359,15 @@ Invariants:
 - Dead-letter threshold = 10 attempts. When `attempts + 1 >= 10`, the row gets `stuck: true` and is SKIPPED on subsequent drains. Stuck rows are surfaced via the DEV TestOutbox "Show dead-letter" button until Chunk 6 ships a sync-indicator UI.
 - drainOnce uses streaming `.each()` with a sentinel-throw break (NOT `.filter().limit()`) to avoid stuck-row starvation when ≥50 dead-letter rows accumulate.
 - Backoff: 1s → 60s exponential. Resets to 1s on a successful drain pass. A drain that contains only dead-letter skips is treated as success (backoff resets).
-- `pushOne` on `soft_delete` updates BOTH `deleted_at` AND `updated_at`. Required so Chunk 5's cursor-based pull (`WHERE updated_at > cursor`) sees the deletion on peer devices.
+- `pushOne` on `soft_delete` updates BOTH `deleted_at` AND `updated_at`. Required so Chunk 5's cursor-based pull (`WHERE updated_at > cursor`) sees the deletion on peer devices. `soft_delete` on `wallet_transactions` THROWS (append-only ledger — no deleted_at/updated_at columns; write a reversal row per §4.6).
+- **LWW metadata format (#117, 2 Jul 2026):** on Dexie rows, `updatedAt`/`deletedAt` are camelCase EPOCH MS, stamped by `syncedUpdate`/`syncedSoftDelete` and by the read mappers. ISO conversion happens ONLY at the wire boundary (payload mapper on push, read mapper on pull, pushOne soft-delete branch). NEVER string-compare ISO timestamps across sources — locally-stamped `toISOString()` ("...Z") and PostgREST ("...+00:00") formats are not lexicographically comparable. The Chunk 5.3 LWW handler compares NUMBERS.
+- Realtime channels live on the MAIN `supabase` client ONLY — never on `supabaseSync` (no `.auth` → no `realtime.setAuth` driving → events silently die after ~1h token expiry). Doorbell handlers must generation-guard before `requestPull` (Pattern S22).
 - Idempotency: `upsert({ onConflict: 'id', ignoreDuplicates: false })` for insert/update. Safe to retry forever. Outbox can be replayed from scratch.
 - TestOutbox row ids are real `crypto.randomUUID()` (Chunk 4.2 — Supabase `uuid` columns reject anything else; see Pattern S14 watch-out). Test rows are identified by a `TEST ` prefix on the `name` field (or `items[0].name` for canteen_sales). Cleanup filters by that prefix. With Chunk 4 live the rows DO reach Supabase — manual cleanup there via SQL Editor / Dashboard is the only path back.
 
 Cross-feature ripples:
-- → If a new field is added to any of the 9 Dexie row interfaces and it should sync: ADD the field to its table's mapper in `src/db/syncPayloadMapper.ts`. The allowlist is strict — un-mapped fields are silently DROPPED on push (Pattern S14). Verify by pushing through TestOutbox and confirming the value lands in Supabase.
-- → If a new Dexie synced table is added: extend `SyncTableName` union in `src/types/index.ts`, both maps in `src/db/syncTableMap.ts`, the `DexieSyncTableName` union, the `SYNC_TABLES_PULL_ORDER` array (Chunk 5 will use it), AND add a mapper entry to `src/db/syncPayloadMapper.ts` (otherwise pushOne throws).
+- → If a new field is added to any of the 9 Dexie row interfaces and it should sync: ADD the field to BOTH its table's mapper in `src/db/syncPayloadMapper.ts` AND `src/db/syncReadMapper.ts`. The allowlist is strict — un-mapped fields are silently DROPPED on push and stay undefined on pull (Pattern S14). If the field has no Supabase column, it rides that table's `config` jsonb (sessions/bookings/game_tables) or needs a column migration. Verify by pushing through TestOutbox and pulling through TestSyncReader.
+- → If a new Dexie synced table is added: extend `SyncTableName` union in `src/types/index.ts`, both maps in `src/db/syncTableMap.ts`, the `DexieSyncTableName` union, the `SYNC_TABLES_PULL_ORDER` array, a `CHANNEL_GROUPS` slot in `syncReader.ts` (§7.2 grouping), AND mapper entries in BOTH `syncPayloadMapper.ts` and `syncReadMapper.ts` (otherwise pushOne/pull throw). If the table is append-only (no updated_at), extend `cursorColumnFor()`.
 - → If the OutboxRow shape changes: bump Dexie schema (current v20) — `_outbox` index string lives in `src/db/database.ts`. Also update `buildOutboxRow` in `syncWrappers.ts` so new fields are populated on every queue.
 - → If a queries.ts mutation site is converted from raw `db.X.add/put/update/delete` to a wrapper (Chunk 7): the call MUST move OUT of any surrounding `db.transaction()` block, because the wrapper opens its own tx. If atomic multi-table behavior is required, use `syncedCreateBatch`.
 - → If `clubs.sync_enabled` kill-switch is wired (later chunk): the check goes at the top of `SyncRunner.scheduleDrain()` (or in `SyncRunnerBoot`'s gate) — do not scatter it across wrappers.
@@ -1371,7 +1377,7 @@ Cross-feature ripples:
 - → If a new owner-data WRITE path is added outside SyncRunner (e.g. a direct `.from(<synced-table>).upsert(...)` from queries.ts or a new admin tool): use `supabaseSync`, not `supabase`. Using `supabase` for owner writes risks re-introducing the navigator-lock deadlock under StrictMode / sign-out flips (Pattern S16). For non-synced owner reads / admin RPCs, `supabase` is still correct.
 - → If a NEW Supabase client is created anywhere: it MUST have a distinct `storageKey` AND should prefer the `accessToken` escape hatch if it does owner-data REST writes (avoid spawning a new GoTrueClient unless the file genuinely needs `.auth`). See `src/lib/supabaseSync.ts` for the template.
 
-Last updated: 27 Jun 2026 (Chunk 4.3 — supabaseSync client + self-healing drain runner, owner-verified end-to-end)
+Last updated: 2 Jul 2026 (Chunk 5.2b — all 9 tables mapped bidirectionally, epoch-ms LWW metadata #117, serialized pull queue + realtime doorbell channels, Pattern S22)
 
 ---
 

@@ -2,6 +2,19 @@
 
 ---
 
+## 2 Jul 2026 — Phase C Chunk 5.2b: realtime doorbell + serialized pull queue + reviewer fixes (refs #112, #117)
+
+- **SyncReader realtime integration (Pattern S22, NEW):** 4 grouped channels per §7.2 (`club:<id>:operations|catalog|commerce|scheduling`) on the MAIN `supabase` client (supabaseSync cannot drive realtime — throwing `.auth` Proxy, Pattern S16). Subscribe inside `initialPull` after the club_id claim resolves; teardown-before-register; teardown + queue-clear + clubId-drop in `stop()`. Handlers are DOORBELLS — `requestPull(table)` re-runs the proven cursor pull; no direct `payload.new` apply (owner decision 2 Jul 2026; direct-apply LWW = Chunk 5.3). `CHANNEL_ERROR`/`TIMED_OUT` logged only — polling fallback is Chunk 5.4.
+- **Serialized pull queue:** insertion-ordered `pendingPulls` Set + single `runPullWorker` latch + S15 generation guards. Initial pull and doorbell events share ONE worker so two pulls of the same table can never race the per-table cursor; the Set dedupes event bursts.
+- **Per-table cursor column (`cursorColumnFor`):** `created_at` for `wallet_transactions` (append-only — NO updated_at column; the shipped 5.2 query would have 400'd on it once the table was mapped), `updated_at` for the other 8.
+- **NEW migration `supabase/migrations/20260702_sync_client_fields.sql`** (hand-apply, idempotent): `sessions.config` jsonb, `bookings.config` jsonb, `canteen_items.stock_enabled` boolean, `wallet_transactions.balance_type/coin_delta/rupee_equivalent` + `reference_id` uuid→text. Verification query in the file footer.
+- **NEW DEV page `/__dev/test-sync-reader`** (`src/pages/__dev__/TestSyncReader.tsx` + App.tsx route): reset cursors → force pull → dump synced-table Dexie row shapes; the one-tap surface for the Pending mapper-TRANSFORM runtime proof.
+- **clubkeeper-reviewer (Opus) verdict on the full session diff: REQUEST_CHANGES → all items fixed:** (1) dead `optStr` helper removed (tsc app-config `noUnusedLocals`); (2) mojibake em-dashes in TestOutbox.tsx repaired (introduced by a PowerShell regex pass this session — root-caused to `Get-Content`/`Set-Content` encoding mismatch, avoid for non-ASCII files); (3) stale `{ deleted_at }` comments in `types/index.ts` + `syncWrappers.ts` corrected to `{ deletedAt }`; (4) NEW fail-loud guard — `pushOne` soft_delete on `wallet_transactions` throws (append-only; would otherwise 400 into a silent dead-letter). Reviewer confirmed: round-trips preserve all mapped fields, no concurrent-worker path, no doorbell leak across stop(), no duplicate channels on deferred retry, no residual snake_case Dexie writes.
+- **Issue #118 opened (found during review):** `npm run build`'s `tsc` step is a NO-OP — root tsconfig is solution-style (`files: []` + references) and bare `tsc` without `-b` typechecks nothing. ~15 pre-existing errors accumulated in tsconfig.app.json (some look like real post-v20 string/number comparison bugs). NOT fixed this session (scope discipline) — needs its own triage session.
+- **Files affected:** `src/db/syncReader.ts`, `src/db/syncRunner.ts`, `src/db/syncReadMapper.ts`, `src/types/index.ts`, `src/db/syncWrappers.ts`, `src/App.tsx`, `src/pages/__dev__/TestSyncReader.tsx` (NEW), `src/pages/__dev__/TestOutbox.tsx`, `supabase/migrations/20260702_sync_client_fields.sql` (NEW). Skill: `ripple_effects.md` (Sync section), `bug_patterns.md` (Patterns S17 + S22 added).
+
+---
+
 ## 2 Jul 2026 — Phase C Chunk 5.2b: all 9 synced tables mapped bidirectionally (refs #112)
 
 - **7 new mapper PAIRS** (read in `syncReadMapper.ts` + write in `syncPayloadMapper.ts`, added together per the no-one-way-sync rule): `game_tables`, `sessions`, `session_items`, `canteen_items`, `wallet_transactions`, `stock_purchases`, `bookings`. `npm run build` ran clean after EACH table pair.

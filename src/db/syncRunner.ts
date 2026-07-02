@@ -251,6 +251,14 @@ class SyncRunner {
     }
 
     if (row.op === 'soft_delete') {
+      // wallet_transactions is an APPEND-ONLY ledger with no deleted_at /
+      // updated_at columns — a soft-delete against it would 400 into a
+      // silent dead-letter. Fail loud instead (reviewer flag, Chunk 5.2b).
+      if (row.table === 'wallet_transactions') {
+        throw new Error(
+          'syncRunner: soft_delete on wallet_transactions is forbidden — the ledger is append-only; write a reversal row instead (§4.6)',
+        )
+      }
       // We set updated_at = deleted_at deliberately. The Chunk 5 read path
       // (initial pull + realtime polling fallback) filters incoming rows by
       // `WHERE updated_at > cursor`; without bumping updated_at, peer devices

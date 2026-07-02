@@ -7,7 +7,7 @@
 //
 // What each wrapper does:
 //   1. Opens a single Dexie 'rw' tx over (data table + _outbox).
-//   2. Writes the data row mutation (add / put / update with deleted_at).
+//   2. Writes the data row mutation (add / put / update with deletedAt — epoch ms, #117).
 //   3. Writes one _outbox row recording the operation for the SyncRunner
 //      (Chunk 4) to push to Supabase later.
 //   4. On commit, calls scheduleDrain() to kick the runner (no-op stub in

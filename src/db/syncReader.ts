@@ -1,30 +1,49 @@
 // Phase C Chunk 5 — the read half of multi-device sync.
 //
 // SyncReader pulls existing Supabase rows down to Dexie on sign-in, then
-// (Chunk 5.3+) keeps Dexie current via realtime subscriptions on the main
-// `supabase` client. The drain (SyncRunner) handles the WRITE direction;
-// this file handles READS.
+// keeps Dexie current via realtime subscriptions on the main `supabase`
+// client. The drain (SyncRunner) handles the WRITE direction; this file
+// handles READS.
 //
-// ─── Chunk 5.2 scope ────────────────────────────────────────────────────────
-// Initial pull + resumable compound (updated_at, id) cursor per table.
-// Realtime subscriptions and polling fallback still land in 5.3 / 5.4.
+// ─── Chunk 5.2b scope ───────────────────────────────────────────────────────
+// Initial pull + resumable compound cursor per table + realtime doorbell.
+// All 9 tables are mapped (syncReadMapper). Polling fallback lands in 5.4.
 //
 // The read mapper (src/db/syncReadMapper.ts) is strict-per-table-fail-loud,
-// symmetric with the write mapper. Only customers + canteen_sales are wired
-// today (the two tables the write side also covers); the other 7 throw
-// until Chunk 5.2b designs their bidirectional shape. That means the pull
-// for those 7 tables will surface an error into the console rather than
-// silently corrupting Dexie. drainOnce-style backoff does NOT apply here —
-// an unmapped-table throw is a code bug, not a network transient.
+// symmetric with the write mapper. A mapper throw surfaces an error into
+// the console rather than silently corrupting Dexie. drainOnce-style
+// backoff does NOT apply here — a mapper throw is a code bug (or a missing
+// server migration — see 20260702_sync_client_fields.sql), not a network
+// transient.
 //
-// ─── Lifecycle ──────────────────────────────────────────────────────────────
+// ─── Realtime = doorbell, not a second apply path (owner decision 2 Jul) ────
+// Channels live on the MAIN `supabase` client (supabaseSync has no .auth so
+// it CANNOT drive realtime — Pattern S16 three-client rule). A postgres_
+// changes event does NOT apply payload.new directly; it just enqueues that
+// table into the same serialized pull worker the initial pull uses. That
+// reuses the proven cursor + outbox-guard + mapper path, keeps the cursor
+// consistent for the 5.4 polling fallback, and defers the direct-apply LWW
+// handler to Chunk 5.3. Cost: one extra REST round-trip per event burst
+// (the Set dedupes bursts).
+//
+// §7.2 channel groupings (4 channels per club):
+//   club:<id>:operations  → sessions, session_items
+//   club:<id>:catalog     → game_tables, canteen_items
+//   club:<id>:commerce    → customers, wallet_transactions, canteen_sales
+//   club:<id>:scheduling  → bookings, stock_purchases
+//
+// ─── Lifecycle (Pattern S22) ────────────────────────────────────────────────
 // Owned by <SyncReaderBoot /> in App.tsx. Same gate as SyncRunnerBoot:
 //   dbReady && session && !isPlayerHubRoute(pathname)
+// Channels subscribe inside initialPull (once the club_id claim is known)
+// and tear down in stop() — subscribe on login, teardown on logout. The
+// subscribe path is teardown-before-register so a TOKEN_REFRESHED-deferred
+// retry can never stack duplicate channels.
 //
 // Pattern S15 mirror — the reader has its own generation counter bumped on
-// start() and stop(). initialPull captures the generation at entry and bails
-// after every await if it's moved on. That kills orphan pulls from a prior
-// cycle without waiting for them to complete.
+// start() and stop(). initialPull and the pull worker capture the generation
+// at entry and bail after every await if it's moved on. That kills orphan
+// pulls from a prior cycle without waiting for them to complete.
 //
 // ─── Pull-vs-drain coexistence (§7.3 outbox guard) ──────────────────────────
 // Each page:
@@ -39,12 +58,15 @@
 //   5. Advance the compound cursor to the last row's (updated_at, id).
 //
 // ─── Compound-cursor pagination ─────────────────────────────────────────────
-// `.gt('updated_at', cursor.ts)` alone is unsafe — rows sharing the exact
-// boundary timestamp get skipped on the next page (silent data loss). The
-// compound form `(updated_at > ts) OR (updated_at = ts AND id > cursor.id)`
-// with `ORDER BY (updated_at, id)` guarantees no skipped rows and no
-// duplicates. First page (no cursor yet) omits the .or() and pulls from
-// epoch.
+// `.gt(<col>, cursor.ts)` alone is unsafe — rows sharing the exact boundary
+// timestamp get skipped on the next page (silent data loss). The compound
+// form `(<col> > ts) OR (<col> = ts AND id > cursor.id)` with `ORDER BY
+// (<col>, id)` guarantees no skipped rows and no duplicates. First page (no
+// cursor yet) omits the .or() and pulls from epoch.
+//
+// The cursor COLUMN is per-table: `updated_at` for the 8 mutable tables,
+// `created_at` for wallet_transactions (append-only ledger — it has NO
+// updated_at column; ordering the query on updated_at would 400).
 //
 // ─── Fresh-vs-existing device ───────────────────────────────────────────────
 // bulkPut replaces by primary key. Fresh device = empty Dexie = create.
@@ -63,21 +85,28 @@ import { fromSupabaseRow } from './syncReadMapper'
 import { getOwnerClubIdFromJwt, NoUserClubIdClaimError } from './syncClubId'
 import { getPullCursor, setPullCursor, type PullCursor } from './syncPullCursors'
 import { dexieTableFor, SYNC_TABLES_PULL_ORDER } from './syncTableMap'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import type { OutboxRow, SyncTableName } from '../types'
 
 const PLACEHOLDER_DB_NAME = 'ClubKeeperDB__pending'
 const PAGE_SIZE = 1000
-// Read mapper throws on the 7 unmapped tables. Log once per pull and skip —
-// don't spam the console on every page attempt. Chunk 5.2b will map them.
-const UNMAPPED_TABLES = new Set<SyncTableName>([
-  'game_tables',
-  'sessions',
-  'session_items',
-  'canteen_items',
-  'wallet_transactions',
-  'stock_purchases',
-  'bookings',
-])
+
+/** §7.2 realtime channel groupings — 4 channels per club, covering all 9
+ *  synced tables. Grouped (not per-table) to stay under Supabase concurrent
+ *  channel limits (4 × N devices per club, not 9 × N). */
+const CHANNEL_GROUPS: ReadonlyArray<{ key: string; tables: readonly SyncTableName[] }> = [
+  { key: 'operations', tables: ['sessions', 'session_items'] },
+  { key: 'catalog', tables: ['game_tables', 'canteen_items'] },
+  { key: 'commerce', tables: ['customers', 'wallet_transactions', 'canteen_sales'] },
+  { key: 'scheduling', tables: ['bookings', 'stock_purchases'] },
+]
+
+/** wallet_transactions is append-only (no updated_at column) — its cursor
+ *  walks created_at instead. Everything else cursors on updated_at so
+ *  soft-deletes and edits are seen. */
+function cursorColumnFor(table: SyncTableName): 'updated_at' | 'created_at' {
+  return table === 'wallet_transactions' ? 'created_at' : 'updated_at'
+}
 
 class SyncReader {
   private started = false
@@ -95,6 +124,20 @@ class SyncReader {
   // handle so `deferForRefresh` can enforce the ONE-listener invariant
   // (teardown-before-register) even under a permanently broken hook.
   private tokenRefreshUnsub: (() => void) | null = null
+  // ─── Serialized pull queue (Chunk 5.2b) ─────────────────────────────────
+  // Both the initial pull AND realtime doorbell events funnel through this
+  // insertion-ordered Set + single worker, so two pulls of the same table
+  // can never race the per-table cursor. The Set also dedupes event bursts.
+  private pendingPulls = new Set<SyncTableName>()
+  private pullWorkerActive = false
+  // club_id from the JWT claim — cached once initialPull resolves it so
+  // doorbell re-pulls don't re-decode the token. Cleared in stop().
+  private clubId: string | null = null
+  // ─── Realtime channels (Pattern S22) ────────────────────────────────────
+  // 4 grouped channels on the MAIN `supabase` client (supabaseSync has no
+  // .auth and cannot drive realtime — Pattern S16). Subscribed once the
+  // club_id claim is known; torn down in stop().
+  private channels: RealtimeChannel[] = []
 
   /**
    * Boot the reader. Called by <SyncReaderBoot /> when (dbReady && session)
@@ -135,7 +178,113 @@ class SyncReader {
       this.tokenRefreshUnsub = null
     }
     this.hasLoggedClaimGuidance = false
+    // Pattern S22 — teardown on logout: remove all realtime channels, drop
+    // any queued doorbell pulls, forget the club. The generation bump above
+    // makes an in-flight worker bail at its next post-await guard.
+    this.teardownRealtime()
+    this.pendingPulls.clear()
+    this.clubId = null
     console.log('[syncReader] stop')
+  }
+
+  // ─── Realtime (Pattern S22) ───────────────────────────────────────────────
+
+  /**
+   * Subscribe the 4 §7.2 grouped channels for this club on the MAIN
+   * `supabase` client. Teardown-before-register: a TOKEN_REFRESHED-deferred
+   * initialPull retry re-enters here with the same generation, and stacking
+   * a second set of channels would double every doorbell.
+   *
+   * Handlers are DOORBELLS — they never touch payload.new. They enqueue the
+   * table into the serialized pull worker, which re-runs the proven
+   * cursor + outbox-guard + mapper path (owner decision, 2 Jul 2026).
+   */
+  private subscribeRealtime(clubId: string, myGen: number): void {
+    this.teardownRealtime()
+    if (myGen !== this.readerGeneration) return
+
+    for (const group of CHANNEL_GROUPS) {
+      const channel = supabase.channel(`club:${clubId}:${group.key}`)
+      for (const table of group.tables) {
+        channel.on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table, filter: `club_id=eq.${clubId}` },
+          () => {
+            // Generation guard: events racing a sign-out are dropped.
+            if (myGen !== this.readerGeneration) return
+            this.requestPull(table)
+          },
+        )
+      }
+      channel.subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log(`[syncReader] realtime ${group.key} SUBSCRIBED`)
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          // Polling fallback is Chunk 5.4 — visibility only for now. The
+          // cursor-based initial pull on next sign-in self-heals any gap.
+          console.warn(`[syncReader] realtime ${group.key} ${status}`, err ?? '')
+        }
+      })
+      this.channels.push(channel)
+    }
+  }
+
+  private teardownRealtime(): void {
+    for (const channel of this.channels) {
+      supabase.removeChannel(channel)
+    }
+    this.channels = []
+  }
+
+  // ─── Serialized pull queue ────────────────────────────────────────────────
+
+  /**
+   * Doorbell entry point — enqueue a table and make sure a worker is
+   * draining. Safe to call from realtime handlers at any rate: the Set
+   * dedupes, the worker serializes, bulkPut is idempotent.
+   */
+  private requestPull(table: SyncTableName): void {
+    this.pendingPulls.add(table)
+    void this.runPullWorker(this.readerGeneration).catch((err) => {
+      console.error('[syncReader] pull worker crashed', err)
+    })
+  }
+
+  /**
+   * Drain pendingPulls one table at a time. Only one worker runs at any
+   * moment (pullWorkerActive latch) — a second invocation while active
+   * returns immediately and the live worker picks up the newly-added
+   * tables on its next loop iteration.
+   *
+   * Returns the number of rows applied by THIS invocation (0 if another
+   * worker was already active).
+   */
+  private async runPullWorker(myGen: number): Promise<number> {
+    if (this.pullWorkerActive) return 0
+    this.pullWorkerActive = true
+    let totalApplied = 0
+    try {
+      while (true) {
+        if (myGen !== this.readerGeneration) return totalApplied
+        const clubId = this.clubId
+        if (!clubId) return totalApplied
+        const next = this.pendingPulls.values().next()
+        if (next.done) return totalApplied
+        const table = next.value
+        this.pendingPulls.delete(table)
+        try {
+          totalApplied += await this.pullTable(table, clubId, myGen)
+        } catch (err) {
+          // Do not abort the queue — the other tables can still succeed.
+          // A mapper throw (code bug or missing server migration) needs
+          // visibility, not silent progression.
+          console.error(`[syncReader] pull ${table} failed`, err)
+        }
+      }
+    } finally {
+      this.pullWorkerActive = false
+    }
   }
 
   /**
@@ -181,10 +330,11 @@ class SyncReader {
   }
 
   /**
-   * Iterate all 9 synced tables in dependency-safe order (catalog before
-   * operational — see SYNC_TABLES_PULL_ORDER). For each mapped table, pull
-   * via compound-cursor pagination until the server returns fewer than
-   * PAGE_SIZE rows. Unmapped tables are logged and skipped.
+   * Resolve club_id from the JWT, subscribe realtime (Pattern S22), then
+   * enqueue all 9 synced tables in dependency-safe order (catalog before
+   * operational — see SYNC_TABLES_PULL_ORDER) into the serialized pull
+   * worker and await the drain. Each table pulls via compound-cursor
+   * pagination until the server returns fewer than PAGE_SIZE rows.
    */
   private async initialPull(): Promise<void> {
     const myGen = this.readerGeneration
@@ -229,35 +379,24 @@ class SyncReader {
       return
     }
 
-    let totalRows = 0
-    let mappedTables = 0
-    let skippedTables = 0
+    this.clubId = clubId
+
+    // Subscribe realtime BEFORE the pull so there is no event gap between
+    // "pull finished" and "channels live". Events arriving mid-pull just
+    // re-enqueue their table — the worker dedupes and bulkPut is idempotent.
+    this.subscribeRealtime(clubId, myGen)
 
     for (const table of SYNC_TABLES_PULL_ORDER) {
-      if (UNMAPPED_TABLES.has(table)) {
-        console.log(`[syncReader] pull ${table} — skipped (unmapped, waiting for Chunk 5.2b)`)
-        skippedTables += 1
-        continue
-      }
-
-      try {
-        const rows = await this.pullTable(table, clubId, myGen)
-        if (myGen !== this.readerGeneration) {
-          console.log(`[syncReader] pull ${table} bailed — generation stale`)
-          return
-        }
-        totalRows += rows
-        mappedTables += 1
-      } catch (err) {
-        console.error(`[syncReader] pull ${table} failed`, err)
-        // Do not abort the whole pull — the other tables can still succeed.
-        // A code bug (e.g. mapper throw on a malformed row) needs visibility,
-        // not silent progression, so we keep the error visible.
-      }
+      this.pendingPulls.add(table)
+    }
+    const totalRows = await this.runPullWorker(myGen)
+    if (myGen !== this.readerGeneration) {
+      console.log('[syncReader] initialPull bailed — generation stale during pull')
+      return
     }
 
     console.log(
-      `[syncReader] initialPull complete in ${Date.now() - t0}ms — ${totalRows} rows across ${mappedTables} mapped table(s), ${skippedTables} unmapped skipped`,
+      `[syncReader] initialPull complete in ${Date.now() - t0}ms — ${totalRows} rows across ${SYNC_TABLES_PULL_ORDER.length} tables`,
     )
   }
 
@@ -274,28 +413,31 @@ class SyncReader {
     if (myGen !== this.readerGeneration) return 0
     let totalApplied = 0
 
+    const cursorCol = cursorColumnFor(table)
+
     for (let page = 1; ; page += 1) {
       // ── Build query ─────────────────────────────────────────────────
       // First page: no cursor filter — pull from epoch. Every subsequent
-      // page: compound predicate `(updated_at > ts) OR (updated_at = ts
-      // AND id > cursor.id)` guaranteed by ORDER BY (updated_at, id) plus
-      // the .or() below.
+      // page: compound predicate `(<col> > ts) OR (<col> = ts AND id >
+      // cursor.id)` guaranteed by ORDER BY (<col>, id) plus the .or()
+      // below. <col> is updated_at except for the append-only
+      // wallet_transactions (created_at — see cursorColumnFor).
       let q = supabaseSync
         .from(table)
         .select('*')
         .eq('club_id', clubId)
-        .order('updated_at', { ascending: true })
+        .order(cursorCol, { ascending: true })
         .order('id', { ascending: true })
         .limit(PAGE_SIZE)
 
       if (cursor) {
         // PostgREST .or() operators:
-        //   updated_at.gt.<ts>  → updated_at > ts
-        //   and(updated_at.eq.<ts>,id.gt.<id>) → tie-break on shared ts
+        //   <col>.gt.<ts>  → <col> > ts
+        //   and(<col>.eq.<ts>,id.gt.<id>) → tie-break on shared ts
         // Combined with the double .order() above, this gives a stable,
         // gap-free, dup-free cursor walk.
         q = q.or(
-          `updated_at.gt.${cursor.ts},and(updated_at.eq.${cursor.ts},id.gt.${cursor.id})`,
+          `${cursorCol}.gt.${cursor.ts},and(${cursorCol}.eq.${cursor.ts},id.gt.${cursor.id})`,
         )
       }
 
@@ -364,11 +506,11 @@ class SyncReader {
       // Using the RAW last row keeps the cursor advancing regardless of
       // how many rows survived the filter this page.
       const lastRaw = data[data.length - 1] as Record<string, unknown>
-      const lastTs = typeof lastRaw.updated_at === 'string' ? lastRaw.updated_at : null
+      const lastTs = typeof lastRaw[cursorCol] === 'string' ? (lastRaw[cursorCol] as string) : null
       const lastId = typeof lastRaw.id === 'string' ? lastRaw.id : null
       if (!lastTs || !lastId) {
         console.error(
-          `[syncReader] pull ${table} — page ${page} last row missing updated_at or id; aborting cursor advance`,
+          `[syncReader] pull ${table} — page ${page} last row missing ${cursorCol} or id; aborting cursor advance`,
         )
         break
       }
