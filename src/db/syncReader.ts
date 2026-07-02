@@ -5,9 +5,10 @@
 // client. The drain (SyncRunner) handles the WRITE direction; this file
 // handles READS.
 //
-// ─── Chunk 5.2b scope ───────────────────────────────────────────────────────
-// Initial pull + resumable compound cursor per table + realtime doorbell.
-// All 9 tables are mapped (syncReadMapper). Polling fallback lands in 5.4.
+// ─── Chunk 5.3 scope ────────────────────────────────────────────────────────
+// Initial pull + resumable compound cursor per table + realtime DIRECT-APPLY
+// LWW handler (§7.3) with doorbell fallback. All 9 tables are mapped
+// (syncReadMapper). Polling fallback lands in 5.4.
 //
 // The read mapper (src/db/syncReadMapper.ts) is strict-per-table-fail-loud,
 // symmetric with the write mapper. A mapper throw surfaces an error into
@@ -16,15 +17,23 @@
 // server migration — see 20260702_sync_client_fields.sql), not a network
 // transient.
 //
-// ─── Realtime = doorbell, not a second apply path (owner decision 2 Jul) ────
+// ─── Realtime = direct-apply LWW, doorbell as fallback (Chunk 5.3) ──────────
 // Channels live on the MAIN `supabase` client (supabaseSync has no .auth so
-// it CANNOT drive realtime — Pattern S16 three-client rule). A postgres_
-// changes event does NOT apply payload.new directly; it just enqueues that
-// table into the same serialized pull worker the initial pull uses. That
-// reuses the proven cursor + outbox-guard + mapper path, keeps the cursor
-// consistent for the 5.4 polling fallback, and defers the direct-apply LWW
-// handler to Chunk 5.3. Cost: one extra REST round-trip per event burst
-// (the Set dedupes bursts).
+// it CANNOT drive realtime — Pattern S16 three-client rule). An INSERT/UPDATE
+// postgres_changes event applies payload.new directly to Dexie through the
+// full §7.3 machinery: outbox-guard → numeric epoch-ms LWW compare (Pattern
+// S17) → tie-break (equal ms + different updated_by → accept remote) →
+// syncReadMapper → put → monotonic cursor advance. Events the direct path
+// can't safely apply (DELETE — payload carries only the PK; malformed or
+// unparseable payloads) fall back to the 5.2b doorbell: re-enqueue a cursor
+// pull of that table.
+//
+// Both paths run through ONE serialized job queue (single worker) so a
+// direct apply can never race a cursor pull on `settings.pullCursors`, and
+// two pulls of the same table can never race each other. Direct apply also
+// fixes a 5.2b gap: a stale-stamped row (offline edit pushed late, its
+// updated_at BEHIND our cursor) was invisible to the doorbell's cursor pull;
+// the direct path applies it regardless of cursor position.
 //
 // §7.2 channel groupings (4 channels per club):
 //   club:<id>:operations  → sessions, session_items
@@ -81,11 +90,12 @@
 import { db } from './database'
 import { supabase } from '../lib/supabase'
 import { supabaseSync } from '../lib/supabaseSync'
+import { useAuthStore } from '../store/authStore'
 import { fromSupabaseRow } from './syncReadMapper'
 import { getOwnerClubIdFromJwt, NoUserClubIdClaimError } from './syncClubId'
 import { getPullCursor, setPullCursor, type PullCursor } from './syncPullCursors'
 import { dexieTableFor, SYNC_TABLES_PULL_ORDER } from './syncTableMap'
-import type { RealtimeChannel } from '@supabase/supabase-js'
+import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js'
 import type { OutboxRow, SyncTableName } from '../types'
 
 const PLACEHOLDER_DB_NAME = 'ClubKeeperDB__pending'
@@ -108,6 +118,17 @@ function cursorColumnFor(table: SyncTableName): 'updated_at' | 'created_at' {
   return table === 'wallet_transactions' ? 'created_at' : 'updated_at'
 }
 
+/** Wire shape of a realtime postgres_changes payload (rows are opaque —
+ *  the read mapper validates per-column). */
+type RealtimeRowPayload = RealtimePostgresChangesPayload<Record<string, unknown>>
+
+/** One unit of work for the serialized worker (Chunk 5.3). `pull` re-runs
+ *  the compound-cursor pull for a table (initial pull + doorbell fallback);
+ *  `apply` is a single realtime event applied directly under §7.3 LWW. */
+type ReaderJob =
+  | { kind: 'pull'; table: SyncTableName }
+  | { kind: 'apply'; table: SyncTableName; payload: RealtimeRowPayload }
+
 class SyncReader {
   private started = false
   // Pattern S15 — bumped on every start()/stop(). initialPull captures at
@@ -124,11 +145,14 @@ class SyncReader {
   // handle so `deferForRefresh` can enforce the ONE-listener invariant
   // (teardown-before-register) even under a permanently broken hook.
   private tokenRefreshUnsub: (() => void) | null = null
-  // ─── Serialized pull queue (Chunk 5.2b) ─────────────────────────────────
-  // Both the initial pull AND realtime doorbell events funnel through this
-  // insertion-ordered Set + single worker, so two pulls of the same table
-  // can never race the per-table cursor. The Set also dedupes event bursts.
-  private pendingPulls = new Set<SyncTableName>()
+  // ─── Serialized job queue (Chunk 5.2b Set → Chunk 5.3 FIFO) ─────────────
+  // The initial pull, doorbell-fallback pulls AND realtime direct-apply
+  // events all funnel through this FIFO + single worker, so an apply can
+  // never race a pull on the per-table cursor. Pull jobs stay deduped (one
+  // queued pull per table, tracked in queuedPullTables); apply jobs are one
+  // per event — ordering across events of one table is delivery order.
+  private jobQueue: ReaderJob[] = []
+  private queuedPullTables = new Set<SyncTableName>()
   private pullWorkerActive = false
   // club_id from the JWT claim — cached once initialPull resolves it so
   // doorbell re-pulls don't re-decode the token. Cleared in stop().
@@ -143,7 +167,8 @@ class SyncReader {
    * Boot the reader. Called by <SyncReaderBoot /> when (dbReady && session)
    * lands AND we're not on a player-hub route.
    *
-   * Chunk 5.2: kicks off initialPull. Realtime + polling land in 5.3 / 5.4.
+   * Kicks off initialPull (which also subscribes realtime). Polling
+   * fallback lands in 5.4.
    */
   start(): void {
     if (this.started) return
@@ -155,7 +180,7 @@ class SyncReader {
 
     this.started = true
     this.readerGeneration += 1
-    console.log('[syncReader] start (Chunk 5.2 — initialPull kicking off)')
+    console.log('[syncReader] start (Chunk 5.3 — initialPull kicking off)')
 
     // `void` dispatch: initialPull returns a Promise but we can't await here
     // (start() is sync so React's effect cleanup can call stop() promptly).
@@ -179,10 +204,12 @@ class SyncReader {
     }
     this.hasLoggedClaimGuidance = false
     // Pattern S22 — teardown on logout: remove all realtime channels, drop
-    // any queued doorbell pulls, forget the club. The generation bump above
-    // makes an in-flight worker bail at its next post-await guard.
+    // any queued jobs (pulls AND applies — events for a signed-out user must
+    // never touch the next user's Dexie), forget the club. The generation
+    // bump above makes an in-flight worker bail at its next post-await guard.
     this.teardownRealtime()
-    this.pendingPulls.clear()
+    this.jobQueue = []
+    this.queuedPullTables.clear()
     this.clubId = null
     console.log('[syncReader] stop')
   }
@@ -195,9 +222,9 @@ class SyncReader {
    * initialPull retry re-enters here with the same generation, and stacking
    * a second set of channels would double every doorbell.
    *
-   * Handlers are DOORBELLS — they never touch payload.new. They enqueue the
-   * table into the serialized pull worker, which re-runs the proven
-   * cursor + outbox-guard + mapper path (owner decision, 2 Jul 2026).
+   * Handlers enqueue the event into the serialized worker as an `apply`
+   * job — the worker runs the §7.3 direct-apply LWW path (Chunk 5.3) and
+   * falls back to a doorbell pull for events it can't safely apply.
    */
   private subscribeRealtime(clubId: string, myGen: number): void {
     this.teardownRealtime()
@@ -209,10 +236,10 @@ class SyncReader {
         channel.on(
           'postgres_changes',
           { event: '*', schema: 'public', table, filter: `club_id=eq.${clubId}` },
-          () => {
+          (payload: RealtimeRowPayload) => {
             // Generation guard: events racing a sign-out are dropped.
             if (myGen !== this.readerGeneration) return
-            this.requestPull(table)
+            this.enqueueApply(table, payload)
           },
         )
       }
@@ -237,25 +264,46 @@ class SyncReader {
     this.channels = []
   }
 
-  // ─── Serialized pull queue ────────────────────────────────────────────────
+  // ─── Serialized job queue ─────────────────────────────────────────────────
 
   /**
-   * Doorbell entry point — enqueue a table and make sure a worker is
-   * draining. Safe to call from realtime handlers at any rate: the Set
-   * dedupes, the worker serializes, bulkPut is idempotent.
+   * Doorbell entry point — enqueue a cursor pull for a table (deduped: at
+   * most one queued pull per table) and make sure a worker is draining.
+   * Safe to call at any rate: the dedup Set caps the queue, the worker
+   * serializes, bulkPut is idempotent.
    */
   private requestPull(table: SyncTableName): void {
-    this.pendingPulls.add(table)
+    this.enqueuePull(table)
+    this.kickWorker()
+  }
+
+  /** Queue a pull job WITHOUT kicking the worker (initialPull awaits the
+   *  worker itself and must not have a void-dispatched twin steal the
+   *  pullWorkerActive latch first). */
+  private enqueuePull(table: SyncTableName): void {
+    if (this.queuedPullTables.has(table)) return
+    this.queuedPullTables.add(table)
+    this.jobQueue.push({ kind: 'pull', table })
+  }
+
+  /** Realtime entry point — every event is one apply job (no dedup; each
+   *  event carries a distinct row version). */
+  private enqueueApply(table: SyncTableName, payload: RealtimeRowPayload): void {
+    this.jobQueue.push({ kind: 'apply', table, payload })
+    this.kickWorker()
+  }
+
+  private kickWorker(): void {
     void this.runPullWorker(this.readerGeneration).catch((err) => {
       console.error('[syncReader] pull worker crashed', err)
     })
   }
 
   /**
-   * Drain pendingPulls one table at a time. Only one worker runs at any
+   * Drain the job queue one job at a time. Only one worker runs at any
    * moment (pullWorkerActive latch) — a second invocation while active
    * returns immediately and the live worker picks up the newly-added
-   * tables on its next loop iteration.
+   * jobs on its next loop iteration.
    *
    * Returns the number of rows applied by THIS invocation (0 if another
    * worker was already active).
@@ -269,22 +317,136 @@ class SyncReader {
         if (myGen !== this.readerGeneration) return totalApplied
         const clubId = this.clubId
         if (!clubId) return totalApplied
-        const next = this.pendingPulls.values().next()
-        if (next.done) return totalApplied
-        const table = next.value
-        this.pendingPulls.delete(table)
+        const job = this.jobQueue.shift()
+        if (!job) return totalApplied
+        if (job.kind === 'pull') this.queuedPullTables.delete(job.table)
         try {
-          totalApplied += await this.pullTable(table, clubId, myGen)
+          totalApplied +=
+            job.kind === 'pull'
+              ? await this.pullTable(job.table, clubId, myGen)
+              : await this.applyEvent(job.table, job.payload, myGen)
         } catch (err) {
-          // Do not abort the queue — the other tables can still succeed.
+          // Do not abort the queue — the other jobs can still succeed.
           // A mapper throw (code bug or missing server migration) needs
           // visibility, not silent progression.
-          console.error(`[syncReader] pull ${table} failed`, err)
+          console.error(`[syncReader] ${job.kind} ${job.table} failed`, err)
         }
       }
     } finally {
       this.pullWorkerActive = false
     }
+  }
+
+  // ─── Direct-apply LWW (Chunk 5.3, §7.3) ──────────────────────────────────
+
+  /**
+   * Apply one realtime event directly to Dexie. Steps:
+   *   1. Safety triage — DELETE (payload carries only the PK; the app never
+   *      hard-deletes synced rows) and malformed/unparseable payloads fall
+   *      back to the doorbell pull.
+   *   2. Outbox-guard — a pending local write on this row wins locally; the
+   *      drain pushes it and the server LWW trigger arbitrates.
+   *   3. LWW compare as NUMBERS (Pattern S17): remote wire ISO → Date.parse;
+   *      local Dexie `updatedAt` is already epoch ms. Missing local
+   *      `updatedAt` compares as 0 (any stamped remote wins — mirrors the
+   *      server trigger's NULL semantics). Tie-break per §7.3: equal ms +
+   *      `updated_by !== currentUserId` → accept remote. NOTE the actual
+   *      semantics today: our push mapper never sends updated_by, so the
+   *      server column is always NULL and equal-ms ALWAYS yields to remote
+   *      (server-authoritative; the server LWW trigger owns true ties). A
+   *      self-echo at equal ms therefore does one idempotent re-put —
+   *      harmless. If push ever starts populating updated_by, this branch
+   *      becomes a real self-vs-peer discriminator; re-verify then.
+   *   4. Map (fail-loud) + put.
+   *   5. Cursor advance — only forward (numeric compare), and NEVER from a
+   *      null cursor: null means this table's epoch pull hasn't recorded
+   *      history yet, and seeding the cursor from one event would truncate
+   *      that pull into silent data loss.
+   *
+   * Returns rows applied (0 or 1). Throws only via fromSupabaseRow (caught
+   * by the worker's per-job catch — same fail-loud contract as pulls).
+   */
+  private async applyEvent(
+    table: SyncTableName,
+    payload: RealtimeRowPayload,
+    myGen: number,
+  ): Promise<number> {
+    const eventType = payload.eventType
+
+    if (eventType === 'DELETE') {
+      // Known 5.2b limitation carried forward: a cursor pull cannot see a
+      // hard-deleted row either, so the local copy survives until the next
+      // epoch pull. Acceptable — hard deletes only happen via out-of-band
+      // SQL cleanup (the app soft-deletes, which arrives as UPDATE).
+      console.warn(`[syncReader] realtime ${table}/DELETE — direct apply unsafe, doorbell fallback`)
+      this.requestPull(table)
+      return 0
+    }
+
+    const newRow = payload.new as Record<string, unknown>
+    const id = typeof newRow.id === 'string' ? newRow.id : null
+    const cursorCol = cursorColumnFor(table)
+    const rawTs = typeof newRow[cursorCol] === 'string' ? (newRow[cursorCol] as string) : null
+    const remoteMs = rawTs !== null ? Date.parse(rawTs) : NaN
+
+    if (!id || Number.isNaN(remoteMs)) {
+      console.warn(
+        `[syncReader] realtime ${table}/${eventType} — payload missing id or ${cursorCol}, doorbell fallback`,
+      )
+      this.requestPull(table)
+      return 0
+    }
+
+    // ── Outbox-guard (§7.3) ─────────────────────────────────────────────
+    const pending = await db._outbox
+      .where('table')
+      .equals(table)
+      .and((row: OutboxRow) => row.rowId === id)
+      .first()
+    if (myGen !== this.readerGeneration) return 0
+    if (pending) {
+      console.log(`[syncReader] realtime ${table}/${eventType} ${id} — skipped (pending outbox write)`)
+      return 0
+    }
+
+    // ── LWW compare — numbers only (Pattern S17) ────────────────────────
+    const dexieTable = dexieTableFor(table)
+    const dbAny = db as unknown as Record<
+      string,
+      { get: (id: string) => Promise<Record<string, unknown> | undefined>; put: (row: unknown) => Promise<unknown> }
+    >
+    const local = await dbAny[dexieTable].get(id)
+    if (myGen !== this.readerGeneration) return 0
+
+    if (local) {
+      const localMs = typeof local.updatedAt === 'number' ? local.updatedAt : 0
+      const currentUserId = useAuthStore.getState().session?.user?.id ?? null
+      const tieAcceptRemote = remoteMs === localMs && newRow.updated_by !== currentUserId
+      if (!(remoteMs > localMs || tieAcceptRemote)) {
+        console.log(
+          `[syncReader] realtime ${table}/${eventType} ${id} — skipped (local ${localMs} newer than remote ${remoteMs})`,
+        )
+        return 0
+      }
+    }
+
+    // ── Map (fail-loud) + apply ─────────────────────────────────────────
+    const mapped = fromSupabaseRow(table, newRow)
+    await dbAny[dexieTable].put(mapped)
+    if (myGen !== this.readerGeneration) return 1
+
+    // ── Monotonic cursor advance ────────────────────────────────────────
+    const current = await getPullCursor(table)
+    if (myGen !== this.readerGeneration) return 1
+    if (current) {
+      const currentMs = Date.parse(current.ts)
+      if (Number.isNaN(currentMs) || remoteMs > currentMs) {
+        await setPullCursor(table, { ts: rawTs as string, id })
+      }
+    }
+
+    console.log(`[syncReader] realtime ${table}/${eventType} ${id} — applied (remote ${remoteMs})`)
+    return 1
   }
 
   /**
@@ -386,8 +548,12 @@ class SyncReader {
     // re-enqueue their table — the worker dedupes and bulkPut is idempotent.
     this.subscribeRealtime(clubId, myGen)
 
+    // Enqueue WITHOUT kicking — subscribeRealtime → this loop →
+    // runPullWorker is one synchronous sequence, so no event handler can
+    // steal the worker latch in between; initialPull's own await gets the
+    // row count for the completion log.
     for (const table of SYNC_TABLES_PULL_ORDER) {
-      this.pendingPulls.add(table)
+      this.enqueuePull(table)
     }
     const totalRows = await this.runPullWorker(myGen)
     if (myGen !== this.readerGeneration) {

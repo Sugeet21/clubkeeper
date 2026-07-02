@@ -50,6 +50,19 @@ export class NoUserClubIdClaimError extends Error {
  * @throws Error if there's no signed-in session, or the JWT has no claim.
  */
 export async function getOwnerClubIdFromJwt(): Promise<string> {
+  // #116 runtime-proof toggle — DEV builds only, stripped from prod by the
+  // import.meta.env.DEV guard. Simulates a broken custom-access-token hook
+  // (JWT minted without user_club_id) so SyncReader's deferForRefresh
+  // single-fire path can be exercised repeatably from the console:
+  //   localStorage.setItem('__force_no_claim__', '1')  → reload
+  //   localStorage.removeItem('__force_no_claim__')    → refreshSession()
+  // Checked BEFORE the cache so a cached clubId can't mask the toggle.
+  if (import.meta.env.DEV && localStorage.getItem('__force_no_claim__') === '1') {
+    throw new NoUserClubIdClaimError(
+      'DEV __force_no_claim__ toggle is set — simulating a JWT with no user_club_id claim (#116 test plan). localStorage.removeItem("__force_no_claim__") to restore.',
+    )
+  }
+
   const token = readAccessTokenLockFree()
   if (!token) {
     throw new Error('getOwnerClubIdFromJwt: no signed-in session (no access_token in memory or storage)')

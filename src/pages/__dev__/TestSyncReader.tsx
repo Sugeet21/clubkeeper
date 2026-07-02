@@ -62,6 +62,53 @@ export default function TestSyncReader() {
     }
   }
 
+  // ── Chunk 5.3 LWW conflict-proof helpers ──────────────────────────────
+  // Flow (SQL runs in the Supabase SQL editor; watch console for
+  // [syncReader] realtime lines):
+  //   1. SQL INSERT a 'TEST LWW' game_table → INSERT event → direct-apply
+  //      creates the Dexie row ("applied" log).
+  //   2. "Bump TEST LWW +1h" — raw local updatedAt = now + 1h (raw update,
+  //      NOT syncedUpdate: no outbox row, we're testing LWW not the guard).
+  //   3. SQL UPDATE with updated_at = now() (OLDER than local) → event →
+  //      "skipped (local ... newer ...)" and the local name survives.
+  //   4. SQL UPDATE with updated_at = now() + interval '2 hours' (NEWER) →
+  //      event → "applied" and the Dexie name changes.
+  //   5. SQL DELETE + "Clean TEST LWW (local)" — DELETE event logs the
+  //      doorbell-fallback warn (that branch proven too).
+  const bumpLwwRow = async () => {
+    try {
+      const row = await db.gameTables.filter((t) => t.name?.startsWith('TEST LWW') ?? false).first()
+      if (!row || !row.id) {
+        log('bumpLwwRow', false, {
+          hint: 'No local TEST LWW row. Run this in the SQL editor first and wait for the realtime "applied" console line:',
+          sql: "insert into public.game_tables (id, club_id, name, table_type, hourly_rate) values (gen_random_uuid(), (select id from public.clubs limit 1), 'TEST LWW', 'pool', 100);",
+        })
+        return
+      }
+      const bumped = Date.now() + 60 * 60 * 1000
+      await db.gameTables.update(row.id, { updatedAt: bumped })
+      log('bumpLwwRow', true, {
+        id: row.id,
+        name: row.name,
+        localUpdatedAt: bumped,
+        step3_stale_sql: `update public.game_tables set name = 'TEST LWW STALE', updated_at = now() where id = '${row.id}';`,
+        step4_newer_sql: `update public.game_tables set name = 'TEST LWW NEWER', updated_at = now() + interval '2 hours' where id = '${row.id}';`,
+        step5_cleanup_sql: `delete from public.game_tables where name like 'TEST LWW%';`,
+      })
+    } catch (e) {
+      log('bumpLwwRow', false, String(e))
+    }
+  }
+
+  const cleanLwwLocal = async () => {
+    try {
+      const n = await db.gameTables.filter((t) => t.name?.startsWith('TEST LWW') ?? false).delete()
+      log('cleanLwwLocal', true, `${n} local TEST LWW row(s) deleted from Dexie`)
+    } catch (e) {
+      log('cleanLwwLocal', false, String(e))
+    }
+  }
+
   // The runtime-proof payload: per synced table, row count + up to
   // DUMP_LIMIT raw Dexie rows (exact stored shape, straight out of
   // IndexedDB via Dexie).
@@ -103,6 +150,12 @@ export default function TestSyncReader() {
           </button>
           <button onClick={dumpTables} className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-sm">
             3. Dump synced tables
+          </button>
+          <button onClick={bumpLwwRow} className="bg-indigo-700 hover:bg-indigo-600 px-3 py-2 rounded text-sm">
+            LWW: bump TEST LWW +1h (logs SQL steps)
+          </button>
+          <button onClick={cleanLwwLocal} className="bg-red-800 hover:bg-red-700 px-3 py-2 rounded text-sm">
+            LWW: clean TEST LWW (local)
           </button>
         </div>
 
