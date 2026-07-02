@@ -16,6 +16,13 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 2 Jul 2026 — Phase C Chunk 5.2b
+
+- **BUG-S17** (#117, fixed 43a1e4c, closed by owner 2 Jul 2026) — LWW metadata stored as raw ISO strings on Dexie rows; local `toISOString()` ("...Z") vs PostgREST ("...+00:00") formats are not string-comparable, so the planned Chunk 5.3 string-compare would silently discard newer peer edits. Fixed by contract shift to camelCase epoch-ms `updatedAt`/`deletedAt` on Dexie, ISO only at the wire. See Pattern S17. — see GitHub
+- **#118** (open) — `npm run build`'s `tsc` step is a no-op (solution-style root tsconfig without `-b`); the typecheck gate is vacuous, ~15 pre-existing errors accumulated in tsconfig.app.json scope, some possibly real post-v20 bugs. Needs its own triage session. — see GitHub
+
+---
+
 ## 24 Jun 2026 — Phase B step 1 fallout
 
 - **BUG-B1** (#107, fixed 8e4619c + 986ace0) — Tapping any table crashed with `DataError: parameter is not a valid key`; then second crash on Start Timer with `Evaluating the object store's key path did not yield a value`. Two-layer ripple from v20 schema flip: route params still coerced via `Number()` (UUID → NaN) AND `.add()` sites still expected `++id` auto-gen. Fix dual-accepted route params at boundary + pre-generated UUIDs at all `.add()` sites for the 4 UUID-flipped tables. See Patterns D12 + R5. — see GitHub

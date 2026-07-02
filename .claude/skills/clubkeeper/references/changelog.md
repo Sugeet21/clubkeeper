@@ -2,6 +2,22 @@
 
 ---
 
+## 2 Jul 2026 — Phase C Chunk 5.2b OWNER-VERIFIED + migrations applied + #117 closed (refs #112)
+
+- **Owner runtime capture (same day as landing):** all 4 realtime channels SUBSCRIBED (`operations`/`catalog`/`commerce`/`scheduling`); targeted SQL update on `customers` caught by the doorbell within 2s (`pull customers — page 1: fetched 1, applied 1, outbox-dropped 0`); pulled `game_tables` row (`TEST 52B Pool`) rendering from Dexie on `/tables` — proves that mapper's TRANSFORM end-to-end.
+- **Both migrations applied + verified on prod by owner:** `20260628_lww_guard.sql` (lww_% trigger query returns full suite) and `20260702_sync_client_fields.sql` (columns verified against live schema). Pending lines deleted.
+- **#117 CLOSED by owner** ("close #117"), `gh issue close` run with verification comment. bug_archive pointer added (BUG-S17).
+- **Residual (new narrowed Pending line):** the `/__dev/test-sync-reader` shape DUMP for `canteen_sales` (items array / paymentBreakdown object / no snake_case keys) and `session_items` was not part of the pasted capture — confirm incidentally during Chunk 5.3 testing. #116 broken-hook TOKEN_REFRESHED proof remains pending (the capture did not include the `__force_no_claim__` toggle test).
+- **Cleanup:** 4 seeded `TEST 52B` rows deleted from Supabase (verified 1/1/1/1). Local Dexie copies may persist on the dev browser — console snippet to remove:
+  ```js
+  const ids = ['fab82788-8ae7-4a6d-be7e-96c1ee5a16c2','b858f6c6-3d02-44c3-8d8a-9ba312eadb51','c6008db1-bd6a-41de-94f7-e6ab8bbbc028','89b270fb-71e1-4a07-9aad-957be149510e']
+  // run in DevTools on localhost:5173 while signed in:
+  // ids[0]=customer, ids[1]=canteenSale, ids[2]=gameTable, ids[3]=sessionItem
+  ```
+  (delete via Application → IndexedDB → ClubKeeperDB_&lt;userId&gt;, or the tables' own delete UIs; `TEST 52B` prefix identifies them.)
+
+---
+
 ## 2 Jul 2026 — Phase C Chunk 5.2b: realtime doorbell + serialized pull queue + reviewer fixes (refs #112, #117)
 
 - **SyncReader realtime integration (Pattern S22, NEW):** 4 grouped channels per §7.2 (`club:<id>:operations|catalog|commerce|scheduling`) on the MAIN `supabase` client (supabaseSync cannot drive realtime — throwing `.auth` Proxy, Pattern S16). Subscribe inside `initialPull` after the club_id claim resolves; teardown-before-register; teardown + queue-clear + clubId-drop in `stop()`. Handlers are DOORBELLS — `requestPull(table)` re-runs the proven cursor pull; no direct `payload.new` apply (owner decision 2 Jul 2026; direct-apply LWW = Chunk 5.3). `CHANNEL_ERROR`/`TIMED_OUT` logged only — polling fallback is Chunk 5.4.
