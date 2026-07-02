@@ -2,6 +2,21 @@
 
 ---
 
+## 3 Jul 2026 — Phase C Chunk 5.3: READ-path direct-apply LWW handler (refs #112, #116) — commit 6a8d2f9
+
+- **Realtime handlers upgraded from doorbell-only to direct-apply (§7.3):** an INSERT/UPDATE `postgres_changes` event now applies `payload.new` straight to Dexie through the full machinery — outbox-guard (pending local write wins; drain + server trigger arbitrate) → numeric epoch-ms LWW compare (Pattern S17; remote wire ISO `Date.parse`d, missing local `updatedAt` compares as 0 mirroring the server trigger's NULL semantics) → §7.3 tie-break (equal ms yields to remote; NOTE: our push mapper never sends `updated_by` so the server column is always NULL and the "same-user" branch is currently unreachable — self-echoes at equal ms do one idempotent re-put; if push ever populates `updated_by`, re-verify) → `fromSupabaseRow` (fail-loud) → `put` → monotonic cursor advance.
+- **Cursor-advance safety rules:** only forward (numeric compare of parsed ts), and NEVER from a null cursor — null means the table's epoch pull hasn't recorded history yet; seeding it from one event would truncate the initial pull into silent data loss.
+- **Doorbell kept as fallback** for events the direct path can't safely apply: DELETE (payload carries only the PK; app never hard-deletes synced rows) and malformed/unparseable payloads → `requestPull(table)`. Direct apply also FIXES a 5.2b gap: a stale-stamped row (offline edit pushed late, `updated_at` behind our cursor) was invisible to the doorbell's cursor pull; the direct path applies it regardless of cursor position.
+- **Queue refactor:** `pendingPulls: Set` → serialized FIFO `jobQueue: ReaderJob[]` (`pull` jobs deduped via `queuedPullTables` Set; `apply` jobs one per event). ONE worker (`pullWorkerActive` latch, no await between check-and-set) processes both kinds — an apply can never race a pull on `settings.pullCursors`. `stop()` clears the queue (apply jobs for a signed-out user never touch the next user's Dexie). `initialPull` enqueues without kicking so its own `await runPullWorker` keeps the row-count log.
+- **#116 proof plumbing (DEV-gated, permanent — repeatable instead of the issue's temp-edit-and-revert plan):** `localStorage.__force_no_claim__ === '1'` in `getOwnerClubIdFromJwt` throws `NoUserClubIdClaimError` (checked BEFORE the cache so a cached clubId can't mask it); `window.__supabase` bound in `src/lib/supabase.ts` for console `refreshSession()`. Both behind `import.meta.env.DEV`.
+- **TestSyncReader LWW conflict-test buttons:** "bump TEST LWW +1h" (raw `db.gameTables.update` — intentionally NOT `syncedUpdate`, no outbox row, testing LWW not the guard; logs ready-to-paste SQL for the stale/newer/cleanup steps) + "clean TEST LWW (local)".
+- **clubkeeper-reviewer (Opus) verdict: APPROVE, 0 violations.** Concern acted on: tie-break doc-comment rewritten to state actual semantics (equal-ms always yields to remote today). Confirmed: no cursor race (single-thread latch), S15 generation guard after every await in applyEvent, D7 clean, DEV surfaces dead-code-eliminated in prod.
+- **Build gate:** `npm run build` clean per chunk; `npx tsc --noEmit -p tsconfig.app.json` diffed against the #118 baseline (152 error lines captured pre-change) — diff EMPTY, zero new errors.
+- **Runtime proof NOT yet run** — needs owner dev-server session: two-timestamp conflict test (older remote skipped / newer remote applied), canteen_sales+session_items shape dump (5.2b residual), #116 broken-hook toggle test. Blockers stay in Pending until captured.
+- **Files affected:** `src/db/syncReader.ts`, `src/db/syncClubId.ts`, `src/lib/supabase.ts`, `src/pages/__dev__/TestSyncReader.tsx`. Skill: `ripple_effects.md` (Sync section), `SKILL.md` (Current State sync entry).
+
+---
+
 ## 2 Jul 2026 — Phase C Chunk 5.2b OWNER-VERIFIED + migrations applied + #117 closed (refs #112)
 
 - **Owner runtime capture (same day as landing):** all 4 realtime channels SUBSCRIBED (`operations`/`catalog`/`commerce`/`scheduling`); targeted SQL update on `customers` caught by the doorbell within 2s (`pull customers — page 1: fetched 1, applied 1, outbox-dropped 0`); pulled `game_tables` row (`TEST 52B Pool`) rendering from Dexie on `/tables` — proves that mapper's TRANSFORM end-to-end.
