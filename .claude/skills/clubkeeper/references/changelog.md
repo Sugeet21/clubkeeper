@@ -2,6 +2,22 @@
 
 ---
 
+## 2 Jul 2026 — Phase C Chunk 5.2b: all 9 synced tables mapped bidirectionally (refs #112)
+
+- **7 new mapper PAIRS** (read in `syncReadMapper.ts` + write in `syncPayloadMapper.ts`, added together per the no-one-way-sync rule): `game_tables`, `sessions`, `session_items`, `canteen_items`, `wallet_transactions`, `stock_purchases`, `bookings`. `npm run build` ran clean after EACH table pair.
+- **Contract on every read mapper:** all `*At` fields numeric epoch ms; raw `updated_at`/`deleted_at` never persisted (camelCase epoch-ms `updatedAt`/`deletedAt` only, per #117); jsonb columns arrive as parsed objects (PostgREST) — a string there throws (`optJsonObject`), so nested `items`/`paymentBreakdown`/`tableMoves`/`rateCard` can never land as JSON strings.
+- **Key shape decisions (documented in mapper comments):**
+  - `game_tables.config` jsonb carries `ratePerFrame`/`rateCard`/`toleranceMinutes`/`rateCardBilling`; `is_active` = `!outOfService`; config always sent in full so clearing a rate card propagates.
+  - `sessions.config` jsonb (NEW column, migration 20260702) carries the 14 Dexie-local load-bearing fields (rate snapshots, billingMode, player info, alarm fields, tableMoves, isBackEntry, paymentInProgress). Read mapper THROWS on a config-less row. `status` stored verbatim (`running`, not the DDL comment's `active`). `customer_id`/`canteen_charge`/`total_charge` stay NULL by design.
+  - `session_items`: clean 1:1; `addedAt`↔`created_at`.
+  - `canteen_items`: NEW `stock_enabled` column (migration 20260702) — `stock_qty` alone can't represent `currentStock: null`; `peak_price` sent as explicit NULL when unset so clearing propagates.
+  - `wallet_transactions`: append-only — insert-only mapper, no LWW metadata, and the pull cursor uses `created_at` (table has no `updated_at`). `kind` = Dexie `type` verbatim; amount keeps always-positive convention. Coin fields (`balance_type`/`coin_delta`/`rupee_equivalent`) are NEW columns (migration 20260702); `reference_id` widened uuid→text by the same migration.
+  - `stock_purchases`: `source`↔`payment_method` (validated `'piggy'|'other'`); `name_snapshot` pushed as `''` (no Dexie field).
+  - `bookings.config` jsonb (migration 20260702) carries `gameType`/`tierPrice`/`durationMin`/`consumedSessionId`; `intent_id = id` (Booking.id IS the intent uuid); `source='player_hub'` constant; `playerName` null↔`''`.
+- New read-mapper helpers: `reqBool`, `optStr`, `reqEnum` (closed-union fail-loud), `optJsonObject`, `reqArray`, `nullableIsoToMs`, `parseBreakdown`.
+
+---
+
 ## 2 Jul 2026 — Phase C Chunk 5.2b pre-work: LWW metadata format switch to epoch-ms camelCase (refs #117, #112)
 
 - **Bug found during 5.2b grounding (#117):** Dexie-side LWW metadata was stored as raw snake_case ISO strings (`updated_at`/`deleted_at`), stamped by `syncedUpdate`/`syncedSoftDelete` and persisted by the customers + canteen_sales read mappers. The documented Chunk 5.3 plan compared these AS STRINGS — but locally-stamped `new Date().toISOString()` produces `"...Z"` while PostgREST returns `"...+00:00"`; lexicographic comparison across those formats is wrong at shared-prefix boundaries (`"Z"` sorts above any digit). A peer's newer edit could be silently discarded once 5.3 shipped. Also conflicted with the SKILL.md Pending mapper contract (epoch-ms camelCase). Owner decision (in-session, 2 Jul 2026): **contract wins**.
