@@ -49,6 +49,8 @@ export interface GameTable {
   toleranceMinutes?: number    // default 10 when rateCard exists; ignored when absent
   rateCardBilling?: 'minimum' | 'prorated'  // v11: default 'prorated' if omitted
   _migrationSeq?: number       // set by v20 .upgrade(), used by §10.4 upload
+  updatedAt?: number           // Phase C LWW metadata (#117) — epoch ms; stamped by sync wrappers / read mappers
+  deletedAt?: number | null    // Phase C soft-delete marker (#117) — epoch ms
 }
 
 export interface TableMove {
@@ -83,6 +85,8 @@ export interface Session {
   paymentBreakdown?: PaymentBreakdown // v13: cash/UPI/wallet split captured at stopSession; sum === amount
   paymentInProgress?: boolean         // true while session is paused waiting for staff to confirm payment
   _migrationSeq?: number              // set by v20 .upgrade(), used by §10.4 upload
+  updatedAt?: number                  // Phase C LWW metadata (#117) — epoch ms
+  deletedAt?: number | null           // Phase C soft-delete marker (#117) — epoch ms
 }
 
 /**
@@ -115,6 +119,8 @@ export interface CanteenSale {
   total: number                                               // === subtotal in v1 (no discount); kept for future-proofing
   customerId?: string                                         // present only when wallet portion > 0
   notes?: string                                              // max 200 chars
+  updatedAt?: number                                          // Phase C LWW metadata (#117) — epoch ms
+  deletedAt?: number | null                                   // Phase C soft-delete marker (#117) — epoch ms
 }
 
 /**
@@ -130,6 +136,8 @@ export interface StockPurchase {
   source: 'piggy' | 'other'
   createdAt: number           // Unix ms
   notes?: string              // max 200 chars
+  updatedAt?: number          // Phase C LWW metadata (#117) — epoch ms
+  deletedAt?: number | null   // Phase C soft-delete marker (#117) — epoch ms
 }
 
 export interface CoinTier {
@@ -213,6 +221,8 @@ export interface CanteenItem {
   sortOrder: number
   peakPrice?: number     // v18: optional peak-hour price, integer rupees, 1-9999. Undefined = item never uses peak pricing.
   _migrationSeq?: number // set by v20 .upgrade(), used by §10.4 upload
+  updatedAt?: number     // Phase C LWW metadata (#117) — epoch ms
+  deletedAt?: number | null // Phase C soft-delete marker (#117) — epoch ms
 }
 
 export interface SessionItem {
@@ -223,6 +233,8 @@ export interface SessionItem {
   quantity: number      // integer, 1-99
   addedAt: number       // Date.now() at creation
   _migrationSeq?: number // set by v20 .upgrade(), used by §10.4 upload
+  updatedAt?: number    // Phase C LWW metadata (#117) — epoch ms
+  deletedAt?: number | null // Phase C soft-delete marker (#117) — epoch ms
 }
 
 // ─── Outbox (Phase C sync queue — local-only, never exported) ────────────────

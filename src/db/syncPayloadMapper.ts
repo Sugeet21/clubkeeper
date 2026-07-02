@@ -87,8 +87,11 @@ const MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
     if (row.coinBalance !== undefined) out.coins_balance = row.coinBalance
     if (row.notes !== undefined) out.notes = row.notes
     if (row.createdAt !== undefined) out.created_at = msToIso(row.createdAt as number | string)
-    if (row.updated_at !== undefined) out.updated_at = row.updated_at
-    if (row.deleted_at !== undefined) out.deleted_at = row.deleted_at
+    // #117: Dexie carries LWW metadata as camelCase epoch ms; convert at the wire.
+    if (row.updatedAt !== undefined) out.updated_at = msToIso(row.updatedAt as number | string)
+    if (row.deletedAt !== undefined && row.deletedAt !== null) {
+      out.deleted_at = msToIso(row.deletedAt as number | string)
+    }
     return out
   },
 
@@ -135,8 +138,11 @@ const MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
     }
     if (row.customerId !== undefined) out.customer_id = row.customerId
     if (row.createdAt !== undefined) out.created_at = msToIso(row.createdAt as number | string)
-    if (row.updated_at !== undefined) out.updated_at = row.updated_at
-    if (row.deleted_at !== undefined) out.deleted_at = row.deleted_at
+    // #117: Dexie carries LWW metadata as camelCase epoch ms; convert at the wire.
+    if (row.updatedAt !== undefined) out.updated_at = msToIso(row.updatedAt as number | string)
+    if (row.deletedAt !== undefined && row.deletedAt !== null) {
+      out.deleted_at = msToIso(row.deletedAt as number | string)
+    }
     return out
   },
 

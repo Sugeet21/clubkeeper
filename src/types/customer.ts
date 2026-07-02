@@ -11,4 +11,6 @@ export interface Customer {
   firstTopupAt?: number     // epoch ms; set on first confirmed topup; guards welcome bonus one-shot
   lastStreakBonusAt?: number // epoch ms; set when streak bonus awarded; guards cooldown
   expiryAppliedAt?: number  // epoch ms; last time expiry sweep ran for this customer (debounces per-customer sweep)
+  updatedAt?: number        // Phase C LWW metadata (#117) — epoch ms; stamped by sync wrappers / read mappers
+  deletedAt?: number | null // Phase C soft-delete marker (#117) — epoch ms
 }

@@ -1,4 +1,4 @@
-// Phase C Chunk 3 — manual smoke-test page for the sync wrappers.
+// Phase C Chunk 3 â€” manual smoke-test page for the sync wrappers.
 //
 // DEV-only route mounted at /__dev/test-outbox (guarded in App.tsx by
 // import.meta.env.DEV). Provides four buttons that exercise each wrapper
@@ -6,12 +6,12 @@
 // rows + data rows so you can visually verify atomic-tx behavior.
 //
 // Test rows use real `crypto.randomUUID()` ids (Supabase id columns are
-// `uuid` and reject anything else — see bug_patterns.md Pattern S14
+// `uuid` and reject anything else â€” see bug_patterns.md Pattern S14
 // watch-out). Identification is via the `TEST ` prefix on the `name` field
 // (or `items[0].name` for canteen_sales). Cleanup filters by that prefix.
 //
 // Run pipeline:
-//   1. Sign in (Chunk 1 useCurrentUser must report 'signed_in') — wrappers
+//   1. Sign in (Chunk 1 useCurrentUser must report 'signed_in') â€” wrappers
 //      require dbReady which depends on auth.
 //   2. Visit http://localhost:5173/__dev/test-outbox
 //   3. Click each test button in order, eyeball the output.
@@ -57,7 +57,7 @@ export default function TestOutbox() {
         walletBalance: 0,
         createdAt: Date.now(),
         lastVisitAt: Date.now(),
-        updated_at: new Date().toISOString(),
+        updatedAt: Date.now(),
       }
       await syncedCreate('customers', row)
 
@@ -84,7 +84,7 @@ export default function TestOutbox() {
         walletBalance: 100,
         createdAt: Date.now(),
         lastVisitAt: Date.now(),
-        updated_at: new Date().toISOString(),
+        updatedAt: Date.now(),
       })
       // Now update
       await syncedUpdate('customers', id, { name: 'TEST Customer B (renamed)', walletBalance: 250 })
@@ -120,7 +120,7 @@ export default function TestOutbox() {
         walletBalance: 0,
         createdAt: Date.now(),
         lastVisitAt: Date.now(),
-        updated_at: new Date().toISOString(),
+        updatedAt: Date.now(),
       })
       await syncedSoftDelete('customers', id)
 
@@ -128,17 +128,17 @@ export default function TestOutbox() {
       const outboxRows = await db._outbox.where('rowId').equals(id).toArray()
 
       const deleteRow = outboxRows.find((r) => r.op === 'soft_delete')
-      const payload = deleteRow?.payload as { deleted_at: string } | undefined
+      // #117: soft-delete payload + Dexie row carry epoch-ms deletedAt.
+      const payload = deleteRow?.payload as { deletedAt: number } | undefined
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const dataDeletedAt = (dataRow as any)?.deleted_at as string | undefined
+      const dataDeletedAt = dataRow?.deletedAt
 
       const passed =
         outboxRows.length === 2 &&
         !!deleteRow &&
-        typeof dataDeletedAt === 'string' &&
-        typeof payload?.deleted_at === 'string' &&
-        dataDeletedAt === payload.deleted_at
+        typeof dataDeletedAt === 'number' &&
+        typeof payload?.deletedAt === 'number' &&
+        dataDeletedAt === payload.deletedAt
 
       log('syncedSoftDelete', passed, { dataRow, outboxRows })
     } catch (e) {
@@ -162,7 +162,7 @@ export default function TestOutbox() {
             walletBalance: 50,
             createdAt: Date.now(),
             lastVisitAt: Date.now(),
-            updated_at: new Date().toISOString(),
+            updatedAt: Date.now(),
           },
         },
         {
@@ -175,7 +175,7 @@ export default function TestOutbox() {
             paymentBreakdown: { cash: 0, upi: 0, wallet: 50 },
             total: 50,
             customerId,
-            updated_at: new Date().toISOString(),
+            updatedAt: Date.now(),
           },
         },
       ])
@@ -193,7 +193,7 @@ export default function TestOutbox() {
     }
   }
 
-  // Phase C Chunk 4 — force a drain pass immediately (bypasses the 30s
+  // Phase C Chunk 4 â€” force a drain pass immediately (bypasses the 30s
   // heartbeat wait so smoke-tests are interactive).
   const forceDrain = async () => {
     try {
@@ -205,7 +205,7 @@ export default function TestOutbox() {
     }
   }
 
-  // Phase C Chunk 4 — show every dead-letter row (stuck === true). These
+  // Phase C Chunk 4 â€” show every dead-letter row (stuck === true). These
   // never drain again on their own; manual intervention required.
   const showDeadLetter = async () => {
     try {
@@ -217,7 +217,7 @@ export default function TestOutbox() {
     }
   }
 
-  // Phase C Chunk 4 — RLS-failure smoke test. Seeds a customer row with a
+  // Phase C Chunk 4 â€” RLS-failure smoke test. Seeds a customer row with a
   // hard-coded wrong club_id (all-zeros UUID), kicks the runner, and waits a
   // moment. Expected: outbox row stays with attempts > 0 and lastError set.
   // Eventually (after 10 attempts via repeated drains) the row would flip to
@@ -236,10 +236,10 @@ export default function TestOutbox() {
         walletBalance: 0,
         createdAt: Date.now(),
         lastVisitAt: Date.now(),
-        updated_at: new Date().toISOString(),
+        updatedAt: Date.now(),
       })
 
-      // scheduleDrain awaits the full drainOnce internally — by the time it
+      // scheduleDrain awaits the full drainOnce internally â€” by the time it
       // resolves, the outbox row's attempts/lastError are already committed
       // to Dexie. No external sleep needed.
       await syncRunner.scheduleDrain()
@@ -257,8 +257,8 @@ export default function TestOutbox() {
     }
   }
 
-  // Phase C Chunk 4.2 — total reset. Wipes ALL outbox rows (including any
-  // legitimate pre-Chunk-4 leftovers — fine in DEV) plus any data rows
+  // Phase C Chunk 4.2 â€” total reset. Wipes ALL outbox rows (including any
+  // legitimate pre-Chunk-4 leftovers â€” fine in DEV) plus any data rows
   // whose name starts with "TEST ". Does NOT touch Supabase.
   const isTestCustomer = (c: { name?: string | null }) =>
     typeof c.name === 'string' && c.name.startsWith(TEST_NAME_PREFIX)
@@ -326,7 +326,7 @@ export default function TestOutbox() {
       <div className="max-w-[1400px] mx-auto">
         <h1 className="text-xl font-semibold mb-2">/__dev/test-outbox</h1>
         <p className="text-slate-400 text-sm mb-6">
-          Phase C Chunk 3 — sync wrapper smoke tests. Requires you to be signed
+          Phase C Chunk 3 â€” sync wrapper smoke tests. Requires you to be signed
           in (dbReady === true). Test rows use real UUIDs (Supabase requires
           it); they're identified by the <code>TEST </code> prefix on the name
           field.
@@ -375,7 +375,7 @@ export default function TestOutbox() {
             >
               <div className="flex items-center justify-between mb-2">
                 <span className="font-mono text-sm">
-                  {entry.ts} — {entry.label}
+                  {entry.ts} â€” {entry.label}
                 </span>
                 <span className={`text-xs font-semibold ${entry.ok ? 'text-emerald-400' : 'text-red-400'}`}>
                   {entry.ok ? 'PASS' : 'FAIL'}

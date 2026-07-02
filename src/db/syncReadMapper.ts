@@ -47,14 +47,14 @@ export type DexieReadRow = Record<string, unknown>
  *
  * @param table  Supabase wire-format name (snake_case)
  * @param row    Raw row body from `.select('*')`
- * @returns A Dexie-shaped row ready for bulkPut. `updated_at` and `deleted_at`
- *          are kept as ISO STRINGS (not epoch ms) because the LWW handler in
- *          Chunk 5.3 compares them as strings against server payloads. All
- *          other `*_at` columns are converted to epoch ms to match the Dexie
- *          type declarations.
- * @throws Error if the table has no read mapper yet (forces Chunk 5.2b to
- *         enable each remaining table consciously — same fail-loud contract
- *         as the write side).
+ * @returns A Dexie-shaped row ready for bulkPut. ALL timestamp fields land as
+ *          camelCase EPOCH MS (`createdAt`, `updatedAt`, `deletedAt`, ...).
+ *          Raw snake_case ISO fields are NEVER persisted on the Dexie side —
+ *          locally-stamped `toISOString()` ("...Z") and PostgREST timestamps
+ *          ("...+00:00") are not string-comparable, so the Chunk 5.3 LWW
+ *          handler compares NUMBERS only (#117, owner decision 2 Jul 2026).
+ * @throws Error if the table has no read mapper yet (fail-loud contract,
+ *         same as the write side).
  */
 export function fromSupabaseRow(
   table: SyncTableName,
@@ -98,16 +98,12 @@ const READ_MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
     walletBalance: reqNum(row.wallet_balance, 'customers.wallet_balance'),
     coinBalance: optNum(row.coins_balance),
     createdAt: isoToMs(row.created_at, 'customers.created_at'),
-    // updated_at + deleted_at STAY AS ISO STRINGS. The LWW handler (5.3)
-    // compares these as strings against the server payload's strings. Never
-    // convert to ms — that would poison the comparison silently.
-    // Cast: Customer type doesn't declare these fields today; they're LWW
-    // metadata the SyncReader stamps on for internal use.
-    ...(row.updated_at !== undefined && row.updated_at !== null
-      ? { updated_at: reqStr(row.updated_at, 'customers.updated_at') }
-      : {}),
+    // #117: LWW metadata lands as camelCase EPOCH MS. The 5.3 LWW handler
+    // compares numbers (server ISO parsed at compare time) — never strings.
+    // Raw snake_case fields must not persist on the Dexie side.
+    updatedAt: isoToMs(row.updated_at, 'customers.updated_at'),
     ...(row.deleted_at !== undefined && row.deleted_at !== null
-      ? { deleted_at: reqStr(row.deleted_at, 'customers.deleted_at') }
+      ? { deletedAt: isoToMs(row.deleted_at, 'customers.deleted_at') }
       : {}),
   }),
 
@@ -151,11 +147,10 @@ const READ_MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
       ...(row.customer_id != null
         ? { customerId: reqStr(row.customer_id, 'canteen_sales.customer_id') }
         : {}),
-      ...(row.updated_at !== undefined && row.updated_at !== null
-        ? { updated_at: reqStr(row.updated_at, 'canteen_sales.updated_at') }
-        : {}),
+      // #117: LWW metadata as camelCase epoch ms (see customers mapper).
+      updatedAt: isoToMs(row.updated_at, 'canteen_sales.updated_at'),
       ...(row.deleted_at !== undefined && row.deleted_at !== null
-        ? { deleted_at: reqStr(row.deleted_at, 'canteen_sales.deleted_at') }
+        ? { deletedAt: isoToMs(row.deleted_at, 'canteen_sales.deleted_at') }
         : {}),
     }
   },

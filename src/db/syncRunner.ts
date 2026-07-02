@@ -255,12 +255,15 @@ class SyncRunner {
       // (initial pull + realtime polling fallback) filters incoming rows by
       // `WHERE updated_at > cursor`; without bumping updated_at, peer devices
       // would never see the soft-delete via the cursor-based pull. The
-      // syncedSoftDelete wrapper also stamps the local Dexie row's updated_at
+      // syncedSoftDelete wrapper also stamps the local Dexie row's updatedAt
       // to the same timestamp so local + remote agree.
-      const payload = row.payload as { deleted_at: string }
+      // #117: outbox payload carries epoch ms (Dexie-side format); the wire
+      // boundary converts to ISO here.
+      const payload = row.payload as { deletedAt: number }
+      const deletedAtIso = new Date(payload.deletedAt).toISOString()
       const { error } = await supabaseSync
         .from(row.table)
-        .update({ deleted_at: payload.deleted_at, updated_at: payload.deleted_at })
+        .update({ deleted_at: deletedAtIso, updated_at: deletedAtIso })
         .eq('id', row.rowId)
       if (error) throw new Error(`${row.table}.soft_delete: ${error.message}`)
       return

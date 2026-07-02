@@ -24,6 +24,8 @@ export interface Booking {
   consumedSessionId?: string       // set when status='consumed' — links to sessions.id (UUID v20+)
   confirmedAt: number              // Unix ms when owner confirmed
   notes?: string
+  updatedAt?: number               // Phase C LWW metadata (#117) — epoch ms
+  deletedAt?: number | null        // Phase C soft-delete marker (#117) — epoch ms
 }
 
 // Public-safe slim projection for the Supabase clubs row (mirrors topup pattern).

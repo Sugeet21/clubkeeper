@@ -2,6 +2,14 @@
 
 ---
 
+## 2 Jul 2026 — Phase C Chunk 5.2b pre-work: LWW metadata format switch to epoch-ms camelCase (refs #117, #112)
+
+- **Bug found during 5.2b grounding (#117):** Dexie-side LWW metadata was stored as raw snake_case ISO strings (`updated_at`/`deleted_at`), stamped by `syncedUpdate`/`syncedSoftDelete` and persisted by the customers + canteen_sales read mappers. The documented Chunk 5.3 plan compared these AS STRINGS — but locally-stamped `new Date().toISOString()` produces `"...Z"` while PostgREST returns `"...+00:00"`; lexicographic comparison across those formats is wrong at shared-prefix boundaries (`"Z"` sorts above any digit). A peer's newer edit could be silently discarded once 5.3 shipped. Also conflicted with the SKILL.md Pending mapper contract (epoch-ms camelCase). Owner decision (in-session, 2 Jul 2026): **contract wins**.
+- **Fix:** all LWW metadata on Dexie rows is now camelCase EPOCH MS — `updatedAt?: number`, `deletedAt?: number | null`, declared on all 8 mutable synced interfaces (`WalletTransaction` excluded — append-only, has neither). ISO conversion happens ONLY at the wire boundary: `syncPayloadMapper` (`msToIso` on push), `syncReadMapper` (`isoToMs` on pull), `SyncRunner.pushOne` soft-delete branch (payload now `{ deletedAt: ms }` → converted to ISO for the targeted UPDATE). `SyncedRow` interface updated. TestOutbox stamps + soft-delete assertions updated to numeric.
+- **Files affected:** `src/db/syncWrappers.ts`, `src/db/syncRunner.ts`, `src/db/syncPayloadMapper.ts`, `src/db/syncReadMapper.ts`, `src/types/index.ts`, `src/types/customer.ts`, `src/types/booking.ts`, `src/pages/__dev__/TestOutbox.tsx`.
+
+---
+
 ## 1 Jul 2026 — Phase C Chunk 5.0 / 5.1 / 5.2 pre-commit: SyncReader skeleton + LWW guard + Pattern A10 (refs #112)
 
 - Bundled record for three commits: `79892c8` (Chunk 5.0 — SyncReader skeleton + supabaseSync data-plane promotion), `4d5f927` (Chunk 5.1 — server-side LWW guard migration), `fb18b17` (Chunk 5.2 pre-commit — typed no-claim error + defer/retry + stable-key boot deps).

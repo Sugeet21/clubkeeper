@@ -37,13 +37,17 @@ import { scheduleDrain } from './scheduleDrain'
 import { dexieTableFor } from './syncTableMap'
 import type { SyncTableName, OutboxRow } from '../types'
 
-// Per-table row shape constraints. Each row must carry a string `id` (UUID)
-// and a string `updated_at` (ISO). The wrappers stamp `updated_at` on update;
-// callers supply it on create.
+// Per-table row shape constraints. Each row must carry a string `id` (UUID).
+// LWW metadata lives on the Dexie row as camelCase EPOCH MS (#117) — the
+// wrappers stamp `updatedAt` on update; the wire boundary (syncPayloadMapper
+// on push, syncReadMapper on pull) converts to/from ISO. Raw snake_case ISO
+// fields must NEVER persist on the Dexie side: locally-stamped
+// `toISOString()` ("...Z") and PostgREST timestamps ("...+00:00") are not
+// string-comparable, which would silently poison the Chunk 5.3 LWW compare.
 export interface SyncedRow {
   id: string
-  updated_at?: string  // optional on create (wrapper stamps it); required on read
-  deleted_at?: string | null
+  updatedAt?: number   // epoch ms; optional on create (wrapper stamps it on update)
+  deletedAt?: number | null  // epoch ms; set by syncedSoftDelete
 }
 
 // ─── Core wrappers ───────────────────────────────────────────────────────────
@@ -73,10 +77,10 @@ export async function syncedCreate<T extends SyncedRow>(
 /**
  * Patch an existing row and queue its sync push.
  *
- * The wrapper reads the current row, merges the patch, stamps `updated_at`,
- * and writes the merged shape — both to the data table and into the outbox
- * payload. Supabase upsert(onConflict='id') overwrites with the merged shape
- * so the remote ends up equal to the local merged state.
+ * The wrapper reads the current row, merges the patch, stamps `updatedAt`
+ * (epoch ms, #117), and writes the merged shape — both to the data table and
+ * into the outbox payload. Supabase upsert(onConflict='id') overwrites with
+ * the merged shape so the remote ends up equal to the local merged state.
  */
 export async function syncedUpdate<T extends SyncedRow>(
   syncTable: SyncTableName,
@@ -90,7 +94,7 @@ export async function syncedUpdate<T extends SyncedRow>(
     if (!existing) {
       throw new Error(`syncedUpdate: row not found in ${syncTable} for id=${id}`)
     }
-    const next = { ...existing, ...patch, updated_at: new Date().toISOString() }
+    const next = { ...existing, ...patch, updatedAt: Date.now() }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (db[dexieTable] as any).put(next)
     await db._outbox.add(buildOutboxRow(syncTable, 'update', id, next))
@@ -101,16 +105,17 @@ export async function syncedUpdate<T extends SyncedRow>(
 /**
  * Soft-delete a row and queue the soft-delete push.
  *
- * Sets `deleted_at` to now on the local row. The outbox payload only contains
- * the timestamp; SyncRunner.pushOne dispatches a targeted `UPDATE ... SET
- * deleted_at = ... WHERE id = ...` against Supabase rather than a full upsert.
+ * Sets `deletedAt` (epoch ms, #117) to now on the local row. The outbox
+ * payload only contains the timestamp; SyncRunner.pushOne converts it to ISO
+ * and dispatches a targeted `UPDATE ... SET deleted_at = ... WHERE id = ...`
+ * against Supabase rather than a full upsert.
  */
 export async function syncedSoftDelete(
   syncTable: SyncTableName,
   id: string,
 ): Promise<void> {
   const dexieTable = dexieTableFor(syncTable)
-  const deletedAt = new Date().toISOString()
+  const deletedAt = Date.now()
   await db.transaction('rw', [db[dexieTable], db._outbox], async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const existing = await (db[dexieTable] as any).get(id)
@@ -118,8 +123,8 @@ export async function syncedSoftDelete(
       throw new Error(`syncedSoftDelete: row not found in ${syncTable} for id=${id}`)
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (db[dexieTable] as any).update(id, { deleted_at: deletedAt, updated_at: deletedAt })
-    await db._outbox.add(buildOutboxRow(syncTable, 'soft_delete', id, { deleted_at: deletedAt }))
+    await (db[dexieTable] as any).update(id, { deletedAt, updatedAt: deletedAt })
+    await db._outbox.add(buildOutboxRow(syncTable, 'soft_delete', id, { deletedAt }))
   })
   scheduleDrain()
 }
