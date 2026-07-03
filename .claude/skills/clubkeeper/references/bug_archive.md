@@ -20,7 +20,8 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 - **#116** (closed by owner 3 Jul 2026, plumbing in 6a8d2f9) — SyncReader broken-hook TOKEN_REFRESHED single-fire proof; runtime capture on the issue shows one deferral warn, exactly one retry across two refresh events, listener torn down after firing. — see GitHub
 - **#119** (open, P2) — duplicate realtime event delivery after a StrictMode-raced channel teardown leaks a server-side pg_changes subscription; every event handled twice until reload. Correctness-safe (idempotent direct-apply), 2× cost. — see GitHub
-- **#120** (open, P1) — app never boots when a zombie tab strands the GoTrue navigator lock; `authStore.initialize`'s `getSession()` queues forever behind `lock:sb-<ref>-auth-token` → eternal "Loading…" with zero errors. Sync data plane survives (Pattern S16). — see GitHub
+- **#120** (fix committed 7b69c11 3 Jul 2026, pending owner verification, P1) — app never boots when a zombie tab strands the GoTrue navigator lock; `getSession()` queues forever (supabase-js 2.106.1 clobbers auth-js's 5000ms `lockAcquireTimeout` default with an explicit `undefined`) → eternal "Loading…". Fixed: 8s race + lock-free degraded boot, no steal. See Pattern A11. — see GitHub
+- **#121** (open, cosmetic) — "Failed to set initial Realtime auth token" warning on every cold load: supabase-js 2.106.1 invokes supabaseSync's `accessToken` getter synchronously in the constructor mid-import-cycle → authStore TDZ throw (caught by the library). Pre-existing, found during the #120 proof session. No impact (supabaseSync has no realtime). — see GitHub
 
 ---
 

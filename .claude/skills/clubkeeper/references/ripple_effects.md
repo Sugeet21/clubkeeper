@@ -822,9 +822,10 @@ Last updated: 9 Jun 2026
 Owns: auth store, access guard reasons, RequireAccess, AuthCallback, per-user IndexedDB lifecycle, cardless trial routing.
 
 Files in scope:
-- `src/store/authStore.ts` — `initialize`, `onAuthStateChange`, `refreshProfile`, `signOut`; state `session, user, profile, subscription, loading, dbReady, subscriptionLoaded, _lastFetchedAt`
-- `src/hooks/useAccessGuard.ts` — returns typed `GuardResult`; reasons: `loading`, `db_loading`, `subscription_loading`, `not_authenticated`, `trial_expired`, `no_subscription`
-- `src/components/RequireAccess.tsx` — spinner for any loading reason; redirects for `not_authenticated`, `trial_expired` (imperative + state), `no_subscription` (`<Navigate replace>`)
+- `src/store/authStore.ts` — `initialize`, `onAuthStateChange`, `refreshProfile`, `signOut`; state `session, user, profile, subscription, loading, dbReady, subscriptionLoaded, authLockBlocked, _lastFetchedAt`. `initialize` races `getSession()` vs 8s timeout (#120, Pattern A11) — timeout → degraded boot from stored session; shared `mapProfileRow`/`mapSubscriptionRow` are the ONLY snake→camel mapping for profile/subscription (used by refreshProfile AND the degraded path — never fork them).
+- `src/lib/authBootFallback.ts` — #120 lock-free boot fallback (Pattern A11): `readStoredSessionLockFree` (full-session localStorage read, ≥60s expiry runway), `fetchProfileAndSubscriptionRows` (plain-fetch PostgREST, Pattern S1 discipline), `isAuthLockHeldByAnotherContext` (diagnostic). READ-ONLY by design — must never refresh tokens, write auth storage, or create a Supabase client.
+- `src/hooks/useAccessGuard.ts` — returns typed `GuardResult`; reasons: `loading`, `db_loading`, `subscription_loading`, `not_authenticated`, `trial_expired`, `no_subscription`. Deliberately does NOT read `authLockBlocked` (UI-only flag).
+- `src/components/RequireAccess.tsx` — spinner for any loading reason; redirects for `not_authenticated`, `trial_expired` (imperative + state), `no_subscription` (`<Navigate replace>`). Spinner branch shows an amber `authLockBlocked` hint (#120).
 - `src/pages/AuthCallback.tsx` — routes by status: active/past_due → `/tables`; trialing-active → `/tables`; trialing-expired → `/subscribe` with state; none/cancelled/expired → `/subscribe`
 - `src/App.tsx` — `AuthInitializer` calls `initialize()`. **AuthInitializer SKIPS `initialize()` on `/c/` and `/poster/` routes (#83 fix)** — Player Hub public pages must never trigger owner auth. `ExpirySweepRunner` has the same gate.
 - `src/db/database.ts` — exports `initDbForUser`, `closeDb`, `isDbReadyForUser`, `getDbName`. DB name: `ClubKeeperDB_<userId>`.
@@ -840,6 +841,7 @@ Invariants:
 - Sign-out: `authStore.signOut()` does `window.location.href = '/'` hard nav + resets `loading` + `subscriptionLoaded` (13 Jun 2026 fix).
 - AuthCallback routes carry state when redirecting to `/subscribe`.
 - `useAccessGuard` reason `trialing` with active trial → `canAccess: true`; expired → `trial_expired`; active/past_due → access; none/cancelled/expired → `no_subscription`.
+- **#120 boot-resilience invariants (Pattern A11):** the degraded-boot path only READS (localStorage + plain fetch) — never steal the GoTrue lock, never refresh a token outside the main client, never pass `lockAcquireTimeout` to `createClient` (re-enables library steal) without an explicit owner decision. If profile/subscription columns change, update `ProfileRow`/`SubscriptionRow` in `authBootFallback.ts` AND the shared mappers in `authStore.ts` in the same commit (the REST fallback reads `select=*` but the mappers are the contract). `authLockBlocked` is UI-only — if a future change makes `useAccessGuard` read it, the paired-`*Loaded`-flag rule applies.
 
 Cross-feature ripples:
 - → [Subscription & Funnel](#subscription--funnel) (Subscribe page headline branches read state.reason; refreshProfile callers).
@@ -849,9 +851,9 @@ Cross-feature ripples:
 
 Subscription schema column map (snake_case DB → camelCase TS): `trial_ends_at→trialEndsAt`, `current_period_start→currentPeriodStart`, `current_period_end→currentPeriodEnd`, `razorpay_customer_id→razorpayCustomerId`, `razorpay_subscription_id→razorpaySubscriptionId`, `cancel_at_period_end→cancelAtPeriodEnd`.
 
-See also: `bug_patterns.md` Pattern A1 (init idempotency), A6/A7/A8 (Bridge guards), `decisions_active.md` (per-user DB, cardless trial).
+See also: `bug_patterns.md` Pattern A1 (init idempotency), A5 (loading finally), A6/A7/A8 (Bridge guards), A11 (#120 stranded-lock boot resilience), `decisions_active.md` (per-user DB, cardless trial).
 
-Last updated: 13 Jun 2026
+Last updated: 3 Jul 2026 (#120 — getSession race + lock-free degraded boot, `authBootFallback.ts` added)
 
 ---
 

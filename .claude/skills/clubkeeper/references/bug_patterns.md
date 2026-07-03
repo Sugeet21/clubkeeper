@@ -529,6 +529,22 @@ useEffect(() => {
 
 ---
 
+### Pattern A11 — Boot must survive a stranded GoTrue navigator lock; recover by lock-free READING, never by stealing (#120, 3 Jul 2026)
+**Symptom signature:** App stuck on RequireAccess "Loading…" forever with ZERO errors. Console shows `[authStore] initialize start` and then nothing — `supabase.auth.getSession()` never resolves. `navigator.locks.query()` shows `lock:sb-<projectRef>-auth-token` held exclusively with waiters pending. Meanwhile the SYNC data plane keeps working (Pattern S16 lock-free) — only MAIN-client auth calls hang.
+**Root cause (two layers):**
+1. A zombie browser context (frozen/stale tab) dies or freezes while holding the GoTrue navigator lock. Every `getSession()` in every new tab queues behind it.
+2. **Why the wait is INFINITE, not 5s (library bug, verified in `node_modules` 3 Jul 2026):** auth-js 2.106.1 ships `lockAcquireTimeout: 5000` as a default WITH built-in steal recovery — but supabase-js's `_initSupabaseAuthClient` destructures `lockAcquireTimeout` from the user's auth options (unset for us) and forwards it as an EXPLICIT `undefined` own-property into `new SupabaseAuthClient({...})`. GoTrueClient's `Object.assign({}, DEFAULT_OPTIONS, options)` lets that `undefined` clobber the 5000 default; `navigatorLock(name, undefined, fn)` evaluates `undefined > 0` → false → no abort timer → waits forever. Every default-configured supabase-js 2.106.1 app has this.
+**Rule (the #120 fix, `authStore.initialize` + `src/lib/authBootFallback.ts`):**
+1. Race `getSession()` against an 8s timeout. 8s is safe to interpret as "jammed": a healthy getSession is a millisecond storage read; the only slow-but-healthy case is a network refresh, and then the stored token is expired so the degraded branch refuses it anyway.
+2. On timeout, boot DEGRADED from the persisted session: `readStoredSessionLockFree()` (structural validation + ≥60s expiry runway) + profile/subscription over plain `fetch` with the stored bearer (no supabase-js client → no lock). Toast the user. The still-pending `getSession()` stays queued — its eventual resolution IS the recovery signal (clears the flag; the `onAuthStateChange` INITIAL_SESSION handler re-runs the normal path idempotently per Pattern A1).
+3. Expired/absent stored session → do NOT fake a state; keep awaiting like before, with `authLockBlocked` driving an explanatory amber hint in the RequireAccess spinner (A5 finally still owns `loading`).
+4. **NEVER auto-steal, and never refresh tokens outside the client.** A steal (or a lock-free refresh) fired against a healthy-but-slow holder mid-refresh rotates the same refresh token twice → outside GoTrue's reuse interval that revokes the token family → signed out on every tab. Proven in anger during the #120 test session: a manual DevTools steal broke a healthy holder's in-flight `getSession()` with `AbortError: Lock broken by another request with the 'steal' option`. The degraded path only READS — it structurally cannot cause this.
+5. Do NOT "fix" this by passing `lockAcquireTimeout` explicitly to createClient — that re-enables the library's steal-after-timeout (same race as rule 4). Owner decision required before ever enabling it.
+**StrictMode note:** two concurrent `initialize()` racers both time out; a module-level `degradedBootStarted` guard ensures only ONE runs the degraded boot (state sets are idempotent; the guard exists to stop duplicate toasts). Reset in `signOut()`.
+**Files affected:** `src/store/authStore.ts` (race + degraded boot + `authLockBlocked`), `src/lib/authBootFallback.ts` (NEW — lock-free session read + REST fetch), `src/components/RequireAccess.tsx` (blocked hint).
+
+---
+
 ## Subscription & Razorpay (payments, fetch errors)
 
 Files most affected: `src/pages/Subscribe.tsx`, `src/components/subscribe/PaymentBottomSheet.tsx`, `api/create-subscription.ts`, `api/razorpay-webhook.ts`.
