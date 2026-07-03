@@ -18,6 +18,7 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ## 3 Jul 2026 — Phase C Chunk 5.3 runtime proof
 
+- **#116** (closed by owner 3 Jul 2026, plumbing in 6a8d2f9) — SyncReader broken-hook TOKEN_REFRESHED single-fire proof; runtime capture on the issue shows one deferral warn, exactly one retry across two refresh events, listener torn down after firing. — see GitHub
 - **#119** (open, P2) — duplicate realtime event delivery after a StrictMode-raced channel teardown leaks a server-side pg_changes subscription; every event handled twice until reload. Correctness-safe (idempotent direct-apply), 2× cost. — see GitHub
 - **#120** (open, P1) — app never boots when a zombie tab strands the GoTrue navigator lock; `authStore.initialize`'s `getSession()` queues forever behind `lock:sb-<ref>-auth-token` → eternal "Loading…" with zero errors. Sync data plane survives (Pattern S16). — see GitHub
 
