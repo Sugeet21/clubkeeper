@@ -8,7 +8,17 @@
 // ─── Chunk 5.3 scope ────────────────────────────────────────────────────────
 // Initial pull + resumable compound cursor per table + realtime DIRECT-APPLY
 // LWW handler (§7.3) with doorbell fallback. All 9 tables are mapped
-// (syncReadMapper). Polling fallback lands in 5.4.
+// (syncReadMapper).
+//
+// ─── Chunk 5.4 — polling fallback (§7.4) ────────────────────────────────────
+// When a channel GROUP reports CHANNEL_ERROR / TIMED_OUT / CLOSED and stays
+// down for >30s (grace period — a quick reconnect blip shouldn't trigger
+// polling), start a 60s-interval poll that calls the EXISTING `requestPull`
+// doorbell for every table in every currently-down group. No new apply
+// path — the serialized job queue + cursor pull IS the polling primitive.
+// Polling stops the moment the group's channel reports SUBSCRIBED again.
+// Same per-table cursors as always; no cursor resets, no epoch re-pulls.
+// Pattern S15 mirror: generation-guarded, torn down in stop()/teardownRealtime().
 //
 // The read mapper (src/db/syncReadMapper.ts) is strict-per-table-fail-loud,
 // symmetric with the write mapper. A mapper throw surfaces an error into
@@ -100,6 +110,10 @@ import type { OutboxRow, SyncTableName } from '../types'
 
 const PLACEHOLDER_DB_NAME = 'ClubKeeperDB__pending'
 const PAGE_SIZE = 1000
+/** §7.4 — grace period before a down channel group triggers polling. */
+const POLL_GRACE_MS = 30_000
+/** §7.4 — polling interval once a group has been down past the grace period. */
+const POLL_INTERVAL_MS = 60_000
 
 /** §7.2 realtime channel groupings — 4 channels per club, covering all 9
  *  synced tables. Grouped (not per-table) to stay under Supabase concurrent
@@ -162,6 +176,19 @@ class SyncReader {
   // .auth and cannot drive realtime — Pattern S16). Subscribed once the
   // club_id claim is known; torn down in stop().
   private channels: RealtimeChannel[] = []
+  // ─── Polling fallback (Chunk 5.4, §7.4) ─────────────────────────────────
+  // groupKey -> Date.now() when that group FIRST went down (CHANNEL_ERROR /
+  // TIMED_OUT / CLOSED). Cleared the instant the group reports SUBSCRIBED.
+  // Not reset on repeated down-events for an already-down group — the grace
+  // period is measured from the FIRST failure, not the latest one.
+  private channelDownSince = new Map<string, number>()
+  // groupKey -> pending 30s grace-check timeout id. Cleared explicitly on
+  // recovery/teardown rather than relying solely on the generation guard, so
+  // a stopped reader has zero pending timers, not just inert ones.
+  private graceTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  // Single shared 60s poll interval covering every table across every
+  // currently-down group (not one interval per group).
+  private pollTimer: ReturnType<typeof setInterval> | null = null
 
   /**
    * Boot the reader. Called by <SyncReaderBoot /> when (dbReady && session)
@@ -207,7 +234,16 @@ class SyncReader {
     // any queued jobs (pulls AND applies — events for a signed-out user must
     // never touch the next user's Dexie), forget the club. The generation
     // bump above makes an in-flight worker bail at its next post-await guard.
-    this.teardownRealtime()
+    // §7.4 — teardownRealtime() also clears grace timers, the down-group
+    // map, and stops the poll interval, so no polling timer survives a
+    // sign-out or a player-hub route navigation. stop() must stay
+    // synchronous (React effect cleanup contract) so this is a deliberate
+    // void-dispatch, not an unawaited async op: the generation bump above
+    // already makes any late channel-removal callback a no-op via the
+    // myGen guard, so nothing downstream depends on this Promise settling.
+    void this.teardownRealtime().catch((err) => {
+      console.error('[syncReader] teardownRealtime failed during stop()', err)
+    })
     this.jobQueue = []
     this.queuedPullTables.clear()
     this.clubId = null
@@ -226,8 +262,18 @@ class SyncReader {
    * job — the worker runs the §7.3 direct-apply LWW path (Chunk 5.3) and
    * falls back to a doorbell pull for events it can't safely apply.
    */
-  private subscribeRealtime(clubId: string, myGen: number): void {
-    this.teardownRealtime()
+  private async subscribeRealtime(clubId: string, myGen: number): Promise<void> {
+    // §7.4 — MUST await teardown, not fire-and-forget it. supabase-js's
+    // removeChannel() is async (the leave push + _onClose/CLOSED delivery
+    // resolve on a later tick) and supabase.channel(topic) hands back the
+    // SAME object for a topic that hasn't finished being removed yet — our
+    // deterministic `club:<id>:<group>` topic is identical across a
+    // teardown-before-register cycle (TOKEN_REFRESHED-deferred retry,
+    // StrictMode re-mount), so registering before the old removal settles
+    // reuses the old channel's identity. Awaiting first guarantees the new
+    // `supabase.channel()` call gets a genuinely fresh object, which is what
+    // makes the CLOSED-after-teardown guard below actually work.
+    await this.teardownRealtime()
     if (myGen !== this.readerGeneration) return
 
     for (const group of CHANNEL_GROUPS) {
@@ -244,24 +290,104 @@ class SyncReader {
         )
       }
       channel.subscribe((status, err) => {
+        if (myGen !== this.readerGeneration) return
         if (status === 'SUBSCRIBED') {
           console.log(`[syncReader] realtime ${group.key} SUBSCRIBED`)
+          this.markGroupUp(group.key)
         }
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          // Polling fallback is Chunk 5.4 — visibility only for now. The
-          // cursor-based initial pull on next sign-in self-heals any gap.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           console.warn(`[syncReader] realtime ${group.key} ${status}`, err ?? '')
+          this.markGroupDown(group.key, myGen)
         }
       })
       this.channels.push(channel)
     }
   }
 
-  private teardownRealtime(): void {
-    for (const channel of this.channels) {
-      supabase.removeChannel(channel)
-    }
+  /** Remove every tracked channel and clear all §7.4 poll state. Returns a
+   *  Promise so subscribeRealtime can await full removal before registering
+   *  replacements (see the comment there for why that await is mandatory).
+   *  stop() intentionally does NOT await this — sign-out doesn't need to
+   *  block on the channel leave round-trip, and stop()'s generation bump
+   *  (before this runs) already makes any stray late CLOSED a no-op via the
+   *  myGen guard in the status callback above. */
+  private teardownRealtime(): Promise<unknown> {
+    const removals = this.channels.map((channel) => supabase.removeChannel(channel))
     this.channels = []
+    // §7.4 — a torn-down channel set has no meaningful "down" state to poll
+    // for, and stop()/re-subscribe must never leave orphan timers running.
+    for (const timer of this.graceTimers.values()) clearTimeout(timer)
+    this.graceTimers.clear()
+    this.channelDownSince.clear()
+    this.stopPolling()
+    return Promise.all(removals)
+  }
+
+  // ─── Polling fallback (Chunk 5.4, §7.4) ───────────────────────────────────
+
+  /** Channel recovered — drop it from the down-set and stop polling if that
+   *  was the last down group. */
+  private markGroupUp(groupKey: string): void {
+    this.channelDownSince.delete(groupKey)
+    const graceTimer = this.graceTimers.get(groupKey)
+    if (graceTimer) {
+      clearTimeout(graceTimer)
+      this.graceTimers.delete(groupKey)
+    }
+    if (this.channelDownSince.size === 0) this.stopPolling()
+  }
+
+  /** Channel down — record first-failure time (idempotent: repeated errors
+   *  on an already-down group do NOT push the timestamp forward) and arm a
+   *  30s grace-check if one isn't already pending for this group. */
+  private markGroupDown(groupKey: string, myGen: number): void {
+    if (!this.channelDownSince.has(groupKey)) {
+      this.channelDownSince.set(groupKey, Date.now())
+    }
+    if (this.graceTimers.has(groupKey)) return
+    const timer = setTimeout(() => {
+      this.graceTimers.delete(groupKey)
+      if (myGen !== this.readerGeneration) return
+      if (!this.channelDownSince.has(groupKey)) return // recovered during the grace window
+      console.warn(
+        `[syncReader] realtime ${groupKey} still down after ${POLL_GRACE_MS / 1000}s grace — starting poll fallback`,
+      )
+      this.startPolling(myGen)
+    }, POLL_GRACE_MS)
+    this.graceTimers.set(groupKey, timer)
+  }
+
+  /** Start the shared poll loop. No-op if already running — the interval
+   *  callback re-reads `channelDownSince` on every fire, so a newly-down
+   *  group is picked up without needing a second interval. */
+  private startPolling(myGen: number): void {
+    if (this.pollTimer !== null) return
+    this.pollTimer = setInterval(() => {
+      if (myGen !== this.readerGeneration) {
+        this.stopPolling()
+        return
+      }
+      if (this.channelDownSince.size === 0) {
+        this.stopPolling()
+        return
+      }
+      const downTables = new Set<SyncTableName>()
+      for (const group of CHANNEL_GROUPS) {
+        if (this.channelDownSince.has(group.key)) {
+          for (const t of group.tables) downTables.add(t)
+        }
+      }
+      console.log(`[syncReader] poll fallback tick — requesting pull for [${[...downTables].join(', ')}]`)
+      for (const table of downTables) this.requestPull(table)
+    }, POLL_INTERVAL_MS)
+  }
+
+  private stopPolling(): void {
+    if (this.pollTimer !== null) {
+      clearInterval(this.pollTimer)
+      this.pollTimer = null
+      console.log('[syncReader] poll fallback stopped')
+    }
   }
 
   // ─── Serialized job queue ─────────────────────────────────────────────────
@@ -546,12 +672,18 @@ class SyncReader {
     // Subscribe realtime BEFORE the pull so there is no event gap between
     // "pull finished" and "channels live". Events arriving mid-pull just
     // re-enqueue their table — the worker dedupes and bulkPut is idempotent.
-    this.subscribeRealtime(clubId, myGen)
+    // §7.4 — this now awaits: subscribeRealtime awaits its own teardown of
+    // any prior channel set (mandatory so a fresh supabase.channel() object
+    // is guaranteed — see subscribeRealtime's comment). An event arriving
+    // between the await and the enqueue loop below just lands in the same
+    // deduped/idempotent queue the loop populates, so this yield point is
+    // safe: enqueuePull's `queuedPullTables` Set absorbs any duplicate.
+    await this.subscribeRealtime(clubId, myGen)
+    if (myGen !== this.readerGeneration) {
+      console.log('[syncReader] initialPull bailed — generation stale after realtime subscribe')
+      return
+    }
 
-    // Enqueue WITHOUT kicking — subscribeRealtime → this loop →
-    // runPullWorker is one synchronous sequence, so no event handler can
-    // steal the worker latch in between; initialPull's own await gets the
-    // row count for the completion log.
     for (const table of SYNC_TABLES_PULL_ORDER) {
       this.enqueuePull(table)
     }
