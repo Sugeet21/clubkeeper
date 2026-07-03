@@ -16,6 +16,13 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 3 Jul 2026 — Phase C Chunk 5.3 runtime proof
+
+- **#119** (open, P2) — duplicate realtime event delivery after a StrictMode-raced channel teardown leaks a server-side pg_changes subscription; every event handled twice until reload. Correctness-safe (idempotent direct-apply), 2× cost. — see GitHub
+- **#120** (open, P1) — app never boots when a zombie tab strands the GoTrue navigator lock; `authStore.initialize`'s `getSession()` queues forever behind `lock:sb-<ref>-auth-token` → eternal "Loading…" with zero errors. Sync data plane survives (Pattern S16). — see GitHub
+
+---
+
 ## 2 Jul 2026 — Phase C Chunk 5.2b
 
 - **BUG-S17** (#117, fixed 43a1e4c, closed by owner 2 Jul 2026) — LWW metadata stored as raw ISO strings on Dexie rows; local `toISOString()` ("...Z") vs PostgREST ("...+00:00") formats are not string-comparable, so the planned Chunk 5.3 string-compare would silently discard newer peer edits. Fixed by contract shift to camelCase epoch-ms `updatedAt`/`deletedAt` on Dexie, ISO only at the wire. See Pattern S17. — see GitHub
