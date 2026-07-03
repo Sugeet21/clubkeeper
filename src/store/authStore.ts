@@ -7,6 +7,14 @@ import { seedIfEmpty } from '../db/seed'
 import { syncRunner } from '../db/syncRunner'
 import { _resetClubIdCache } from '../db/syncClubId'
 import { _resetClubSyncSentinel } from '../hooks/useLiveData'
+import {
+  readStoredSessionLockFree,
+  fetchProfileAndSubscriptionRows,
+  isAuthLockHeldByAnotherContext,
+  type ProfileRow,
+  type SubscriptionRow,
+} from '../lib/authBootFallback'
+import { useToastStore } from './toastStore'
 
 interface AuthState {
   session: Session | null
@@ -16,6 +24,8 @@ interface AuthState {
   loading: boolean
   dbReady: boolean           // true once initDbForUser + seed complete for current user
   subscriptionLoaded: boolean // true once refreshProfile() has resolved at least once
+  authLockBlocked: boolean   // #120 — a stranded GoTrue navigator lock is jamming auth calls.
+                             // UI-only (RequireAccess hint + toast); useAccessGuard never reads it.
   _lastFetchedAt: number     // epoch ms; 0 = never fetched
   initialize: () => Promise<void>
   signInWithGoogle: () => Promise<void>
@@ -38,6 +48,72 @@ async function openAndSeed(userId: string): Promise<void> {
   await seedIfEmpty()
 }
 
+// ─── #120: getSession() vs stranded-navigator-lock race ─────────────────────
+// A healthy getSession() resolves in milliseconds (storage read) — the only
+// slow-but-healthy case is a token refresh on bad network, and then the
+// stored token is expired so the degraded branch refuses it anyway. 8s of
+// silence with a fresh stored token therefore means the GoTrue lock is
+// jammed by another context (#120's zombie tab), not a slow network.
+const GETSESSION_TIMEOUT_MS = 8000
+
+const GETSESSION_TIMED_OUT = Symbol('getSessionTimedOut')
+
+// StrictMode dedup — AuthInitializer's effect fires initialize() twice in
+// DEV, so two racers can both time out. Only the first may run the degraded
+// boot (state sets are idempotent, but the toast would duplicate). Module
+// state survives soft navs; sign-out's hard nav (window.location.href)
+// reloads the module, and signOut() also resets it defensively.
+let degradedBootStarted = false
+
+export function _resetDegradedBootGuard(): void {
+  degradedBootStarted = false
+}
+
+async function raceWithTimeout<T>(p: Promise<T>, ms: number): Promise<T | typeof GETSESSION_TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<typeof GETSESSION_TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(GETSESSION_TIMED_OUT), ms)
+  })
+  try {
+    return await Promise.race([p, timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// ─── Row → domain mappers ────────────────────────────────────────────────────
+// Single source of truth for the snake_case → camelCase mapping, shared by
+// refreshProfile (supabase-js path) and the #120 degraded boot (plain-fetch
+// path) so the two can never drift.
+
+function mapProfileRow(row: ProfileRow): UserProfile {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    avatarUrl: row.avatar_url,
+    clubName: row.club_name,
+    createdAt: new Date(row.created_at).getTime(),
+  }
+}
+
+function mapSubscriptionRow(row: SubscriptionRow): Subscription {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    status: row.status as Subscription['status'],
+    plan: row.plan as Subscription['plan'],
+    trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).getTime() : null,
+    currentPeriodStart: row.current_period_start ? new Date(row.current_period_start).getTime() : null,
+    currentPeriodEnd: row.current_period_end ? new Date(row.current_period_end).getTime() : null,
+    razorpayCustomerId: row.razorpay_customer_id,
+    razorpaySubscriptionId: row.razorpay_subscription_id,
+    cancelAtPeriodEnd: row.cancel_at_period_end,
+    createdAt: new Date(row.created_at).getTime(),
+    updatedAt: new Date(row.updated_at).getTime(),
+  }
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   session: null,
   user: null,
@@ -46,26 +122,114 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   loading: true,
   dbReady: false,
   subscriptionLoaded: false,
+  authLockBlocked: false,
   _lastFetchedAt: 0,
 
   initialize: async () => {
     console.log('[authStore] initialize start')
     try {
-      const { data: { session }, error } = await supabase.auth.getSession()
-      console.log('[authStore] getSession result', { hasSession: !!session, error })
-      set({ session, user: session?.user ?? null })
+      // #120 — getSession() queues on the GoTrue navigator lock. If a zombie
+      // context strands that lock, this await never settles and the app is
+      // an eternal spinner. Race it against a timeout; on timeout boot from
+      // the persisted session WITHOUT the lock (read-only — never steal, a
+      // steal can race a healthy holder's refresh and rotate the same
+      // refresh token twice, signing the owner out of every tab).
+      const sessionPromise = supabase.auth.getSession()
+      const raced = await raceWithTimeout(sessionPromise, GETSESSION_TIMEOUT_MS)
 
-      if (session?.user) {
-        await get().refreshProfile()
-        set({ subscriptionLoaded: true })
-        await openAndSeed(session.user.id)
-        set({ dbReady: true })
+      let degradedBooted = false
+      let result: Awaited<typeof sessionPromise>
+
+      if (raced === GETSESSION_TIMED_OUT) {
+        const lockHeld = await isAuthLockHeldByAnotherContext()
+        console.warn(
+          `[authStore] getSession() still pending after ${GETSESSION_TIMEOUT_MS}ms — ` +
+            `GoTrue lock ${lockHeld ? 'IS held by another context (#120 jam confirmed)' : 'state inconclusive'}`,
+        )
+        set({ authLockBlocked: true })
+
+        // The pending getSession() stays queued on the lock. Its eventual
+        // resolution — when the zombie tab dies or releases — is the
+        // recovery signal. The onAuthStateChange handler below (registered
+        // either way) then re-runs the normal path idempotently (Pattern A1);
+        // here we only clear the banner.
+        void sessionPromise
+          .then(() => {
+            console.log('[authStore] queued getSession() finally resolved — lock freed, clearing #120 banner')
+            if (get().authLockBlocked) {
+              set({ authLockBlocked: false })
+              useToastStore.getState().show({ message: 'Sign-in unblocked — session restored', type: 'success' })
+            }
+          })
+          .catch(() => {
+            // On the degraded-booted path nothing else awaits this promise,
+            // so a rejection would otherwise leave the flag stuck forever.
+            // (On the non-degraded path the `await sessionPromise` below
+            // re-throws into the outer catch as before.)
+            set({ authLockBlocked: false })
+          })
+
+        const stored = degradedBootStarted ? null : readStoredSessionLockFree()
+        if (stored) {
+          degradedBootStarted = true
+          // Degraded boot: render the app from the persisted session. All
+          // reads here are lock-free (localStorage + plain fetch); the main
+          // client's queued machinery stays the only token writer.
+          try {
+            const { profileRow, subscriptionRow } = await fetchProfileAndSubscriptionRows(
+              stored.user.id,
+              stored.access_token,
+            )
+            set({
+              session: stored,
+              user: stored.user,
+              profile: profileRow ? mapProfileRow(profileRow) : null,
+              subscription: subscriptionRow ? mapSubscriptionRow(subscriptionRow) : null,
+              subscriptionLoaded: true,
+            })
+            await openAndSeed(stored.user.id)
+            set({ dbReady: true })
+            degradedBooted = true
+            console.warn('[authStore] #120 degraded boot complete — running from stored session, lock still jammed')
+            useToastStore.getState().show({
+              message:
+                'Another ClubKeeper tab is blocking sign-in — running from your last saved session. Close other ClubKeeper tabs if this persists.',
+              type: 'info',
+              durationMs: 12000,
+            })
+          } catch (fallbackErr) {
+            // Lock jammed AND the lock-free reads failed (offline?). Nothing
+            // safe left to try — fall through to waiting on the real
+            // getSession(), banner explains the stall.
+            console.error('[authStore] #120 degraded boot failed, waiting on the jammed getSession()', fallbackErr)
+          }
+        } else {
+          console.warn('[authStore] #120: no fresh stored session — cannot boot degraded, waiting on the jammed getSession()')
+        }
+      }
+
+      if (!degradedBooted) {
+        // Normal path — either the race was won (healthy boot, unchanged
+        // behavior) or degraded boot wasn't possible and we wait like the
+        // pre-#120 code did (Pattern A5's finally still owns `loading`).
+        result = raced === GETSESSION_TIMED_OUT ? await sessionPromise : raced
+        const { data: { session }, error } = result
+        console.log('[authStore] getSession result', { hasSession: !!session, error })
+        set({ session, user: session?.user ?? null, authLockBlocked: false })
+
+        if (session?.user) {
+          await get().refreshProfile()
+          set({ subscriptionLoaded: true })
+          await openAndSeed(session.user.id)
+          set({ dbReady: true })
+        }
       }
 
       console.log('[authStore] initialize done', {
         profile: !!get().profile,
         subscription: get().subscription?.status,
         dbReady: get().dbReady,
+        degraded: degradedBooted,
       })
     } catch (err) {
       console.error('[authStore] initialize error', err)
@@ -121,38 +285,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       .single()
 
     set({
-      profile: profile
-        ? {
-            id: profile.id,
-            email: profile.email,
-            displayName: profile.display_name,
-            avatarUrl: profile.avatar_url,
-            clubName: profile.club_name,
-            createdAt: new Date(profile.created_at).getTime(),
-          }
-        : null,
-      subscription: subscription
-        ? {
-            id: subscription.id,
-            userId: subscription.user_id,
-            status: subscription.status,
-            plan: subscription.plan,
-            trialEndsAt: subscription.trial_ends_at
-              ? new Date(subscription.trial_ends_at).getTime()
-              : null,
-            currentPeriodStart: subscription.current_period_start
-              ? new Date(subscription.current_period_start).getTime()
-              : null,
-            currentPeriodEnd: subscription.current_period_end
-              ? new Date(subscription.current_period_end).getTime()
-              : null,
-            razorpayCustomerId: subscription.razorpay_customer_id,
-            razorpaySubscriptionId: subscription.razorpay_subscription_id,
-            cancelAtPeriodEnd: subscription.cancel_at_period_end,
-            createdAt: new Date(subscription.created_at).getTime(),
-            updatedAt: new Date(subscription.updated_at).getTime(),
-          }
-        : null,
+      profile: profile ? mapProfileRow(profile as ProfileRow) : null,
+      subscription: subscription ? mapSubscriptionRow(subscription as SubscriptionRow) : null,
     })
   },
 
@@ -177,11 +311,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     syncRunner.stop()
     _resetClubIdCache()
     _resetClubSyncSentinel()
+    _resetDegradedBootGuard()
     // closeDb() is also called by onAuthStateChange on null session (Step 2),
     // but calling it here first is safe (idempotent) and ensures the DB is
     // closed before any redirect clears component state.
     await closeDb()
-    set({ session: null, user: null, profile: null, subscription: null, loading: false, dbReady: false, subscriptionLoaded: false })
+    set({ session: null, user: null, profile: null, subscription: null, loading: false, dbReady: false, subscriptionLoaded: false, authLockBlocked: false })
     // Hard navigation clears all React + Zustand + Dexie state in one shot.
     // navigate() is intentionally avoided here — stale store state can survive
     // a soft nav and cause the user to remain visually "logged in".

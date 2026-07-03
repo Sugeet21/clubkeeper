@@ -2,10 +2,15 @@ import { Navigate, Outlet } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
 import { useEffect } from 'react'
 import { useAccessGuard } from '../hooks/useAccessGuard'
+import { useAuthStore } from '../store/authStore'
 
 export function RequireAccess() {
   const guard = useAccessGuard()
   const navigate = useNavigate()
+  // #120 — when a stranded GoTrue lock is jamming auth, the spinner can be
+  // long-lived (expired stored token can't boot degraded). Explain the stall
+  // instead of freezing silently.
+  const authLockBlocked = useAuthStore((s) => s.authLockBlocked)
 
   useEffect(() => {
     if (!guard.canAccess && guard.reason === 'trial_expired') {
@@ -20,8 +25,13 @@ export function RequireAccess() {
       // subscription===null in this window must NOT be treated as no_subscription.
       // Show the same spinner for all three — never redirect during transient loading.
       return (
-        <div className="min-h-screen flex items-center justify-center text-text-dim text-sm font-mono">
+        <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-text-dim text-sm font-mono">
           Loading…
+          {authLockBlocked && (
+            <p className="max-w-[300px] px-4 text-center text-xs text-amber-400 font-sans">
+              Another ClubKeeper tab is blocking sign-in. Close other ClubKeeper tabs or restart your browser.
+            </p>
+          )}
         </div>
       )
     }
