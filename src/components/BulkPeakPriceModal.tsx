@@ -73,7 +73,7 @@ export function BulkPeakPriceModal({ open, onClose, items }: Props) {
     if (!validate()) return
     setSaving(true)
     try {
-      const patches: { id: number; peakPrice?: number }[] = []
+      const patches: { id: string; peakPrice?: number }[] = []
       for (const item of sortedItems) {
         if (item.id === undefined) continue
         const raw = (draft.get(item.id) ?? '').trim()

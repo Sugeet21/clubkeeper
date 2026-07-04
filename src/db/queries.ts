@@ -4,6 +4,7 @@ import { calculateAmount, applyRounding } from '../lib/money'
 import { validatePlayerName, validateItemName, validateCanteenItemName } from '../lib/validation'
 import { seedIfEmpty } from './seed'
 import { normalizeName, findMatchingCanteenItem } from '../lib/canteenMatch'
+import { syncedCreate, syncedUpdate, syncedSoftDelete } from './syncWrappers'
 import { coinsEarnedForTopup, resolveCoinConfig } from '../lib/coins'
 import { getEngagementConfig } from '../lib/streak'
 import type {
@@ -62,7 +63,7 @@ export async function getTableById(id: string): Promise<GameTable | undefined> {
 export async function addTable(data: Omit<GameTable, 'id'>): Promise<string> {
   // v20: id is caller-supplied (schema no longer uses ++id auto-gen). See #107.
   const id = crypto.randomUUID()
-  await db.gameTables.add({ ...data, id })
+  await syncedCreate('game_tables', { ...data, id })
   return id
 }
 
@@ -70,11 +71,17 @@ export async function updateTable(
   id: string,
   data: Partial<Omit<GameTable, 'id'>>,
 ): Promise<void> {
-  await db.gameTables.update(id, data)
+  await syncedUpdate<GameTable & { id: string }>('game_tables', id, data)
 }
 
+/**
+ * Phase C (Chunk 7): sync soft-delete — sets the `deletedAt` tombstone instead
+ * of removing the row, so the deletion propagates to peer devices. No UI
+ * callers today (Tables UI disables via `updateTable({ outOfService })`).
+ * Unlike the old hard delete, this throws if the id doesn't exist.
+ */
 export async function deleteTable(id: string): Promise<void> {
-  await db.gameTables.delete(id)
+  await syncedSoftDelete('game_tables', id)
 }
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
@@ -869,7 +876,7 @@ export async function addCanteenItem(
 
   // v20: id is caller-supplied. See #107.
   const id = crypto.randomUUID()
-  await db.canteenItems.add({
+  await syncedCreate('canteen_items', {
     id,
     name: trimmedName,
     defaultPrice: input.defaultPrice,
@@ -928,26 +935,39 @@ export async function updateCanteenItem(
     currentStock = null
   }
 
-  await db.canteenItems.update(id, { ...patch, currentStock })
+  await syncedUpdate<CanteenItem & { id: string }>('canteen_items', id, {
+    ...patch,
+    currentStock,
+  })
 }
 
+// Business-level soft delete (isActive flag) — stays a syncedUpdate, NOT
+// syncedSoftDelete: `deletedAt` is the sync tombstone, `isActive` is the
+// user-facing "disabled item" state and must remain independently togglable.
 export async function softDeleteCanteenItem(id: string): Promise<void> {
-  await db.canteenItems.update(id, { isActive: false })
+  await syncedUpdate<CanteenItem & { id: string }>('canteen_items', id, {
+    isActive: false,
+  })
 }
 
 /**
- * Bulk-set peak prices across multiple canteen items in a single atomic tx.
+ * Bulk-set peak prices across multiple canteen items.
  * (#68 Phase 4 — used by BulkPeakPriceModal.)
  *
  * Pass `peakPrice: undefined` (or omit) to clear the field on an item.
  * Validation: any non-undefined value must be an integer 1-9999.
- * Uses .put() (not .update()) so undefined genuinely removes the key
- * from the stored row, not just "leave unchanged".
+ *
+ * Phase C (Chunk 7): one syncedUpdate per row (each opens its own tx —
+ * Pattern D7 forbids wrapping them in an outer tx). Rows are independent
+ * (no cross-row invariant), so a mid-loop failure leaving earlier rows
+ * applied is acceptable. Clearing merges `peakPrice: undefined` into the
+ * stored row — value-identical to a stripped key for every consumer, and
+ * the payload mapper sends explicit `peak_price: NULL` so the clear syncs.
  */
 export async function bulkSetCanteenItemPeakPrices(
-  patches: { id: number; peakPrice?: number }[],
+  patches: { id: string; peakPrice?: number }[],
 ): Promise<void> {
-  // Pre-validate before opening the tx so a bad row aborts cleanly.
+  // Pre-validate up front so a bad row aborts before any write.
   for (const p of patches) {
     if (p.peakPrice !== undefined) {
       if (!Number.isInteger(p.peakPrice) || p.peakPrice < 1 || p.peakPrice > 9999) {
@@ -955,36 +975,33 @@ export async function bulkSetCanteenItemPeakPrices(
       }
     }
   }
-  await db.transaction('rw', db.canteenItems, async () => {
-    for (const p of patches) {
-      const row = await db.canteenItems.get(p.id)
-      if (!row) continue
-      if (p.peakPrice === undefined) {
-        // Strip the key entirely so the row matches "never had a peak price".
-        const { peakPrice: _strip, ...rest } = row
-        void _strip
-        await db.canteenItems.put(rest as CanteenItem)
-      } else {
-        await db.canteenItems.put({ ...row, peakPrice: p.peakPrice })
-      }
-    }
-  })
+  for (const p of patches) {
+    const row = await db.canteenItems.get(p.id)
+    if (!row) continue
+    await syncedUpdate<CanteenItem & { id: string }>('canteen_items', p.id, {
+      peakPrice: p.peakPrice,
+    })
+  }
 }
 
 export async function decrementCanteenItemStock(
   id: string,
   quantity: number,
 ): Promise<{ oldStock: number; newStock: number }> {
-  return db.transaction('rw', db.canteenItems, async () => {
-    const item = await db.canteenItems.get(id)
-    if (!item) throw new Error(`Canteen item ${id} not found`)
-    if (!item.stockEnabled) throw new Error('Stock not tracked on this item')
-    const oldStock = item.currentStock!
-    if (oldStock < quantity) throw new Error('Insufficient stock')
-    const newStock = oldStock - quantity
-    await db.canteenItems.update(id, { currentStock: newStock })
-    return { oldStock, newStock }
+  // Phase C (Chunk 7): read-check, then syncedUpdate (which owns its own tx —
+  // Pattern D7). The check→write pair is no longer a single tx; acceptable on
+  // a single-user local DB, and this helper currently has zero callers (kept
+  // for standalone use per Pattern D7 — never call it from inside another tx).
+  const item = await db.canteenItems.get(id)
+  if (!item) throw new Error(`Canteen item ${id} not found`)
+  if (!item.stockEnabled) throw new Error('Stock not tracked on this item')
+  const oldStock = item.currentStock!
+  if (oldStock < quantity) throw new Error('Insufficient stock')
+  const newStock = oldStock - quantity
+  await syncedUpdate<CanteenItem & { id: string }>('canteen_items', id, {
+    currentStock: newStock,
   })
+  return { oldStock, newStock }
 }
 
 export async function getLowStockThreshold(): Promise<number> {
