@@ -2,6 +2,18 @@
 
 ---
 
+## 4 Jul 2026 — Phase C Chunk 7 Group A: queries.ts wrapper cutover, 9 of 17 sites (refs #122, #123) — commit 8ff1e6d
+
+- **Converted to sync wrappers** (`syncedCreate`/`syncedUpdate`/`syncedSoftDelete`): `addTable`, `updateTable`, `deleteTable` (game_tables) + `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`, `bulkSetCanteenItemPeakPrices` (2 sites), `decrementCanteenItemStock` (canteen_items). Every converted call awaited; wrappers stamp `updatedAt` (S17); table names from `syncTableMap.ts`.
+- **BLOCKER FOUND → #122 (P1):** the wrapper API cannot express a multi-table atomic op mixing INSERT+UPDATE (`syncedCreateBatch` is create-only, Pattern D7 forbids calling wrappers inside an outer tx, splitting breaks the power-cut guarantee). 8 of the 17 Group A sites are exactly that shape and were LEFT RAW: `updateSessionItem`/`deleteSessionItem`/`restoreSessionItem` (canteenItems+sessionItems), `createBackEntry` (canteenItems+sessions+sessionItems), `createCanteenSale` (canteenSales+canteenItems+customers+walletTransactions), `recordStockPurchase` (stockPurchases+canteenItems). The plan's assumption that atomic multi-table cases were create-only (§6.2) is wrong — a mixed-op `syncedBatch` is required before these AND most of Group B can convert. Proposed design on the issue.
+- **Semantics notes:** `deleteTable` hard→sync-soft-delete (`deletedAt` tombstone; throws on missing id) — zero callers verified. `decrementCanteenItemStock` lost single-tx read-check-write — zero callers verified. `bulkSetCanteenItemPeakPrices` lost cross-row atomicity (per-row wrapper txs; rows independent) and merges `peakPrice: undefined` instead of key-strip — all 4 consumers gate on `typeof === 'number'` so behavior-identical; mapper sends explicit `peak_price: NULL` so clears sync. Stale `id: number` → `string` in its signature + `BulkPeakPriceModal` annotation (fixes 2 pre-existing #118 baseline tsc errors). Partial-failure toast UX → #123 (P2).
+- **Build gate:** `npm run build` clean; `npx tsc --noEmit -p tsconfig.app.json` diffed line-number-agnostically vs pre-change baseline — ZERO new errors, 2 fixed.
+- **clubkeeper-reviewer (Opus) verdict: APPROVE, 0 violations.** Independently traced all converted-function callers (none inside a tx), confirmed zero-caller claims, confirmed peakPrice consumer equivalence.
+- **RUNTIME PROOF (Claude-in-Chrome, localhost:5173, 4 Jul 2026):** Canteen UI add "TEST C7 Sync Item" ₹15 → edit ₹18 → delete (disable). Supabase `canteen_items` row `2803122f…`: landed with price 18.00, `updated_at` advanced on each step, `is_active=false` after disable, `deleted_at` correctly NULL (business disable ≠ sync tombstone). `/__dev/test-outbox` force-drain: `outboxRemaining: 0`. Atomic-batch runtime proof N/A — those sites are the #122-blocked ones, unchanged. Incidental: direct-URL loads of private routes bounce to `/tables` before dbReady (pre-existing, documented in Settings.tsx dev-tools comment) — in-app navigation used instead.
+- **Files affected:** `src/db/queries.ts`, `src/components/BulkPeakPriceModal.tsx`. Skill: `changelog.md`, `ripple_effects.md` (Sync section), `SKILL.md` (Current State + Pending).
+
+---
+
 ## 3 Jul 2026 — Phase C Chunk 5.4: polling fallback for SyncReader (§7.4)
 
 - **Per-channel-group down-tracking:** `channelDownSince: Map<groupKey, firstFailureMs>` records the FIRST `CHANNEL_ERROR`/`TIMED_OUT`/`CLOSED` per §7.2 group (idempotent — repeated errors on an already-down group do NOT push the timestamp forward, so a flapping channel doesn't perpetually defer the grace period).
