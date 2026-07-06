@@ -139,7 +139,7 @@ export async function startSession(
 
   // v20: id is caller-supplied. See #107.
   const id = crypto.randomUUID()
-  await db.sessions.add({
+  await syncedCreate('sessions', {
     ...data,
     id,
     startedAt,
@@ -150,12 +150,12 @@ export async function startSession(
     amount: 0,
     ...alarmFields,
     ...rateCardFields,
-  })
+  } as Session & { id: string })
   return id
 }
 
 export async function acknowledgeNotify(sessionId: string): Promise<void> {
-  await db.sessions.update(sessionId, { notifyAcknowledgedAt: Date.now() })
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, { notifyAcknowledgedAt: Date.now() })
 }
 
 export async function snoozeNotify(sessionId: string, snoozeMs: number): Promise<void> {
@@ -167,7 +167,7 @@ export async function snoozeNotify(sessionId: string, snoozeMs: number): Promise
   // not 15 min from when the user tapped (Pattern T6). Fall back to now + snoozeMs
   // if user took so long that the anchored time is already in the past.
   const newNotifyAt = candidate > Date.now() ? candidate : Date.now() + snoozeMs
-  await db.sessions.update(sessionId, {
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, {
     notifyAtMs: newNotifyAt,
     notifyAcknowledgedAt: null,
   })
@@ -182,13 +182,13 @@ export async function updateSessionNotify(
   notifyAfterMs: number | null,
 ): Promise<void> {
   if (notifyAfterMs === null) {
-    await db.sessions.update(sessionId, {
+    await syncedUpdate<Session & { id: string }>('sessions', sessionId, {
       notifyAtMs: null,
       notifyAcknowledgedAt: null,
     })
     return
   }
-  await db.sessions.update(sessionId, {
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, {
     notifyAtMs: Date.now() + notifyAfterMs,
     notifyAcknowledgedAt: null,
   })
@@ -199,7 +199,7 @@ export async function pauseSession(sessionId: string): Promise<void> {
   if (!session) throw new Error(`Session ${sessionId} not found`)
   if (session.status !== 'running') return
 
-  await db.sessions.update(sessionId, {
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, {
     status: 'paused',
     pausedAt: Date.now(),
   })
@@ -211,7 +211,7 @@ export async function resumeSession(sessionId: string): Promise<void> {
   if (session.status !== 'paused' || session.pausedAt === null) return
 
   const delta = Date.now() - session.pausedAt
-  await db.sessions.update(sessionId, {
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, {
     status: 'running',
     pausedTotalMs: session.pausedTotalMs + delta,
     pausedAt: null,
@@ -246,7 +246,7 @@ export async function stopSession(sessionId: string): Promise<Session> {
 
   const amount = calculateAmount(session, billableMs, settings?.rounding ?? 'none')
 
-  await db.sessions.update(sessionId, {
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, {
     endedAt: now,
     status: 'completed',
     pausedTotalMs,
@@ -293,7 +293,7 @@ export async function pauseForPayment(
   const itemsTotal = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
   const grandTotal = tableAmt + itemsTotal
 
-  await db.sessions.update(sessionId, {
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, {
     status: 'paused',
     pausedAt: now,
     pausedTotalMs,
@@ -329,14 +329,17 @@ export async function confirmPaymentAndStop(
     throw new PaymentBreakdownInvalidError('A linked customer is required for wallet payments.')
   }
 
-  await db.transaction(
-    'rw',
-    db.sessions,
-    db.sessionItems,
-    db.customers,
-    db.walletTransactions,
-    db.settings,
-    async () => {
+  // #122/Group B — settings is NOT a synced table, so its read is HOISTED
+  // before the batch (rounding is DB-static config, not part of the atomic
+  // wallet/session guarantee). Every synced read+write stays inside the batch.
+  const settings = await db.settings.get(1)
+
+  // One atomic syncable op: session close + optional wallet-debit ledger INSERT
+  // + customer balance UPDATE. The wallet debit MUST stay atomic with the
+  // session completion (power-cut guarantee).
+  await syncedBatch(
+    ['sessions', 'session_items', 'customers', 'wallet_transactions'],
+    async (b) => {
       const session = await db.sessions.get(sessionId)
       if (!session) throw new Error(`Session ${sessionId} not found`)
       if (!session.paymentInProgress) {
@@ -351,7 +354,6 @@ export async function confirmPaymentAndStop(
       }
 
       const rawElapsedMs = now - session.startedAt - pausedTotalMs
-      const settings = await db.settings.get(1)
       const isRateCard = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
       let billableMs = rawElapsedMs
       let roundedDurationMs: number | undefined
@@ -378,7 +380,7 @@ export async function confirmPaymentAndStop(
           throw new WalletInsufficientError(customer.walletBalance, wallet)
         }
         const newBalance = customer.walletBalance - wallet
-        await db.walletTransactions.add({
+        await b.insert('wallet_transactions', {
           id: crypto.randomUUID(),
           customerId: customer.id,
           type: 'debit',
@@ -389,14 +391,14 @@ export async function confirmPaymentAndStop(
           referenceId: sessionId.toString(),
           notes: null,
           createdAt: now,
-        })
-        await db.customers.update(customer.id, {
+        } as WalletTransaction)
+        await b.update('customers', customer.id, {
           walletBalance: newBalance,
           lastVisitAt: now,
         })
       }
 
-      await db.sessions.update(sessionId, {
+      await b.update('sessions', sessionId, {
         endedAt: now,
         status: 'completed',
         pausedTotalMs,
@@ -420,7 +422,7 @@ export async function cancelPaymentAndResume(sessionId: string): Promise<void> {
   if (!session.paymentInProgress || session.pausedAt === null) return
 
   const delta = Date.now() - session.pausedAt
-  await db.sessions.update(sessionId, {
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, {
     status: 'running',
     pausedTotalMs: session.pausedTotalMs + delta,
     pausedAt: null,
@@ -443,7 +445,7 @@ export async function editSessionStart(
     throw new Error('Start time must be before end time')
   }
 
-  await db.sessions.update(sessionId, { startedAt: newStartedAt })
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, { startedAt: newStartedAt })
 }
 
 export async function getTodaysSessions(): Promise<Session[]> {
@@ -491,7 +493,7 @@ export async function updateSession(
   id: string,
   data: Partial<Omit<Session, 'id'>>,
 ): Promise<void> {
-  await db.sessions.update(id, data)
+  await syncedUpdate<Session & { id: string }>('sessions', id, data)
 }
 
 // ─── Bulk data operations ─────────────────────────────────────────────────────
@@ -613,12 +615,12 @@ export async function addSessionItem(
   }
   // v20: id is caller-supplied. See #107.
   const id = crypto.randomUUID()
-  await db.sessionItems.add({
+  await syncedCreate('session_items', {
     ...data,
     id,
     name: data.name.trim(),
     addedAt: Date.now(),
-  })
+  } as SessionItem & { id: string })
   return id
 }
 
@@ -754,7 +756,10 @@ export async function addOrIncrementSessionItem(input: {
   const { sessionId, name, price, quantity } = input
   const normalized = normalizeName(name)
 
-  return db.transaction('rw', db.sessionItems, async () => {
+  // Group B — single-table read-then-write (find existing → update qty, else
+  // insert). syncedBatch returns void, so capture the target id in an outer var.
+  let resultId = ''
+  await syncedBatch(['session_items'], async (b) => {
     const existing = await db.sessionItems
       .where('sessionId')
       .equals(sessionId)
@@ -763,22 +768,24 @@ export async function addOrIncrementSessionItem(input: {
 
     if (existing && existing.id != null) {
       const newQty = Math.min(99, existing.quantity + quantity)
-      await db.sessionItems.update(existing.id, { quantity: newQty })
-      return existing.id
+      await b.update('session_items', existing.id, { quantity: newQty })
+      resultId = existing.id
+      return
     }
 
     // v20: id is caller-supplied. See #107.
     const id = crypto.randomUUID()
-    await db.sessionItems.add({
+    await b.insert('session_items', {
       id,
       sessionId,
       name: name.trim(),
       price,
       quantity,
       addedAt: Date.now(),
-    })
-    return id
+    } as SessionItem & { id: string })
+    resultId = id
   })
+  return resultId
 }
 
 export interface RecentItem {
@@ -1179,7 +1186,10 @@ export async function moveSessionToTable(
   sessionId: string,
   toTableId: string,
 ): Promise<void> {
-  await db.transaction('rw', db.sessions, db.gameTables, async () => {
+  // Group B — sessions UPDATE with a cross-table read of game_tables (validation
+  // + occupancy race guard). game_tables is READ-only here; only sessions is
+  // written. Both tables declared so the reads join the batch tx.
+  await syncedBatch(['sessions', 'game_tables'], async (b) => {
     const session = await db.sessions.get(sessionId)
     if (!session) throw new Error('Session not found')
     if (session.status !== 'running' && session.status !== 'paused') {
@@ -1239,7 +1249,7 @@ export async function moveSessionToTable(
     const move = { fromTableId, toTableId, movedAt: Date.now() }
     const existingMoves = session.tableMoves ?? []
 
-    await db.sessions.update(sessionId, {
+    await b.update('sessions', sessionId, {
       tableId: toTableId,
       tableMoves: [...existingMoves, move],
     })
@@ -1299,13 +1309,11 @@ export async function recordSessionPaymentBreakdown(
     throw new PaymentBreakdownInvalidError('A linked customer is required for wallet payments.')
   }
 
-  await db.transaction(
-    'rw',
-    db.sessions,
-    db.sessionItems,
-    db.customers,
-    db.walletTransactions,
-    async () => {
+  // Group B — one atomic syncable op: paymentBreakdown UPDATE + optional
+  // wallet-debit ledger INSERT + customer balance UPDATE, all atomic.
+  await syncedBatch(
+    ['sessions', 'session_items', 'customers', 'wallet_transactions'],
+    async (b) => {
       const session = await db.sessions.get(sessionId)
       if (!session) throw new Error(`Session ${sessionId} not found`)
       if (session.status !== 'completed') {
@@ -1338,7 +1346,7 @@ export async function recordSessionPaymentBreakdown(
         }
         const now = Date.now()
         const newBalance = customer.walletBalance - wallet
-        await db.walletTransactions.add({
+        await b.insert('wallet_transactions', {
           id: crypto.randomUUID(),
           customerId: customer.id,
           type: 'debit',
@@ -1349,14 +1357,14 @@ export async function recordSessionPaymentBreakdown(
           referenceId: sessionId.toString(),
           notes: null,
           createdAt: now,
-        })
-        await db.customers.update(customer.id, {
+        } as WalletTransaction)
+        await b.update('customers', customer.id, {
           walletBalance: newBalance,
           lastVisitAt: now,
         })
       }
 
-      await db.sessions.update(sessionId, {
+      await b.update('sessions', sessionId, {
         paymentBreakdown: { cash, upi, wallet },
       })
     },
@@ -1819,7 +1827,10 @@ export async function recordTopupWithCoins(params: {
       ? (engagement.welcomeBonusCoins ?? 0)
       : 0
 
-  await db.transaction('rw', db.customers, db.walletTransactions, async () => {
+  // Group B — wallet credit + up-to-2 coin ledger INSERTs + customer balance
+  // UPDATE, all atomic. wallet_transactions is append-only (§4.6): every row is
+  // an INSERT (b.insert), never a soft-delete.
+  await syncedBatch(['customers', 'wallet_transactions'], async (b) => {
     const customer = await db.customers.get(customerId)
     if (!customer) throw new Error('customer_not_found')
 
@@ -1827,7 +1838,6 @@ export async function recordTopupWithCoins(params: {
     const alreadyHadFirstTopup = !!customer.firstTopupAt
     const effectiveWelcomeCoins = alreadyHadFirstTopup ? 0 : welcomeCoins
 
-    const totalCoins = tierCoins + effectiveWelcomeCoins
     const newWalletBalance = customer.walletBalance + rupees
     const now = Date.now()
 
@@ -1835,7 +1845,7 @@ export async function recordTopupWithCoins(params: {
     let runningCoinBalance = customer.coinBalance ?? 0
 
     // 1. Wallet credit row
-    await db.walletTransactions.add({
+    await b.insert('wallet_transactions', {
       id: crypto.randomUUID(),
       customerId,
       type: 'credit',
@@ -1847,12 +1857,12 @@ export async function recordTopupWithCoins(params: {
       referenceId: refId,
       notes: null,
       createdAt: now,
-    })
+    } as WalletTransaction)
 
     // 2. Tier coin credit row
     if (tierCoins > 0) {
       runningCoinBalance += tierCoins
-      await db.walletTransactions.add({
+      await b.insert('wallet_transactions', {
         id: crypto.randomUUID(),
         customerId,
         type: 'credit',
@@ -1865,13 +1875,13 @@ export async function recordTopupWithCoins(params: {
         referenceId: refId,
         notes: `Earned via ₹${rupees.toLocaleString('en-IN')} topup`,
         createdAt: now,
-      })
+      } as WalletTransaction)
     }
 
     // 3. Welcome bonus row (first-topup, one-shot)
     if (effectiveWelcomeCoins > 0) {
       runningCoinBalance += effectiveWelcomeCoins
-      await db.walletTransactions.add({
+      await b.insert('wallet_transactions', {
         id: crypto.randomUUID(),
         customerId,
         type: 'credit',
@@ -1884,10 +1894,10 @@ export async function recordTopupWithCoins(params: {
         referenceId: null,
         notes: 'Welcome bonus — first topup',
         createdAt: now,
-      })
+      } as WalletTransaction)
     }
 
-    await db.customers.update(customerId, {
+    await b.update('customers', customerId, {
       walletBalance: newWalletBalance,
       coinBalance: runningCoinBalance,
       lastVisitAt: now,
@@ -1916,7 +1926,9 @@ export async function redeemCoins(params: {
   const { customerId, coins, rupeeEquivalent, referenceType, referenceId } = params
   if (!Number.isInteger(coins) || coins <= 0) throw new Error('Coins must be a positive integer.')
 
-  await db.transaction('rw', db.customers, db.walletTransactions, async () => {
+  // Group B — coin-debit ledger INSERT + customer coinBalance UPDATE, atomic.
+  // Append-only ledger (§4.6): the redemption is an INSERT, never a soft-delete.
+  await syncedBatch(['customers', 'wallet_transactions'], async (b) => {
     const customer = await db.customers.get(customerId)
     if (!customer) throw new Error('customer_not_found')
 
@@ -1925,7 +1937,7 @@ export async function redeemCoins(params: {
 
     const newCoinBalance = currentCoins - coins
 
-    await db.walletTransactions.add({
+    await b.insert('wallet_transactions', {
       id: crypto.randomUUID(),
       customerId,
       type: 'debit',
@@ -1939,9 +1951,9 @@ export async function redeemCoins(params: {
       referenceId,
       notes: `Redeemed for ₹${rupeeEquivalent.toLocaleString('en-IN')} discount`,
       createdAt: Date.now(),
-    })
+    } as WalletTransaction)
 
-    await db.customers.update(customerId, {
+    await b.update('customers', customerId, {
       coinBalance: newCoinBalance,
       lastVisitAt: Date.now(),
     })
@@ -2008,7 +2020,10 @@ export async function linkBookingToSession(
   bookingId: string,
   sessionId: string,
 ): Promise<{ customerId: string }> {
-  return db.transaction('rw', db.bookings, db.customers, async () => {
+  // Group B — bookings UPDATE + customer lookup-or-create (INSERT or UPDATE),
+  // atomic. syncedBatch returns void, so capture the resolved customerId outside.
+  let resolvedCustomerId = ''
+  await syncedBatch(['bookings', 'customers'], async (b) => {
     const booking = await db.bookings.get(bookingId)
     if (!booking) throw new Error('Booking not found.')
     if (booking.status !== 'confirmed' || booking.consumedSessionId !== undefined) {
@@ -2017,10 +2032,10 @@ export async function linkBookingToSession(
 
     // Customer lookup-or-create by phone. We do NOT touch walletBalance here;
     // the advance gets applied at payment time via PaymentSplitSheet.
-    let customer = await db.customers.where('phone').equals(booking.playerPhone).first()
+    const customer = await db.customers.where('phone').equals(booking.playerPhone).first()
     if (!customer) {
       const now = Date.now()
-      customer = {
+      const newCustomer = {
         id: crypto.randomUUID(),
         phone: booking.playerPhone,
         name: booking.playerName?.trim() || null,
@@ -2029,18 +2044,20 @@ export async function linkBookingToSession(
         createdAt: now,
         lastVisitAt: now,
       }
-      await db.customers.add(customer)
+      await b.insert('customers', newCustomer as Customer & { id: string })
+      resolvedCustomerId = newCustomer.id
     } else {
-      await db.customers.update(customer.id, { lastVisitAt: Date.now() })
+      await b.update('customers', customer.id, { lastVisitAt: Date.now() })
+      resolvedCustomerId = customer.id
     }
 
-    await db.bookings.update(bookingId, {
+    await b.update('bookings', bookingId, {
       status: 'consumed',
       consumedSessionId: sessionId,
     })
-
-    return { customerId: customer.id }
   })
+
+  return { customerId: resolvedCustomerId }
 }
 
 /**
@@ -2060,12 +2077,13 @@ export async function creditBookingAdvanceRemainder(params: {
   if (!Number.isInteger(amount) || amount <= 0) {
     throw new Error('Remainder amount must be a positive integer.')
   }
-  await db.transaction('rw', db.customers, db.walletTransactions, async () => {
+  // Group B — wallet credit ledger INSERT + customer balance UPDATE, atomic.
+  await syncedBatch(['customers', 'wallet_transactions'], async (b) => {
     const customer = await db.customers.get(customerId)
     if (!customer) throw new Error('Customer not found.')
     const now = Date.now()
     const newBalance = customer.walletBalance + amount
-    await db.walletTransactions.add({
+    await b.insert('wallet_transactions', {
       id: crypto.randomUUID(),
       customerId,
       type: 'credit',
@@ -2076,8 +2094,8 @@ export async function creditBookingAdvanceRemainder(params: {
       referenceId: bookingId,
       notes: 'Unused booking advance credited to wallet',
       createdAt: now,
-    })
-    await db.customers.update(customerId, {
+    } as WalletTransaction)
+    await b.update('customers', customerId, {
       walletBalance: newBalance,
       lastVisitAt: now,
     })
@@ -2104,7 +2122,9 @@ export async function creditBookingAdvanceRemainder(params: {
  * disconnect.
  */
 export async function reconcileCancelledBooking(bookingId: string): Promise<void> {
-  await db.transaction('rw', db.bookings, db.customers, db.walletTransactions, async () => {
+  // Group B — idempotent cancel reconcile: bookings UPDATE + customer
+  // lookup-or-create + advance-refund wallet-credit INSERT, all atomic.
+  await syncedBatch(['bookings', 'customers', 'wallet_transactions'], async (b) => {
     const booking = await db.bookings.get(bookingId)
     if (!booking) {
       // Booking never crossed to Dexie (cancel before confirm hydrated locally),
@@ -2123,7 +2143,7 @@ export async function reconcileCancelledBooking(bookingId: string): Promise<void
     }
     // 1. Flip Dexie booking → cancelled
     if (booking.status !== 'cancelled') {
-      await db.bookings.update(bookingId, { status: 'cancelled' })
+      await b.update('bookings', bookingId, { status: 'cancelled' })
     }
     // 2. Lookup-or-create customer by phone
     let customer = await db.customers.where('phone').equals(booking.playerPhone).first()
@@ -2138,13 +2158,13 @@ export async function reconcileCancelledBooking(bookingId: string): Promise<void
         createdAt: now,
         lastVisitAt: now,
       }
-      await db.customers.add(customer)
+      await b.insert('customers', customer as Customer & { id: string })
     }
     // 3. Credit the advance back as a wallet credit (refund)
     if (booking.advanceAmount > 0) {
       const now = Date.now()
       const newBalance = customer.walletBalance + booking.advanceAmount
-      await db.walletTransactions.add({
+      await b.insert('wallet_transactions', {
         id: crypto.randomUUID(),
         customerId: customer.id,
         type: 'credit',
@@ -2155,8 +2175,8 @@ export async function reconcileCancelledBooking(bookingId: string): Promise<void
         referenceId: bookingId,
         notes: 'Booking cancelled — advance refunded to wallet',
         createdAt: now,
-      })
-      await db.customers.update(customer.id, {
+      } as WalletTransaction)
+      await b.update('customers', customer.id, {
         walletBalance: newBalance,
         lastVisitAt: now,
       })
@@ -2184,9 +2204,10 @@ export async function applyNoShowSweep(now: number = Date.now()): Promise<number
     (b) => b.consumedSessionId === undefined && b.slotEnd + NO_SHOW_GRACE_MS < now,
   )
   if (stale.length === 0) return 0
-  await db.transaction('rw', db.bookings, async () => {
-    for (const b of stale) {
-      await db.bookings.update(b.id, { status: 'no_show' })
+  // Group B — mark each stale booking no_show; each gets its own outbox row.
+  await syncedBatch(['bookings'], async (batch) => {
+    for (const bk of stale) {
+      await batch.update('bookings', bk.id, { status: 'no_show' })
     }
   })
   return stale.length
