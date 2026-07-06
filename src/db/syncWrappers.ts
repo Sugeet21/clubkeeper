@@ -22,9 +22,14 @@
 // another db.transaction() — Dexie will throw "Transaction is already closed"
 // because nested 'rw' transactions over the same stores are not supported.
 //
-// For atomic multi-table operations (e.g. createCanteenSale, which writes
-// canteen_sales + stock_purchases as one atomic op), use the syncedCreateBatch
-// variant — it bundles N data writes + N outbox writes in ONE outer tx.
+// For atomic multi-table operations use a batch variant, which bundles all data
+// writes + all outbox writes in ONE outer tx:
+//   • syncedCreateBatch — when every write is a plain create.
+//   • syncedBatch (#122) — mixed INSERT+UPDATE, or writes whose decisions depend
+//     on reads that must be atomic with them (stock check → decrement). The
+//     callback does its own reads on db.* inside the tx and emits ops via the
+//     BatchContext. This is what createCanteenSale / recordStockPurchase /
+//     updateSessionItem / createBackEntry use.
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // Note: scheduleDrain() is called AFTER tx commit (Promise resolves). If the
@@ -129,7 +134,7 @@ export async function syncedSoftDelete(
   scheduleDrain()
 }
 
-// ─── Batch variant ───────────────────────────────────────────────────────────
+// ─── Create-only batch variant ───────────────────────────────────────────────
 
 export interface SyncedBatchItem {
   table: SyncTableName
@@ -140,13 +145,16 @@ export interface SyncedBatchItem {
  * Multi-table atomic create.
  *
  * Use when a single logical operation must write to TWO OR MORE synced tables
- * atomically (e.g. createCanteenSale writes canteen_sales + stock_purchases;
- * linkBookingToSession writes bookings + customers). Splitting into multiple
+ * atomically AND every write is a plain create. Splitting into multiple
  * syncedCreate calls would break atomicity — a power-cut between them leaves
  * orphan data.
  *
  * All N data writes + N outbox writes happen in one tx. On any throw, all
  * roll back.
+ *
+ * For mixed INSERT+UPDATE ops (the common case — see #122) or ops whose writes
+ * depend on reads that must be atomic with them (stock check → decrement), use
+ * `syncedBatch` instead.
  */
 export async function syncedCreateBatch(items: SyncedBatchItem[]): Promise<void> {
   if (items.length === 0) return
@@ -165,6 +173,109 @@ export async function syncedCreateBatch(items: SyncedBatchItem[]): Promise<void>
       await (db[dexieTable] as any).add(item.row)
       await db._outbox.add(buildOutboxRow(item.table, 'insert', item.row.id, item.row))
     }
+  })
+  scheduleDrain()
+}
+
+// ─── Mixed-op atomic batch (#122) ─────────────────────────────────────────────
+
+/**
+ * The context handed to a `syncedBatch` callback. Its three methods each write
+ * the data row AND the matching outbox row TOGETHER, INSIDE the batch's single
+ * tx — so a power-cut can never leave a data row without its outbox companion
+ * (or vice versa). This is the whole point of the wrapper (#122): a mixed
+ * INSERT+UPDATE operation that must be atomic and syncable, without splitting
+ * (breaks the power-cut guarantee) or nesting (Pattern D7).
+ *
+ * Discipline (same tx-zone rule as the single wrappers): inside the callback,
+ * do ONLY Dexie reads/writes and pure synchronous compute. NEVER await
+ * supabase / network / a timer — that yields the tx zone and closes the tx.
+ * `crypto.randomUUID()` and `Date.now()` are synchronous and safe.
+ */
+export interface BatchContext {
+  /** Insert a new row + queue its `insert` push. Row must carry a UUID `id`. */
+  insert(table: SyncTableName, row: SyncedRow): Promise<void>
+  /**
+   * Read → merge patch → stamp `updatedAt` (epoch ms, #117) → put the FULL
+   * merged row + queue an `update` push carrying that merged row. Throws if the
+   * row is missing (same fail-loud contract as `syncedUpdate`).
+   */
+  update(table: SyncTableName, id: string, patch: Record<string, unknown>): Promise<void>
+  /**
+   * Stamp `deletedAt` + `updatedAt` (epoch ms) → put → queue a `soft_delete`
+   * push. Throws on `wallet_transactions` (append-only ledger — write a
+   * reversal row, never delete; §4.6). Throws if the row is missing.
+   */
+  softDelete(table: SyncTableName, id: string): Promise<void>
+}
+
+/**
+ * Mixed-op atomic batch — the #122 wrapper.
+ *
+ * Opens ONE Dexie 'rw' tx over the caller-declared `tables` + `_outbox`, then
+ * runs `fn(b)` inside it. The caller does its own reads directly on `db.*`
+ * (they auto-join the ambient tx) and emits sync ops via `b.insert/update/
+ * softDelete`. Every data write and every outbox row commit together or not at
+ * all — THAT all-or-nothing is the power-cut guarantee. `scheduleDrain()` is
+ * the ONLY post-commit action, called once.
+ *
+ * `tables` MUST list every synced table the callback READS or WRITES — not just
+ * writes. Omitting one makes Dexie throw "<table> is not part of transaction"
+ * the first time `fn` touches it: loud, immediate, and caught in testing. Do
+ * NOT lock every table to dodge that throw — the tight scope IS the safety net.
+ *
+ * On any throw inside `fn` (e.g. insufficient stock): the tx aborts → no data
+ * row, no outbox row, no drain → the throw propagates to the caller's existing
+ * catch. A partial (data committed, outbox lost) is exactly the failure this
+ * wrapper exists to prevent.
+ *
+ * NEVER call this from inside another `db.transaction()` (Pattern D7) — it opens
+ * its own. Callers pass DATA (reads + emitted ops), never nested wrapper calls.
+ */
+export async function syncedBatch(
+  tables: SyncTableName[],
+  fn: (b: BatchContext) => Promise<void>,
+): Promise<void> {
+  const dexieTables = Array.from(new Set(tables.map(dexieTableFor)))
+  const txStores = [...dexieTables.map((t) => db[t]), db._outbox]
+
+  await db.transaction('rw', txStores, async () => {
+    const b: BatchContext = {
+      async insert(table, row) {
+        const dexieTable = dexieTableFor(table)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (db[dexieTable] as any).add(row)
+        await db._outbox.add(buildOutboxRow(table, 'insert', row.id, row))
+      },
+      async update(table, id, patch) {
+        const dexieTable = dexieTableFor(table)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const existing = await (db[dexieTable] as any).get(id)
+        if (!existing) {
+          throw new Error(`syncedBatch.update: row not found in ${table} for id=${id}`)
+        }
+        const next = { ...existing, ...patch, updatedAt: Date.now() }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (db[dexieTable] as any).put(next)
+        await db._outbox.add(buildOutboxRow(table, 'update', id, next))
+      },
+      async softDelete(table, id) {
+        if (table === 'wallet_transactions') {
+          throw new Error('syncedBatch.softDelete: wallet_transactions is append-only — write a reversal row, never soft-delete.')
+        }
+        const dexieTable = dexieTableFor(table)
+        const deletedAt = Date.now()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const existing = await (db[dexieTable] as any).get(id)
+        if (!existing) {
+          throw new Error(`syncedBatch.softDelete: row not found in ${table} for id=${id}`)
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (db[dexieTable] as any).update(id, { deletedAt, updatedAt: deletedAt })
+        await db._outbox.add(buildOutboxRow(table, 'soft_delete', id, { deletedAt }))
+      },
+    }
+    await fn(b)
   })
   scheduleDrain()
 }

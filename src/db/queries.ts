@@ -4,7 +4,7 @@ import { calculateAmount, applyRounding } from '../lib/money'
 import { validatePlayerName, validateItemName, validateCanteenItemName } from '../lib/validation'
 import { seedIfEmpty } from './seed'
 import { normalizeName, findMatchingCanteenItem } from '../lib/canteenMatch'
-import { syncedCreate, syncedUpdate, syncedSoftDelete } from './syncWrappers'
+import { syncedCreate, syncedUpdate, syncedSoftDelete, syncedBatch } from './syncWrappers'
 import { coinsEarnedForTopup, resolveCoinConfig } from '../lib/coins'
 import { getEngagementConfig } from '../lib/streak'
 import type {
@@ -667,7 +667,11 @@ export async function updateSessionItem(
       throw new Error('Quantity must be 1–99')
     }
   }
-  await db.transaction('rw', db.sessionItems, db.canteenItems, async () => {
+  // #122 — session_items update + conditional canteen_items stock update, one
+  // atomic syncable op. The stock read (findMatchingCanteenItemForRow →
+  // canteenItems.toArray) stays inside the tx so the sufficiency check and the
+  // decrement can't race a concurrent writer.
+  await syncedBatch(['session_items', 'canteen_items'], async (b) => {
     const existing = await db.sessionItems.get(id)
     if (!existing) throw new Error('Session item not found')
 
@@ -683,11 +687,11 @@ export async function updateSessionItem(
         if (newStock < 0) {
           throw new InsufficientStockError(currentStock, matched.name)
         }
-        await db.canteenItems.update(matched.id, { currentStock: newStock })
+        await b.update('canteen_items', matched.id, { currentStock: newStock })
       }
     }
 
-    await db.sessionItems.update(id, patch)
+    await b.update('session_items', id, patch)
   })
 }
 
@@ -1055,8 +1059,18 @@ export interface BackEntryInput {
 export async function createBackEntry(input: BackEntryInput): Promise<string> {
   const items = input.items ?? []
 
-  // Pattern D7 — ONE flat transaction. All writes atomic — session + sessionItems + stock.
-  return db.transaction('rw', db.sessions, db.gameTables, db.settings, db.canteenItems, db.sessionItems, async () => {
+  // #122 — settings is NOT a synced table, so it cannot ride syncedBatch's
+  // tables list. Read the rounding config BEFORE the batch: it's DB-static
+  // config, not part of the atomic overlap/stock guarantee, so hoisting the
+  // read out of the tx is safe. Every synced read+write (sessions overlap,
+  // gameTables validate, canteenItems stock, sessionItems inserts) stays inside.
+  const settings = await db.settings.get(1)
+  const rounding = settings?.rounding ?? 'none'
+
+  const sessionId = crypto.randomUUID()
+
+  // ONE atomic syncable op — session + sessionItems inserts + stock updates.
+  await syncedBatch(['sessions', 'game_tables', 'canteen_items', 'session_items'], async (b) => {
     // ---- 1. Validate table ----
     const table = await db.gameTables.get(input.tableId)
     if (!table) throw new Error('Table not found')
@@ -1073,9 +1087,6 @@ export async function createBackEntry(input: BackEntryInput): Promise<string> {
     if (conflict) throw new BackEntryOverlapError(conflict)
 
     // ---- 3. Build & insert the session row ----
-    const settings = await db.settings.get(1)
-    const rounding = settings?.rounding ?? 'none'
-
     // Pattern T7 — rate card snapshot triple set together when table has a rate card.
     const proto: Session = {
       tableId: input.tableId,
@@ -1099,9 +1110,8 @@ export async function createBackEntry(input: BackEntryInput): Promise<string> {
     const elapsedMs = input.endedAt - input.startedAt
     proto.amount = calculateAmount(proto, elapsedMs, rounding)
 
-    // v20: id is caller-supplied. See #107.
-    const sessionId = crypto.randomUUID()
-    await db.sessions.add({ ...proto, id: sessionId })
+    // v20: id is caller-supplied (minted above, before the batch). See #107.
+    await b.insert('sessions', { ...proto, id: sessionId })
 
     // ---- 4. Process items INLINE (Pattern D7 — no calls to addSessionItem /
     //         addOrIncrementSessionItem / decrementCanteenItemStock from inside this tx) ----
@@ -1139,7 +1149,7 @@ export async function createBackEntry(input: BackEntryInput): Promise<string> {
       for (const [canteenId, totalQty] of stockNeeded) {
         const live = await db.canteenItems.get(canteenId)
         if (!live || !live.isActive || !live.stockEnabled) continue
-        await db.canteenItems.update(canteenId, {
+        await b.update('canteen_items', canteenId, {
           currentStock: (live.currentStock ?? 0) - totalQty,
         })
       }
@@ -1148,20 +1158,21 @@ export async function createBackEntry(input: BackEntryInput): Promise<string> {
       // fall inside the session's time window (no "future" timestamps relative to session).
       let order = 0
       for (const r of resolved) {
-        await db.sessionItems.add({
+        const sessionItemRow: SessionItem = {
           id: crypto.randomUUID(),
           sessionId,
           name: r.item.name.trim(),
           price: r.item.price,
           quantity: r.item.quantity,
           addedAt: input.endedAt - order * 1000,
-        })
+        }
+        await b.insert('session_items', sessionItemRow as SessionItem & { id: string })
         order += 1
       }
     }
-
-    return sessionId
   })
+
+  return sessionId
 }
 
 export async function moveSessionToTable(
@@ -1452,13 +1463,16 @@ export async function createCanteenSale(input: {
   const saleId = crypto.randomUUID()
   const now = Date.now()
 
-  await db.transaction(
-    'rw',
-    db.canteenSales,
-    db.canteenItems,
-    db.customers,
-    db.walletTransactions,
-    async () => {
+  // #122 — one atomic syncable op mixing stock updates + wallet-debit ledger
+  // INSERT + customer balance UPDATE + sale-row INSERT. The wallet debit MUST
+  // stay atomic with the sale row (power-cut guarantee — a committed debit with
+  // a lost sale, or vice versa, is exactly what this wrapper prevents). All
+  // reads (stock, customer balance) stay inside the tx so their checks can't
+  // race a concurrent writer. wallet_transactions is INSERT-only here — the
+  // debit is a ledger row, never a soft-delete (append-only, §4.6).
+  await syncedBatch(
+    ['canteen_sales', 'canteen_items', 'customers', 'wallet_transactions'],
+    async (b) => {
       // Stock decrement (Pattern D7 — inlined; never call decrementCanteenItemStock here)
       for (const [itemId, totalQty] of qtyByItem.entries()) {
         const fresh = await db.canteenItems.get(itemId)
@@ -1474,7 +1488,7 @@ export async function createCanteenSale(input: {
           if (newStock < 0) {
             throw new CanteenSaleStockError(fresh.name, oldStock)
           }
-          await db.canteenItems.update(itemId, { currentStock: newStock })
+          await b.update('canteen_items', itemId, { currentStock: newStock })
         }
       }
 
@@ -1486,7 +1500,7 @@ export async function createCanteenSale(input: {
           throw new WalletInsufficientError(customer.walletBalance, wallet)
         }
         const newBalance = customer.walletBalance - wallet
-        await db.walletTransactions.add({
+        await b.insert('wallet_transactions', {
           id: crypto.randomUUID(),
           customerId: customer.id,
           type: 'debit',
@@ -1497,15 +1511,15 @@ export async function createCanteenSale(input: {
           referenceId: saleId,
           notes: null,
           createdAt: now,
-        })
-        await db.customers.update(customer.id, {
+        } as WalletTransaction)
+        await b.update('customers', customer.id, {
           walletBalance: newBalance,
           lastVisitAt: now,
         })
       }
 
       // Insert the sale row last so any earlier throw rolls everything back.
-      await db.canteenSales.add({
+      await b.insert('canteen_sales', {
         id: saleId,
         createdAt: now,
         items: input.items.map((line) => ({
@@ -1519,7 +1533,7 @@ export async function createCanteenSale(input: {
         total,
         customerId: wallet > 0 ? input.customerId : undefined,
         notes: input.notes && input.notes.trim() ? input.notes.trim().slice(0, 200) : undefined,
-      })
+      } as CanteenSale)
     },
   )
 
@@ -1710,11 +1724,14 @@ export async function recordStockPurchase(input: {
   const id = crypto.randomUUID()
   const now = Date.now()
 
-  await db.transaction('rw', db.stockPurchases, db.canteenItems, async () => {
+  // #122 — mixed insert (stock_purchases) + update (canteen_items) as one atomic
+  // syncable op. The read (canteen_items.get) must stay inside the tx so the
+  // stockEnabled decision + the increment can't race a concurrent restock.
+  await syncedBatch(['stock_purchases', 'canteen_items'], async (b) => {
     const item = await db.canteenItems.get(input.canteenItemId)
     if (!item) throw new StockPurchaseInvalidError('Canteen item not found.')
 
-    await db.stockPurchases.add({
+    await b.insert('stock_purchases', {
       id,
       canteenItemId: input.canteenItemId,
       quantityAdded: input.quantityAdded,
@@ -1725,12 +1742,12 @@ export async function recordStockPurchase(input: {
         input.notes && input.notes.trim()
           ? input.notes.trim().slice(0, 200)
           : undefined,
-    })
+    } as StockPurchase)
 
     // Stock tracking is optional per item — only mutate when enabled.
     if (item.stockEnabled === true) {
       const oldStock = item.currentStock ?? 0
-      await db.canteenItems.update(input.canteenItemId, {
+      await b.update('canteen_items', input.canteenItemId, {
         currentStock: oldStock + input.quantityAdded,
       })
     }
