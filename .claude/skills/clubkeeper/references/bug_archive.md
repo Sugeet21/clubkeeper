@@ -172,7 +172,7 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 ## 21 Jun 2026 — Player Hub setup fixes
 
 - **#104** (fixed, 68bc9a9) — upsertClub omitted slug on update path; Supabase clubs row stayed stale after slug re-setup. See Pattern X — see GitHub
-- **#105** (fixed, 1ee1372) — Player Hub slug input false "Must be at least 3 characters" error for valid 10-char slug; Save button never enabled. See Pattern F8 — see GitHub
+- **#105** (fixed, 1ee1372) — Player Hub slug input false "Must be at least 3 characters" error for valid 10-char slug; Save button never enabled. See Pattern F10 (renamed from duplicate "F8", 7 Jul 2026) — see GitHub
 
 ---
 

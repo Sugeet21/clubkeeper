@@ -169,7 +169,7 @@ Never hard-code these fallback chains inline in components. Centralize in the he
 ### Pattern F6 — Truncate every text display
 **Rule:** Every text rendered from user input needs `truncate min-w-0 flex-1` (or similar). Without `min-w-0`, flex children won't shrink. Without `truncate`, long strings break layout in Home cards, SessionDetail, suggestion chips, everywhere.
 
-### Pattern F8 — Validation effect must clear stale error on the pass branch (#105, 21 Jun 2026)
+### Pattern F10 — Validation effect must clear stale error on the pass branch (#105, 21 Jun 2026) *(formerly a duplicate "F8" — renamed 7 Jul 2026; F8 remains the customerDisplay fallback pattern)*
 **Symptom signature:** A debounced validation effect like "must be at least N chars / unique / valid regex" shows a stale error after the user has typed past the failing condition. The Save button stays disabled because its `disabled` prop AND's `slugError` (or equivalent) with `checking`. Often paired with an in-flight spinner that never stops.
 **Root cause:** The effect's structure looks like `if (syncErr) { setError(syncErr); return } ... start async check`. When `syncErr` was non-null on the previous run, `setError` was called; when it goes null on the next run, the code path that schedules the async check never resets it back to `null` synchronously. The async branch eventually clears it — but only if the async call resolves. If the async check is on the wrong Supabase client (owner client behind an auth lock — see two-client rule in `ripple_effects.md` § Player Hub), or the user is offline, the promise hangs, `checking` stays `true`, and Save is permanently disabled even though the value is fine.
 **Rule:**
@@ -383,7 +383,7 @@ await db.transaction('rw', db.canteenItems, db.sessionItems, async () => {
 
 ### Pattern R4 — Never `useState` a value that lives in Dexie settings (#97, 20 Jun 2026)
 **Symptom signature:** A settings toggle (Accept Bookings, Accept Topups, etc.) is flipped ON in Settings. Owner navigates to `/tables` (or any other route) and back to Settings — the toggle has reverted to its prior state, even though Dexie still holds the new value. May also appear as a stale value after hard refresh, or as cross-toggle drift when more than one settings field is mirrored locally.
-**Root cause:** The component mirrors a ClubSettings field into local `useState` and then "re-syncs" via `useEffect` when the prop arrives. Three sources of truth coexist — `useState`, Dexie via `useLiveQuery`, and (often) Supabase via `getOwnerClub()` — and they race. The local mirror captures whatever `settings` was on first render (frequently `undefined` while `useLiveQuery` is still resolving), the sync effect papers over it most of the time, and the Supabase backfill effect occasionally overwrites a fresh value. Pattern R3 already documented the read-side fix for this specific symptom on the booking toggle; Pattern R4 generalises: the entire `useState`-mirror approach is the bug class.
+**Root cause:** The component mirrors a ClubSettings field into local `useState` and then "re-syncs" via `useEffect` when the prop arrives. Three sources of truth coexist — `useState`, Dexie via `useLiveQuery`, and (often) Supabase via `getOwnerClub()` — and they race. The local mirror captures whatever `settings` was on first render (frequently `undefined` while `useLiveQuery` is still resolving), the sync effect papers over it most of the time, and the Supabase backfill effect occasionally overwrites a fresh value. Pattern R6 (formerly "R3") already documented the read-side fix for this specific symptom on the booking toggle; Pattern R4 generalises: the entire `useState`-mirror approach is the bug class.
 **Rule:** Settings values are read via `useDexieSetting('fieldName', fallback)` only. No `useState` mirror of any ClubSettings field. No sync `useEffect`. No `getOwnerClub()` backfill effect in render-tree components — device-init handles initial seeding.
 **Typing-buffer variant:** for numeric/text inputs the user can clear and retype, keep a local string `useState` for the typing buffer, but source the authoritative number from `useDexieSetting` and re-sync the draft via a one-line effect (`useEffect(() => { setDraft(String(value)) }, [value])`). Commit on blur after parse/validate.
 **Files affected:** `src/hooks/useDexieSetting.ts` (new — the hook), `src/pages/PlayerHubSettings.tsx` (refactored for `acceptsTopups`, `acceptsBookings`, `bookingAdvanceAmount`). Coins fields intentionally untouched — atomic multi-field saves + seeding logic make per-field hooks the wrong shape there; see scoping note in PR.
@@ -640,7 +640,7 @@ curl -u KEY_ID:KEY_SECRET https://api.razorpay.com/v1/plans/PLAN_ID
 
 ---
 
-### Pattern S6 — API response shape contract: use `message`, not `error`
+### Pattern S25 — API response shape contract: use `message`, not `error` *(formerly a duplicate "S6" — renamed 7 Jul 2026; S6 remains the realtime-publication pattern)*
 **Symptom signature:** Frontend shows generic fallback message even after server was updated to return real error details.
 **Root cause:** Server returns `{ error: '...' }` but frontend reads `.message`. Field name mismatch silently swallows the real reason.
 **Rule:** All `api/*.ts` error responses MUST use `{ message: string }` — matching what `handlePayNow()` and any other frontend consumer reads via `(await res.json()).message`. Never use `{ error: '...' }` on error paths.
@@ -730,7 +730,7 @@ Files most affected: ALL UI components.
 **Root cause:** `fixed inset-0` positions the overlay full-screen but does not set a stacking context. The bottom nav has its own z-index (or sits later in DOM order) and renders on top of the overlay's footer.
 **Rule:** Any full-screen overlay that must cover the bottom nav uses `z-50` (same tier as Modal Pattern M1's sheet). Also: the footer inside the overlay must use `paddingBottom: 'max(16px, env(safe-area-inset-bottom))'` so the action button clears the iOS/Android home indicator. Do NOT raise above z-50 (conflicts with Modal Pattern M1) and do NOT hide the bottom nav via `display:none` — the overlay covering it is the correct approach.
 
-### Pattern R3 — Local `useState(prop ?? default)` never re-syncs when `prop` arrives later (#97, 20 Jun 2026)
+### Pattern R6 — Local `useState(prop ?? default)` never re-syncs when `prop` arrives later (#97, 20 Jun 2026) *(formerly a duplicate "R3" — renamed 7 Jul 2026; R3 remains the routing public/private split. Generalized by Pattern R4, which is the one to enforce)*
 **Symptom signature:** A toggle / form field initializes from a prop or hook value that is initially `undefined`. The toggle shows the default. When the real value arrives a moment later (Dexie's `useLiveQuery` resolves, or a parent fetches), the UI keeps showing the default. Worst variant: owner toggles ON, navigates away, returns, toggle is OFF — but the underlying store has the correct `true`.
 **Root cause:** `useState(initialValue)` only reads `initialValue` on the FIRST render. Subsequent prop/hook changes don't propagate into the local state. If the initial value was a default (because the source was loading), the local state is wrong forever — until a write handler happens to overwrite it.
 **Rule:** When local state mirrors an async source (Dexie hook, fetched prop, store value), add a `useEffect(() => { if (source !== undefined) setLocal(source) }, [source])` for each field. This is the read-side counterpart to Pattern S4 (write-side mirror discipline). Dexie is the single source of truth for owner-side UI state — never let a stale `useState` initializer override it.
@@ -1037,14 +1037,14 @@ Branch-specific fields (`updated_at`, `owner_id`, server-defaulted columns) stay
 
 Files most affected: `src/db/queries.ts` (recordSessionPaymentBreakdown, createCanteenSale), `src/components/PaymentSplitSheet.tsx`, `src/pages/SessionDetail.tsx`, `src/pages/QuickSale.tsx`, `src/pages/Summary.tsx`.
 
-### Pattern P1 — `session.amount` is the TIME portion only; the bill total is `session.amount + Σ(sessionItems)` (10 Jun 2026)
+### Pattern PM1 — `session.amount` is the TIME portion only; the bill total is `session.amount + Σ(sessionItems)` (10 Jun 2026) *(formerly "P1" in this Payment section — renamed 7 Jul 2026; P1 now uniquely means the Player-Hub "player never recomputes owner values" pattern)*
 **Symptom signature:** Recording a perfectly valid payment breakdown fails with "Breakdown sum ₹X does not match total ₹Y" where Y is suspiciously low (or zero) compared to what the sheet showed.
 **Root cause:** A queries-layer invariant check (`cash + upi + wallet === session.amount`) compared the breakdown to `session.amount` alone. But `stopSession` only writes the time-cost portion to `session.amount`; canteen items live in a separate `sessionItems` table. When a brand-new session is stopped fast with items added, `session.amount ≈ 0` and the DB rejects the valid `paymentBreakdown` summing to the item total.
 **Rule:** Any check, aggregation, or UI display that needs the BILL TOTAL for a session MUST compute `grandTotal = session.amount + Σ(sessionItems.price × quantity)`. Never use `session.amount` standalone as a bill total. For `recordSessionPaymentBreakdown` this means reading `db.sessionItems.where('sessionId').equals(sessionId)` inside the same transaction and summing. For Summary/Home aggregations the existing `useLiveQuery` already does this via `calculateItemsTotal` — preserve that pattern.
 **Where it does NOT apply:** `CanteenSale.total === CanteenSale.subtotal === Σ(items)` — there is no table-time component, so the canteen-sale total is whole. PaymentSplitSheet's `total` prop is the grand total in both cases; the math at the CALL SITE differs.
 **Files affected:** `src/db/queries.ts` (`recordSessionPaymentBreakdown`), `src/pages/SessionDetail.tsx` (`finalGrandTotal` computation), `src/components/PaymentSplitSheet.tsx` (the `total` prop).
 
-### Pattern P2 — Single boolean drives status line AND button disabled state (10 Jun 2026)
+### Pattern PM2 — Single boolean drives status line AND button disabled state (10 Jun 2026) *(formerly "P2" in this Payment section — renamed 7 Jul 2026; P2 now uniquely means the Player-Hub "mirror by slug" pattern)*
 **Symptom signature:** A payment sheet shows green "✓ Matches total" but the Confirm button is muted/disabled; OR it shows red "₹X over" but the Confirm button is bright accent and clickable. Two indicators contradict each other.
 **Root cause:** `disabled={...}` on the button reads one expression; the status-line ternary reads a different expression. Even small drift (one includes `submitting`, the other doesn't; one excludes a guard) produces UI that lies to the user.
 **Rule:** Derive ONE boolean (e.g. `canConfirm = matches && !submitting && totalIsValid`) and route BOTH the status line's green-state branch AND the button's `disabled` prop AND the button's className through it. Don't trust `disabled:opacity-40` alone — explicit className branching (`canConfirm ? 'accent...' : 'muted...'`) avoids any state where `disabled=true` but the accent background still leaks through. Add `if (!canConfirm) return` at the top of the handler as defence in depth.
@@ -1088,15 +1088,13 @@ The auto-open `useEffect` is guarded by `autoOpenHandled` (run-once per mount) A
 
 ---
 
-## Player Hub / Realtime patterns (stubs — fill when real bugs hit)
+## Player Hub / Realtime notes *(formerly "stub patterns R1/R2/R3" — IDs retired 7 Jul 2026 to end the collision with Routing R1/R2/R3; historical citations like "Pattern R2" in old changelog entries refer to PH2 below)*
 
-### R1 — Realtime channel lifecycle
-**Symptom signature:** TBD — not yet seen in production.
-**Stub note:** Channel is opened in TopBar on mount, closed on unmount. If TopBar remounts (e.g. route change), channel is re-opened. Fallback polling timer may accumulate if realtime never connects. Watch for double-counting of pending intents.
+### PH1 — Realtime channel lifecycle (superseded by Pattern S22)
+The original watch-note ("channel opened in TopBar on mount") predates the app-shell bridges. Channel lifecycle rules now live in **Pattern S22** (subscribe on login, teardown-before-register AWAITED per S23, teardown on logout, main client only). Residual known leak: #66 (topup fallback polling not cancelled on reconnect — realtimeBookings.ts has the fix to mirror).
 
-### R2 — Cross-store sync (Supabase ↔ Dexie)
-**Symptom signature:** TBD — S4 bug (toggle desync) is the prototype. Supabase write succeeds, Dexie fails (or vice versa) → permanent mismatch.
-**Rule (from S4 fix):** For fields that must be consistent across both stores, always write Supabase FIRST. Only write Dexie if Supabase succeeds. Never fire-and-forget a Supabase write when the local Dexie write already happened.
+### PH2 — Cross-store write order (Supabase ↔ Dexie mirrors)
+**Rule (from the 13 Jun toggle-desync fix):** for fields that must be consistent across both stores, write Supabase FIRST; only write Dexie if Supabase succeeds. Never fire-and-forget a Supabase write when the local Dexie write already happened. (For clubs-row mirrors, route through `mirrorToSupabaseBySlug` — Pattern S11.)
 
 ### Pattern P2 — Fire-and-forget mirrors must target by slug, not by indirected id (#84, 16 Jun 2026)
 
@@ -1112,7 +1110,7 @@ The auto-open `useEffect` is guarded by `autoOpenHandled` (run-once per mount) A
 
 ---
 
-### R3 — Module-level flag not reset on sign-out (_clubSyncDone) — RESOLVED
+### PH3 — Module-level flag not reset on sign-out (_clubSyncDone) — RESOLVED *(formerly stub "R3")*
 **Symptom signature:** Second user to sign in on the same tab (without full page reload) sees stale club data — wrong slug, wrong acceptsTopups, wrong coin config.
 **Root cause:** `_clubSyncDone` in `src/hooks/useLiveData.ts` is module-level. Sign-out + sign-in as a different user does NOT reset it because the module is never re-evaluated.
 **Fix (SHIPPED — per-user key #53/f9e3e62, then Chunk 4.3 27 Jun 2026):** flag is per-user-keyed (`_clubSyncDoneForUser`) AND `authStore.signOut()` calls `_resetClubSyncSentinel()` (with `syncRunner.stop()` + `_resetClubIdCache()`, in that order — Pattern S15). Rule that generalizes: any NEW per-user module-level cache MUST be reset in the same sign-out sequence.
