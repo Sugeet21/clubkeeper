@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '../db/database'
-import { useCustomerStore } from '../store/customerStore'
+import { useCustomerStore, recentCustomersQuery } from '../store/customerStore'
 import { customerFullLabel } from '../lib/customerDisplay'
 import type { Customer } from '../types/customer'
 
@@ -445,7 +444,9 @@ function CustomerPickerModal({ onCancel, onPick }: CustomerPickerModalProps) {
   const [searching, setSearching] = useState(false)
 
   const recent = useLiveQuery(
-    () => db.customers.orderBy('lastVisitAt').reverse().limit(10).toArray(),
+    // #125 — pulled customers lack lastVisitAt; use the shared resilient query
+    // so the session-end wallet picker isn't empty after a cross-device pull.
+    () => recentCustomersQuery(10),
     [],
     [] as Customer[],
   )

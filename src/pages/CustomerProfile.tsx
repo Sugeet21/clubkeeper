@@ -153,7 +153,7 @@ export default function CustomerProfile() {
           )}
           {transactions && transactions.length > 0 && (
             <p className="text-[12px] text-text-faint mt-2">
-              Last activity {formatDistanceToNow(customer.lastVisitAt, { addSuffix: true })}
+              Last activity {formatDistanceToNow(customer.lastVisitAt ?? customer.createdAt, { addSuffix: true })}
             </p>
           )}
         </div>

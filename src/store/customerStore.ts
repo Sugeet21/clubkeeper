@@ -10,6 +10,28 @@ import type { Customer } from '../types/customer'
 import type { WalletTransaction } from '../types/walletTransaction'
 import { createWalkInCustomer } from '../lib/walkInCode'
 
+/**
+ * Recent customers for the Wallet list + the session-end wallet picker.
+ *
+ * MUST NOT use `.orderBy('lastVisitAt')`: `lastVisitAt` has no Supabase column
+ * and is dropped by both sync mappers (#125), so every customer pulled from
+ * Supabase lands with `lastVisitAt: undefined` — and Dexie's `orderBy(index)`
+ * SILENTLY SKIPS rows whose indexed key is missing, which emptied the whole
+ * list ("No customers yet" despite rows existing). We read all rows, drop
+ * soft-deleted ones, and sort by `lastVisitAt ?? createdAt` so pulled rows
+ * (recency unknown) still appear, ordered by creation as a stable fallback.
+ *
+ * Shared by `useCustomerStore.getRecentCustomers`, `Wallet.tsx`, and
+ * `PaymentSplitSheet.tsx` so the three can never drift.
+ */
+export async function recentCustomersQuery(limit = 10): Promise<Customer[]> {
+  const all = await db.customers.toArray()
+  return all
+    .filter((c) => !c.deletedAt)
+    .sort((a, b) => (b.lastVisitAt ?? b.createdAt) - (a.lastVisitAt ?? a.createdAt))
+    .slice(0, limit)
+}
+
 interface CustomerStore {
   // CRUD
   createCustomerWithPhone: (phone: string, name: string | null) => Promise<Customer>
@@ -132,7 +154,7 @@ export const useCustomerStore = create<CustomerStore>(() => ({
   },
 
   async getRecentCustomers(limit = 10) {
-    return db.customers.orderBy('lastVisitAt').reverse().limit(limit).toArray()
+    return recentCustomersQuery(limit)
   },
 
   async findByPhone(phone) {

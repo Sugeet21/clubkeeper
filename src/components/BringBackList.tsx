@@ -112,7 +112,7 @@ function BringBackRow({
               🪙 {formatCoins(coins)} coins
             </span>
             <span className="text-text-faint text-[12px]">
-              · last visit {formatDistanceToNow(customer.lastVisitAt, { addSuffix: true })}
+              · last visit {formatDistanceToNow(customer.lastVisitAt ?? customer.createdAt, { addSuffix: true })}
             </span>
           </div>
         </div>

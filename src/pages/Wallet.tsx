@@ -2,10 +2,9 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { formatDistanceToNow } from 'date-fns'
-import { db } from '../db/database'
 import { supabase } from '../lib/supabase'
 import type { Customer } from '../types/customer'
-import { useCustomerStore } from '../store/customerStore'
+import { useCustomerStore, recentCustomersQuery } from '../store/customerStore'
 import CustomerListRow from '../components/wallet/CustomerListRow'
 import PendingTopupsModal from '../components/PendingTopupsModal'
 import { BringBackList } from '../components/BringBackList'
@@ -34,7 +33,9 @@ export default function Wallet() {
   const [clubId, setClubId] = useState<string | null>(null)
 
   const recentCustomers = useLiveQuery(
-    () => db.customers.orderBy('lastVisitAt').reverse().limit(10).toArray(),
+    // #125 — do NOT orderBy('lastVisitAt'): pulled customers lack it and Dexie
+    // drops missing-key rows. recentCustomersQuery sorts on lastVisitAt ?? createdAt.
+    () => recentCustomersQuery(10),
     [],
     [] as Customer[],
   )
@@ -266,7 +267,7 @@ export default function Wallet() {
             <CustomerListRow
               key={customer.id}
               customer={customer}
-              distanceLabel={formatDistanceToNow(customer.lastVisitAt, { addSuffix: true })}
+              distanceLabel={formatDistanceToNow(customer.lastVisitAt ?? customer.createdAt, { addSuffix: true })}
               onClick={() => navigate(`/customer/${customer.id}`)}
             />
           ))}
