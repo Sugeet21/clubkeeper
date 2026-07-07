@@ -58,8 +58,7 @@ Before saying "done":
    - Any new bug found → GitHub issue created?
    - Any new pattern → `bug_patterns.md` updated?
    - Current State Snapshot still accurate? (Rule G — overwrite, don't append.)
-3. **Run:** `git log --since="2 hours ago" --name-only`
-   - If `src/` files appear but no skill files do → skill is stale. Fix before stopping.
+3. **Run:** `npm run check:skill` — the deterministic gate (Rule B pairing, STATE.md shape, pattern IDs/refs, migration ledger, open-P0/P1 coverage, changelog ordering, freshness stamp). Any FAIL = the session is not closed; fix and re-run. (`git log --since="2 hours ago" --name-only` remains the manual fallback if node is unavailable.)
 4. **Tell Sugeet what to verify.** Format: "Please test on your phone: (a) ___, (b) ___, (c) ___. Reply 'verified' or 'close #NN' when done. I will not close the issue."
 
 **Gate:** If any step above is missed, the session isn't closed — even if the code works.

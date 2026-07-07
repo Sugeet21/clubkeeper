@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "check:settings": "node scripts/check-settings-pattern.mjs",
+    "check:skill": "node scripts/check-skill.mjs",
     "prebuild": "npm run check:settings",
     "build": "tsc && vite build",
     "lint": "eslint .",

@@ -2,6 +2,15 @@
 
 ---
 
+## 7 Jul 2026 — Skill-redesign Phase 4: `npm run check:skill` machine gate (branch skill-redesign)
+
+- **NEW `scripts/check-skill.mjs`** — deterministic, no-LLM session-close gate (exit 1 on failure): Rule B commit pairing, Rule G STATE.md shape (one line/module, no SHAs/sizes/dates, no duplicates), bug-pattern ID uniqueness, pattern-reference integrity across live files, migration-ledger coverage, open-P0/P1 GitHub coverage (graceful offline skip), changelog newest-first ordering, STATE.md freshness stamp, loading-map link integrity.
+- `package.json` gains `check:skill` (NOT in prebuild — it's a session-close gate, not a build gate).
+- `clubkeeper-skill-auditor` now runs the script FIRST (its FAILs are audit FAILs), then does judgment-only checks. session_loop Phase 4 step 3 now runs the script.
+- First live run caught a real gap immediately (STATE ledger had `20260619_booked_slots` vs actual filename `_rpc`) — fixed; gate now PASS 0/0.
+
+---
+
 ## 7 Jul 2026 — Skill-redesign Phase 3: STATE.md split (branch skill-redesign, docs only)
 
 - **NEW `STATE.md`** inside the skill folder (travels to claude.ai): "Last verified" freshness stamp, current focus, one-line-per-module status (Rule G now enforced here), load-bearing pending, Supabase migration ledger (all applied, verified), open P0/P1 issue snapshot from `gh`, known limitations.

@@ -48,7 +48,7 @@ Phase C sync cutover tail: Group C write sites (#126), owner verification of #12
 
 ### Supabase migration ledger (verified against prod 7 Jul 2026 via anon-RPC probe)
 
-APPLIED: `20260602_cardless_trial` (inferred — trials work in prod; confirm on next fresh signup), `20260610_player_hub`, `20260610_clubcoins`, `20260615_enable_realtime`, `20260615_topup_intents_coins_credited`, `20260616_pricing_visibility`, `20260617_booking_intents`, `20260618_booking_cancel`, `20260619_booked_slots` (⚠ `p_table_id` still `integer` — #127), `20260622_booking_hours_and_per_slot_advance`, `20260625_phase_c_sync_tables`, `20260628_lww_guard`, `20260702_sync_client_fields`.
+APPLIED: `20260602_cardless_trial` (inferred — trials work in prod; confirm on next fresh signup), `20260610_player_hub`, `20260610_clubcoins`, `20260615_enable_realtime`, `20260615_topup_intents_coins_credited`, `20260616_pricing_visibility`, `20260617_booking_intents`, `20260618_booking_cancel`, `20260619_booked_slots_rpc` (⚠ `p_table_id` still `integer` — #127), `20260622_booking_hours_and_per_slot_advance`, `20260625_phase_c_sync_tables`, `20260628_lww_guard`, `20260702_sync_client_fields`.
 UNAPPLIED: none known. **Any NEW migration file added under `supabase/migrations/` MUST get a line here (applied or unapplied) in the same session.**
 
 ## Open issues — P0/P1 snapshot (from `gh issue list`, 7 Jul 2026; GitHub is authoritative)
