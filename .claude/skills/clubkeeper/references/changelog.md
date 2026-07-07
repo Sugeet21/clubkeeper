@@ -2,6 +2,14 @@
 
 ---
 
+## 7 Jul 2026 — Skill-redesign Phase 3: STATE.md split (branch skill-redesign, docs only)
+
+- **NEW `STATE.md`** inside the skill folder (travels to claude.ai): "Last verified" freshness stamp, current focus, one-line-per-module status (Rule G now enforced here), load-bearing pending, Supabase migration ledger (all applied, verified), open P0/P1 issue snapshot from `gh`, known limitations.
+- **SKILL.md shrunk to stable-only** (~12k → ~5k tokens): persona, Critical Rules 1–15 (+ promoted post-v20 ID law), loading map (now the routing table), response style, condensed agents digest (CLI-only marker), bug-flow law, Rules A–J consolidated. Current State / Pending / Known limitations / Dexie summary / stale issue counts all moved to STATE.md or their sole homes.
+- Agent model-choice rationale moved to `decisions_active.md`. CLAUDE.md reading order now includes STATE.md and fixes a pointer to nonexistent "bug_history.md" (28th audit find).
+
+---
+
 ## 7 Jul 2026 — Skill-redesign Phase 1: 27 audited falsehoods corrected in place (branch skill-redesign, docs only)
 
 - Full audit of every skill file (see `skill_redesign_proposal.md` §4 for the numbered list). No `src/` changes.

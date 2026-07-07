@@ -63,6 +63,14 @@ For rejected ideas, historical decisions that have been superseded, and full rea
 - **[2026-06-07] Canteen Phase 2 reserved but not scoped.** Reserved for: stock-in entries (purchase cost tracking), canteen-only P&L (sale revenue − purchase cost), category grouping (snacks/cold drinks/cigarettes). Reachable via tabs on `/canteen` when built. Do not scope until shipped to first customer and validated.
 - **[2026-06-07] Local-only testing protocol confirmed as canonical workflow.** Building in 6 small prompts (each verified in browser before next) caught 5 bugs that would have been impossible to isolate in a single mega-prompt. Never attempt feature work via single large prompts on a 50+ file codebase. Small prompt → browser verify → next prompt.
 
+## Project agents — model choices (30 Jun 2026, moved here from SKILL.md 7 Jul 2026)
+
+- **`clubkeeper-reviewer` → Opus** (raised from Sonnet). Pre-commit review of code the main thread just wrote is the highest-stakes catch-the-bug surface — accuracy beats token cost. Canonical example: the Chunk 4.3 navigator-lock miss required reasoning across supabase-js internals + our drain loop; a Sonnet review would not have caught it.
+- **`clubkeeper-skill-auditor` → Opus** (raised from Sonnet). Final session gate; a miss here ships a stale skill into the next session — the exact failure Rules B/E/G exist to prevent. Since the skill-redesign it runs `npm run check:skill` first (deterministic floor), then judges what scripts can't.
+- **`clubkeeper-explorer` → Sonnet.** Pure retrieval (`file:line` citations); Opus adds cost, not accuracy.
+- **Never Haiku** for project work — owner explicitly rejected it ("too basic, don't want more bugs").
+- Frontmatter model changes apply in NEW sessions only; override per-call (`Agent({ model: "opus", ... })`) mid-session.
+
 ## Operational patterns
 
 - **`authStore.refreshProfile` has 3000ms dedup window.** `_lastFetchedAt` timestamp prevents the `initialize() + onAuthStateChange(INITIAL_SESSION)` double-fire. `force=true` only after real server mutations (post-payment, post-cancel). **Permanent correctness fix — never revisit.**

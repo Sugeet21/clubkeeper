@@ -10,9 +10,10 @@ Full project memory lives in `.claude/skills/clubkeeper/` — load the skill bef
 
 ## Mandatory reading order before any code change
 
-1. `.claude/skills/clubkeeper/SKILL.md` — project state, what's shipped, what's pending
-2. `.claude/skills/clubkeeper/references/ripple_effects.md` — what breaks when you change X
-3. `.claude/skills/clubkeeper/references/bug_history.md` — bugs already fixed (don't repeat them)
+1. `.claude/skills/clubkeeper/SKILL.md` — laws, workflow, loading map
+2. `.claude/skills/clubkeeper/STATE.md` — what is true RIGHT NOW (module status, pending blockers, open P0/P1s, migration ledger)
+3. `.claude/skills/clubkeeper/references/ripple_effects.md` — what breaks when you change X
+4. `.claude/skills/clubkeeper/references/bug_patterns.md` — bug classes already solved (don't repeat them; an older revision of this file pointed at a nonexistent "bug_history.md")
 
 ## Project agents — default is main thread
 
