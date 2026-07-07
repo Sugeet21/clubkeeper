@@ -162,7 +162,7 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ## 20 Jun 2026 — Crypto hardening + config
 
-- **BUG-SETTINGS-DRIFT** (#97, fixed, 238001f + prevention b18220f) — Settings toggles drift (PlayerHubSettings useState mirror vs Dexie). Fixed 238001f + prevention b18220f. See Pattern R4 — see GitHub
+- **BUG-SETTINGS-DRIFT** (#97, **REOPENED — open P0 as of 7 Jul 2026**; original fix 238001f + prevention b18220f, closed by owner 20 Jun, later reopened as a recurrence of the accept-bookings toggle flip) — Settings toggles drift (PlayerHubSettings useState mirror vs Dexie). See Pattern R4 — see GitHub for current state
 - **BUG-WEBHOOK-TIMING** (#94, fixed, a2f122a) — Razorpay webhook HMAC compared with non-constant-time `!==` → theoretical timing side-channel; switched to `crypto.timingSafeEqual`. Reported via external PR #80 (closed unmerged). See Pattern S10 — see GitHub
 - **FEAT-CANTEEN-LOWSTOCK** (#92, shipped, 8ebffe6) — Owner-configurable low-stock threshold (1–999, default 5). Settings UI added; helper + consumers already existed. Also normalised Canteen StatsRow comparator from `<` to `<=` to match Summary (silent off-by-one) — see GitHub
 - **BUG-SUMMARY-QUICKSALE** (#93, fixed, 1684b82) — Summary's 4 analytical surfaces (topCanteenItems, bucketByHour, rankTables, dateRevenues) silently dropped Quick Sale revenue while money tiles were correct. Fixed all 4 in one commit; rankTables now has a synthetic "Walk-in Canteen" row via `WALKIN_TABLE_ID=-1`. Historical deltas retroactively recompute. New Pattern T9 — see GitHub
@@ -181,7 +181,7 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 - **BUG-QS-UPI-QR** (#69, fixed, 2b83dd1) — QuickSale showed no UPI QR after UPI payment selected — see GitHub
 - **BUG-MOVE-BILLINGMODE** (#72, fixed, 6be8ed0) — Table Move allows cross billing-mode moves (rateCardBilling / rateCard / toleranceMinutes not checked) — see GitHub
 - **BUG-SUMMARY-STALE** (#70, fixed, 41a7bb1) — Day's earnings + Avg session + TopTablesList + HourlyHeatmap frozen (useMemo T4 violation on runningRevenueToday + rankTables + bucketByHour) — see GitHub
-- **BUG-SUMMARY-INCONSISTENT** (#71, open) — Audit: which Summary widgets tick live vs frozen — see GitHub
+- **BUG-SUMMARY-INCONSISTENT** (#71, closed) — Audit: which Summary widgets tick live vs frozen — resolved alongside #70's useMemo fixes — see GitHub
 - **BUG-STOP-PAYMENT-RACE** (#73, fixed, 69cd1b4) — Session stopped even when staff cancels payment sheet — see GitHub
 - **BUG-STOP-PAUSE-FIRST** (#74, fixed, 69cd1b4) — End Session now PAUSEs first; confirmPaymentAndStop is atomic; cancel resumes session — see GitHub
 - **BUG-CANTEEN-TOD** (#68, open) — Time-of-day pricing for canteen items (enhancement, design-first) — see GitHub

@@ -868,8 +868,8 @@ useEffect(() => {
 
 ## Known Limitations (not bugs — by design)
 
-### LIMIT-001 — IndexedDB is per-browser-origin, not per-user
-Two different Google accounts on the same browser see the same tables and sessions. Acceptable for v1 (single-owner, single-device). Will be fixed when cloud sync is added: scope all Dexie reads/writes by `userId`, Dexie version bump required. Warn Sugeet if he asks for multi-staff login on one phone.
+### LIMIT-001 — Cross-device sync (UPDATED 27 May / Phase C 2026)
+Per-user isolation SHIPPED 27 May 2026: DB name is `ClubKeeperDB_<userId>`, so two Google accounts on one browser see isolated data. Cross-device sync for the same account SHIPPED in Phase C (outbox write path + SyncReader read path). Authoritative status lives in SKILL.md → Known limitations — do not trust older copies of this note.
 
 ### LIMIT-002 — `/api/*` requires `vercel dev` locally
 Vite alone doesn't serve serverless functions. Local dev with `npm run dev` returns empty 404 for `/api/*`. Handled with friendly error in `handlePayNow` (Pattern S1). Production (Vercel) works fine.
@@ -1052,7 +1052,10 @@ Files most affected: `src/db/queries.ts` (recordSessionPaymentBreakdown, createC
 **Files affected:** `src/components/PaymentSplitSheet.tsx`.
 
 ### Pattern P3 — Route param IDs are strings — coerce at the boundary, runtime-guard at queries (10 Jun 2026)
-**Symptom signature:** `db.sessions.get(routeId)` silently returns `undefined`; downstream `session?.amount ?? 0` becomes 0; user sees nonsensical errors like "₹X doesn't match total ₹0". OR: random data corruption when a numeric ID stringifies through a code path that wasn't typed.
+
+> ⚠️ **SUPERSEDED (24 Jun 2026, v20 UUID migration — do NOT follow this pattern's fix).** This pattern's advice — `const id = Number(rawId)` at the boundary and `typeof id !== 'number'` guards in queries — is the EXACT crash documented in **Pattern R5** (`Number("<uuid>") → NaN → db.get(NaN)` DataError) and was removed from the codebase in Phase B step 2 (ee40cda). Post-v20 rule: ids are UUID **strings**; validity = `id.length === 36`; never `Number()` a route param or row id. Kept only so old commit messages citing P3 stay traceable. See Patterns **R5** + **D12**.
+
+**Symptom signature (historical):** `db.sessions.get(routeId)` silently returns `undefined`; downstream `session?.amount ?? 0` becomes 0; user sees nonsensical errors like "₹X doesn't match total ₹0". OR: random data corruption when a numeric ID stringifies through a code path that wasn't typed.
 **Root cause:** `useParams()` from react-router-dom returns route params as strings. Dexie autoincrement primary keys are NUMBERS. `db.sessions.get("2")` does not match the row stored with `id=2` — it returns undefined with no error.
 **Rule:** At every component where `useParams` is called, coerce immediately: `const id = Number(rawId); if (!Number.isFinite(id) || id <= 0) renderNotFound()`. Pass the numeric `id` to all downstream calls; never let the string leak. At the queries-layer entry for any function that takes an id, add a runtime guard: `if (typeof id !== 'number' || !Number.isFinite(id) || id <= 0) throw new Error('...')`. TypeScript's `id: number` parameter type is NOT enough — JS callers (or untyped wrappers) can sneak a string past it.
 **Files affected:** every page using `useParams` (`SessionDetail.tsx`, `StartSession.tsx`, `WalletTopup.tsx`, `CustomerProfile.tsx`), every queries function taking an autoincrement id (e.g. `recordSessionPaymentBreakdown` runtime-guards at top).
@@ -1109,10 +1112,10 @@ The auto-open `useEffect` is guarded by `autoOpenHandled` (run-once per mount) A
 
 ---
 
-### R3 — Module-level flag not reset on sign-out (_clubSyncDone)
+### R3 — Module-level flag not reset on sign-out (_clubSyncDone) — RESOLVED
 **Symptom signature:** Second user to sign in on the same tab (without full page reload) sees stale club data — wrong slug, wrong acceptsTopups, wrong coin config.
 **Root cause:** `_clubSyncDone` in `src/hooks/useLiveData.ts` is module-level. Sign-out + sign-in as a different user does NOT reset it because the module is never re-evaluated.
-**Fix (pending):** Reset `_clubSyncDone = false` in the `authStore.signOut()` flow, or move the flag into the effect cleanup properly. See Pending list item 10.
+**Fix (SHIPPED — per-user key #53/f9e3e62, then Chunk 4.3 27 Jun 2026):** flag is per-user-keyed (`_clubSyncDoneForUser`) AND `authStore.signOut()` calls `_resetClubSyncSentinel()` (with `syncRunner.stop()` + `_resetClubIdCache()`, in that order — Pattern S15). Rule that generalizes: any NEW per-user module-level cache MUST be reset in the same sign-out sequence.
 
 ---
 
@@ -1130,7 +1133,7 @@ The auto-open `useEffect` is guarded by `autoOpenHandled` (run-once per mount) A
 3. On the production tab: hard reload, OR unregister the service worker via DevTools → Application → Service Workers → Unregister, then reload. PWA SWs aggressively cache JS — the new bundle won't reach an already-open tab until the SW updates.
 4. THEN reproduce. Only after all three confirm-the-deploy steps pass is it worth re-reading the code.
 
-**Why this keeps biting:** Pending #7 (PWA update banner via `useRegisterSW`) hasn't shipped, so there's no in-app prompt when a new bundle is available. Until S6/Pending-7 ships, this is a per-deploy manual step the owner has to remember.
+**Why this keeps biting:** the "PWA update banner" Pending item (via `useRegisterSW`) hasn't shipped, so there's no in-app prompt when a new bundle is available. Until it ships, this is a per-deploy manual step the owner has to remember.
 
 **How to apply:** Any future bug report that opens with "I just shipped X and prod doesn't work" — FIRST validate the deploy chain (commit pushed → Vercel green → SW refreshed). Do NOT start re-reading source until that's confirmed. Saves hours of phantom debugging.
 

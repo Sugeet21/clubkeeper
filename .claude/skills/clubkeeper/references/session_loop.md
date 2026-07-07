@@ -15,7 +15,7 @@ State all four out loud in the reply:
 3. **Applicable `bug_patterns.md` patterns.** Grep by domain (Timer/Forms/Dexie/Auth/Subscription/Routing/UI-A11y/Modals/Settings). List each pattern code (e.g. "Pattern R4, Pattern S11").
 4. **Files that will be touched.** Predict the full list. If you're not sure, view the directory first.
 
-If the change involves `src/pages/Settings.tsx` → Rule H applies, also list patterns T2/S4/F5/U6/U10/S11 explicitly.
+If the change involves `src/pages/Settings.tsx` → Rule H applies, also list patterns T2/R4/F5/U6/U10/S11 explicitly (R4 = settings useState-mirror class; an older revision cited "S4" which is a Razorpay pattern — wrong pointer).
 If the change involves a ClubSettings field → read `checklists/new_settings_field.md` and paste the filled checklist.
 
 **Gate:** If any of the four is empty or "none apply," stop and re-read the relevant reference. Empty is almost never the right answer in this codebase.

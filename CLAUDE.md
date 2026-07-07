@@ -19,7 +19,7 @@ Full project memory lives in `.claude/skills/clubkeeper/` — load the skill bef
 Three scope-restricted helper agents live in `.claude/agents/`:
 
 - `clubkeeper-explorer` — read-only navigation (Read/Grep/Glob). Use for "where is X called", "what does ripple_effects say about Y". Returns `file:line` citations.
-- `clubkeeper-reviewer` — fresh-eyes diff review (Sonnet). Use BEFORE commit on chunks >100 LOC of new code. Returns `VERDICT + violations`; does NOT auto-fix.
+- `clubkeeper-reviewer` — fresh-eyes diff review (Opus). Use BEFORE commit on chunks >100 LOC of new code. Returns `VERDICT + violations`; does NOT auto-fix.
 - `clubkeeper-skill-auditor` — Phase 4 close gate. Checks Rule B/E/G + memory-link integrity.
 
 **Decision rule:** "Does the intermediate work matter?" YES → main thread. NO → subagent.
@@ -35,7 +35,7 @@ Full rules in SKILL.md `## Project Agents` section + Rule J.
 - **No HTML `<form>` with submit.** Button `onClick` only.
 - **All async ops awaited.** No fire-and-forget.
 - **Dark theme only.** Color palette locked — see `references/design_system.md`.
-- **Mobile-first, 390px target width.**
+- **Mobile-first, 360px target width.**
 - **Indian context:** `₹` currency, `toLocaleString('en-IN')` for amounts.
 - **Run `npm run build` after every meaningful change.** Stop and report if it fails.
 

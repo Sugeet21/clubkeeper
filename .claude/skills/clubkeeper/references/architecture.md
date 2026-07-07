@@ -56,6 +56,13 @@ src/
 | `/wallet/new` | WalletNewCustomer | Add new customer |
 | `/wallet/topup/:customerId` | WalletTopup | Top up customer wallet |
 | `/customer/:customerId` | CustomerProfile | Customer transaction history |
+| `/quick-sale` | QuickSale | Walk-in canteen sale (no session) |
+| `/piggy` | Piggy | Cash-float balance + restock log |
+| `/bookings` | Bookings | Owner booking agenda (private) |
+| `/subscribe`, `/signup`, `/auth/callback`, `/` | Subscribe/Signup/AuthCallback/Landing | Public funnel routes |
+| `/c/:clubSlug` (+ `/book`) | PlayerScan / BookingScreen | PUBLIC Player Hub — no auth, no Dexie |
+| `/poster/:slug` | Poster | PUBLIC A4 QR poster, auto-print |
+| `/__dev/test-outbox`, `/__dev/test-sync-reader` | DEV-only | Sync proof pages (tree-shaken from prod) |
 
 ## /canteen Route (Phase 1, 7 Jun 2026)
 
@@ -158,16 +165,9 @@ What NOT to do:
 
 Failure mode and root-cause detail: see `bug_patterns.md` Pattern R4 (#97, 20 Jun 2026). Enforcement: `npm run check:settings` (runs in `prebuild`) fails the build on the anti-pattern; the `checklists/new_settings_field.md` template must be filled before adding any new field.
 
-## Future Architecture (When Adding Cloud Sync)
+## Cloud Sync (SHIPPED — Phase C, Jun–Jul 2026)
 
-When Sugeet decides to add auth + cloud sync:
-
-1. **Add Supabase** — Postgres + auth + realtime out of the box. Free tier generous.
-2. **Keep Dexie** — local cache stays. Supabase becomes the source of truth, Dexie syncs on online.
-3. **Sync strategy** — last-write-wins on session updates. Conflict UI not needed for solo-owner app.
-4. **Migration path** — existing offline-only users: on first auth, push their local DB to Supabase as their initial state.
-
-Do NOT implement this until Sugeet has paying customers asking for multi-device support.
+Multi-device sync is live: Dexie stays the on-device source of truth; writes go through sync wrappers (`src/db/syncWrappers.ts`) into a `_outbox` queue drained by `SyncRunner` (`src/db/syncRunner.ts`) over the lock-free `supabaseSync` client; reads pull via `SyncReader` (`src/db/syncReader.ts`) with 4 grouped realtime channels + polling fallback; conflicts resolve last-write-wins on epoch-ms `updatedAt` (Pattern S17). Working contract: `ripple_effects.md` §Sync + `bug_patterns.md` S14–S24. Design history: `sync_architecture_v2.md` (code wins where they differ).
 
 ## Performance Guidelines
 
@@ -221,9 +221,9 @@ src/lib/realtimeTopups.ts
     → supabase.removeChannel() + clearInterval(fallbackTimer)
 ```
 
-Called from TopBar on mount when `settings?.slug` exists. Cleaned up on unmount and sign-out.
+Called from `<TopupRealtimeBridge />` at the app shell (mounted once in `App.tsx` — Pattern A8; NOT from TopBar/Wallet page mounts, that was the pre-#83 bug). Cleaned up on sign-out / public-route transition.
 
-⚠ Known bug: fallback polling timer is NOT cancelled when realtime eventually connects after the 5s window. Both run simultaneously until unmount.
+⚠ Known bug (#66, open P2): the fallback polling timer is NOT cancelled when realtime eventually connects after the 5s window — both run until teardown. `realtimeBookings.ts` (the booking clone) FIXED this leak; when #66 is picked up, mirror that fix here.
 
 ## useLiveData.ts — useSyncClubFromSupabase()
 
@@ -237,4 +237,4 @@ getOwnerClub() → for each field (slug, slugLocked, acceptsTopups, coinsEnabled
 Cleanup: _clubSyncDone = false (reset on effect cleanup)
 ```
 
-⚠ Known bug: `_clubSyncDone` is module-level. If two different users sign in sequentially in the same browser tab without a full page reload, the second user's club sync is skipped because the flag was set by the first user. Fix pending (see Pending list item 10).
+✅ Resolved: the flag is per-user-keyed (`_clubSyncDoneForUser`, #53/f9e3e62) and `authStore.signOut()` calls `_resetClubSyncSentinel()` (Chunk 4.3, Pattern S15) — second user on the same tab gets a fresh sync. Rule: any NEW per-user module-level cache must be reset in the same sign-out sequence.

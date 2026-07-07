@@ -109,11 +109,9 @@ Build settings (auto-detected):
 - Output directory: `dist`
 - Install command: `npm install`
 
-## Environment Variables (when added)
+## Environment Variables (LIVE — configured in Vercel since May–Jun 2026)
 
-Future, when adding Supabase/Razorpay:
-
-In Vercel dashboard → Project Settings → Environment Variables:
+In Vercel dashboard → Project Settings → Environment Variables (full key list + local `.env.local` notes in CLAUDE.md):
 - `VITE_SUPABASE_URL` — public, OK to expose
 - `VITE_SUPABASE_ANON_KEY` — public, OK to expose (anon key has limited perms)
 - `VITE_RAZORPAY_KEY_ID` — public
@@ -123,16 +121,9 @@ For secret keys (NEVER prefix with `VITE_`):
 
 **Rule:** Anything starting with `VITE_` is shipped to the browser. Don't put secrets there.
 
-## Custom Domain (Future)
+## Custom Domain — DONE
 
-When ready (~first paying customer):
-
-1. Buy domain on Namecheap / GoDaddy: `clubkeeper.in` (~₹800/year)
-2. In Vercel: Project → Domains → Add `clubkeeper.in`
-3. Vercel shows DNS records to add at the registrar
-4. Add A/CNAME records as instructed
-5. Wait ~10 mins for SSL + DNS propagation
-6. Done — `https://clubkeeper.in` works
+`app.handbookhq.in` live since 1 Jun 2026 (Cloudflare DNS → Vercel; see "Current Setup" above). If a second domain is ever added: Vercel → Project → Domains → add → follow the shown DNS records → ~10 min for SSL.
 
 ## PWA Install on Phone
 

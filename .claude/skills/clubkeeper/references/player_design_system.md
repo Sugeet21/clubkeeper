@@ -2,6 +2,8 @@
 
 **Scope:** Every screen a player sees. Routes under `/c/:slug/*`, `/poster/:slug`, future receipt/wallet/booking views. Anything an end-customer of the club encounters, not the owner/staff app.
 
+> **Status (corrected 7 Jul 2026):** this system is the TARGET for the player-app visual redesign — it is NOT yet what's shipped. The live `/c/:slug` pages (PlayerScan, BookingScreen, Poster) currently use the owner app's dark theme tokens (`bg-bg-card`, `text-text`, etc. — see the Phase 0 pricing-card entry in changelog). Apply this system only when Sugeet explicitly starts the player-app reskin; until then, new player screens match the shipped dark theme for consistency.
+
 **Philosophy:** The staff app is a tool — dark, fast, utilitarian. The player app is a *brand* — premium, trustworthy, calm. A player landing here should feel "this club is run properly, my money is safe."
 
 ---
@@ -546,7 +548,7 @@ For player profile, club logo placeholders:
 
 ## 5. Iconography
 
-**Rule:** Minimal icons. Where used, prefer Lucide React (already in stack) at `1.5px stroke`, color `currentColor`.
+**Rule:** Minimal icons. Where used: **inline SVG, stroke `currentColor`** — same convention as the owner app (design_system.md / architecture.md: NO icon libraries; Lucide is NOT in the stack — an earlier version of this line claimed otherwise). 1.5–2px stroke.
 
 Default icon size: 20×20px. In buttons: 16×16. In headers: 24×24.
 
@@ -649,7 +651,7 @@ Never use emoji as UI icons. Never use Material/Bootstrap default icon sets — 
 
 ## 11. Reference HTML
 
-The full styled prototype lives at `/mnt/user-data/outputs/clubkeeper-roadmap.html` (Jun 2026). It uses this system for the marketing/roadmap context. Player screens should use the same tokens but with simpler, single-purpose layouts — never the magazine-style multi-section structure of the roadmap.
+A full styled prototype ("clubkeeper-roadmap.html") was produced in a claude.ai session (Jun 2026) — it is NOT in this repo; ask Sugeet if the reference render is needed. Player screens should use the same tokens but with simpler, single-purpose layouts — never the magazine-style multi-section structure of the roadmap.
 
 ---
 

@@ -2,6 +2,18 @@
 
 ---
 
+## 7 Jul 2026 — Skill-redesign Phase 1: 27 audited falsehoods corrected in place (branch skill-redesign, docs only)
+
+- Full audit of every skill file (see `skill_redesign_proposal.md` §4 for the numbered list). No `src/` changes.
+- **data_model.md rewritten to reality:** current schema is **v21** (not v16/v17 as the file claimed; even SKILL.md was behind at "v20"). All ids UUID strings post-v20; LWW metadata documented; `ClubKeeperBackupV21`; `src/types/*.ts` declared the type authority.
+- **Live prod probe (anon RPC) resolved every "⚠ pending manual run" migration:** 20260610×2 / 20260616 / 20260618 / 20260619 / 20260622 are ALL APPLIED. Pending list rewritten accordingly.
+- **NEW BUG FOUND during verification → #127 (P1):** player booking flow broken post-v20 — BookingScreen/PlayerScan still filter tables to numeric ids while `tables_json` carries UUID strings; `get_booked_slots.p_table_id` still `integer`. Issue filed, no code touched (needs own session).
+- **Dangerous stale guidance neutralized:** bug_patterns Pattern P3 marked SUPERSEDED (its `Number(routeParam)` advice is the R5 crash); sync_architecture_v2 got a DESIGN-HISTORY banner + do-not-copy warnings on §6/§7.3 (string-compare LWW = the #117 bug) + Appendix H reservation corrections.
+- **Cross-file contradictions fixed:** snooze anchor (decisions_active now matches Pattern T6), TopBar gear line (ripple Wallet section), low-stock input location (Canteen section per BUG-S5), Peak Pricing ripple section (P1–P4 all shipped 19 Jun — was stale at "Phase 1 only"), design_system responsive strategy (#91 desktop reality), architecture.md realtime/bridge + _clubSyncDone + cloud-sync sections, player_design_system status note + icon rule (inline SVG, not Lucide), CLAUDE.md (360px, reviewer=Opus), Rule H + session_loop pattern pointer (R4, not "S4"), bug_archive #97 (reopened)/#71 (closed) pointers, stale LIMIT-001 copies, test_status ARCHIVED banner, deployment/business future-tense trims, SKILL.md persona + stale issue-count block.
+- SKILL.md Pending now lists the previously-missing open P0s (#97, #100, #103, #110) + #126/#127.
+
+---
+
 ## 7 Jul 2026 — Phase C Chunk 7 Group B: ~20 queries.ts sites to wrappers + #125 Wallet fix — commits 0536abf, 9693fe9
 
 - **Step 0 (snapshot fix):** corrected the Sync Current-State header the auditor flagged last session — "Chunk 5.3 COMMITTED, runtime proof pending" → "Chunks 5.3 + 5.4 COMMITTED + RUNTIME-PROVEN" (body already said proven; header was stale). Abbreviated loop, no code.
@@ -1468,14 +1480,10 @@ Phase 1–3.5 bug fixes, all in one commit, pushed to main, Vercel auto-deployed
 - Vercel auto-deploy from main
 - Razorpay plan IDs created in dashboard (TEST mode)
 
-### ⏳ Pending
-- **Razorpay webhook setup:**
-  1. Razorpay Dashboard → Settings → Webhooks → Add webhook URL: `https://YOUR-VERCEL-URL/api/razorpay-webhook`
-  2. Generate webhook secret → add `RAZORPAY_WEBHOOK_SECRET=<secret>` to Vercel env vars
-  3. Redeploy Vercel to pick up the new env var
-  4. Enable events: `subscription.authenticated`, `.activated`, `.charged`, `.halted`, `.cancelled`, `.completed`, `payment.failed`
-- **Razorpay LIVE mode switch** (needs KYC first)
-- **End-to-end payment test on deployed Vercel**
+### ⏳ Pending (historical snapshot — CORRECTED 7 Jul 2026: LIVE mode + E2E payment test are DONE)
+- ~~**Razorpay LIVE mode switch** (needs KYC first)~~ — DONE: LIVE mode in production since 24 Jun 2026, auto-pay collecting ₹599.
+- ~~**End-to-end payment test on deployed Vercel**~~ — DONE (25 May TEST-mode E2E; LIVE billing validated via ₹10 test plan, 4 Jun).
+- **Razorpay webhook config** — still tracked in SKILL.md Pending (Dashboard webhook URL + `RAZORPAY_WEBHOOK_SECRET` in Vercel env → redeploy; events: `subscription.authenticated/.activated/.charged/.halted/.cancelled/.completed`, `payment.failed`).
 
 ---
 

@@ -1,12 +1,19 @@
 # Sync Architecture — ClubKeeper Multi-Device + Staff Login
 
-**Status:** Phase A v3 — Architecture & Decision Doc (post code-review reality check)
+> ⚠️ **DESIGN HISTORY — THE CODE WINS (banner added 7 Jul 2026, skill-redesign).**
+> Phases B–C of this plan are SHIPPED. Where this document conflicts with shipped code or with `bug_patterns.md` Patterns S14–S24, **the code and the patterns win** — several sections below were written before implementation surfaced better answers and are now known-wrong:
+> - **§6.2/§6.3 wrapper + SyncRunner pseudocode is superseded** — the shipped runner adds the per-row watchdog, drain-generation guard, dead-letter skip, payload mapper, and the dedicated lock-free `supabaseSync` client (Patterns S14/S15/S16). Do not copy code from §6.
+> - **§7.3 LWW pseudocode is DANGEROUSLY wrong** — it string-compares `updated_at` (the exact #117 bug; compare **epoch-ms numbers**, Pattern S17) and leans on `updated_by` tie-breaks (`updated_by` is NULL from our pushes). The shipped handler lives in `src/db/syncReader.ts` (Chunk 5.3). Do not copy code from §7.3.
+> - **Appendix H pattern reservations are stale** — S23 was consumed by the removeChannel-async pattern (Chunk 5.4); the role-guard pattern will get a fresh ID in Phase D. S20/S21/A20 were never created.
+> Still authoritative for FUTURE work: §2 permission matrix, §3 identity model, §4.5–4.9 contracts, §10 migration protocol, Phase D staff-login plan.
+
+**Status:** Phase A v3 — Architecture & Decision Doc (post code-review reality check); Phases B–C since shipped — see banner
 **Owner:** Sugeet
 **Driver:** Ball Bender (4 partners + staff) refusing to use offline-only app
 **Target ship:** ~4 weeks from start of Phase B
 **Last updated:** Phase A v3 — patched after Sonnet pre-flight investigation found 9 doc-vs-code mismatches
 
-This document is the source of truth for the multi-device sync + staff login project. Every architectural decision lives here. If we deviate during build, we update this doc first, then code. No exceptions.
+This document WAS the source of truth for the multi-device sync + staff login project during design (Phase A). Since Phases B–C shipped, the working contract lives in `ripple_effects.md` §Sync + `bug_patterns.md` S14–S24, and this doc is design history (see banner above). Phase D (staff login) sections remain the forward plan.
 
 ### v3.2 amendment — Phase C Chunk 0 (25 Jun 2026)
 
@@ -842,6 +849,8 @@ The owner explicitly waived the pre-v20 auto-backup step described in §5.2 Phas
 
 ## 6. Sync engine — write path (Dexie → Supabase)
 
+> ⚠️ **SUPERSEDED BY SHIPPED CODE.** The real implementation is `src/db/syncWrappers.ts` (+ `syncedBatch`, #122), `src/db/syncRunner.ts`, `src/db/syncPayloadMapper.ts`, `src/lib/supabaseSync.ts`. The sketches below lack the payload mapper (S14), watchdog + generation guard (S15), lock-free client (S16), dead-letter skip, and epoch-ms LWW stamps (S17). Read for design intent only — never copy.
+
 ### 6.1 The outbox
 
 New Dexie table:
@@ -1041,6 +1050,8 @@ channel.subscribe((status, err) => {
 Apply existing 5-second SUBSCRIBED timeout pattern from `topup_intents` (architecture.md §realtime).
 
 ### 7.3 Change handler — last-write-wins
+
+> ⚠️ **DANGEROUS — DO NOT COPY.** This sketch string-compares `updated_at` — the exact silent-data-divergence bug #117 / Pattern S17 fixed (locally-stamped `"...Z"` vs PostgREST `"...+00:00"` are not string-comparable). The shipped handler (`src/db/syncReader.ts`, Chunk 5.3) compares **epoch-ms NUMBERS**, runs the outbox-guard first, and never advances a null cursor. Also: `updated_by` is NULL from our pushes, so the tie-break below never fires as written.
 
 ```ts
 async function handleSessionChange(payload: RealtimeChangePayload) {
@@ -1512,11 +1523,11 @@ Tap [+ Add staff]:
 
 When code changes during Phase B-D, update `references/ripple_effects.md` with the new entries:
 
-- Pattern S20: synced write wrappers (replaces direct Dexie writes for 9 tables)
-- Pattern S21: per-user Dexie DB lifecycle (open/close/switch user)
-- Pattern S22: realtime channel lifecycle (subscribe on login, teardown on logout)
-- Pattern S23: role-guard pattern (OwnerOnly / HideForStaff at component and route level)
-- Pattern A20: subscription gate + role check composition (`useAccessGuard` extended for staff)
+- ~~Pattern S20: synced write wrappers~~ (never created — the wrapper rules landed as ripple_effects §Sync invariants + Pattern S24)
+- ~~Pattern S21: per-user Dexie DB lifecycle~~ (never created — covered by Pattern D6 + decisions_active Dexie section)
+- Pattern S22: realtime channel lifecycle — CREATED as reserved (2 Jul 2026)
+- ~~Pattern S23: role-guard pattern~~ — **ID CONSUMED by a different pattern** (removeChannel-is-async, Chunk 5.4, 3 Jul 2026). Phase D's role-guard pattern must take a FRESH id — do not reuse S23.
+- ~~Pattern A20: subscription gate + role check composition~~ (never created — assign fresh id in Phase D)
 
 ---
 

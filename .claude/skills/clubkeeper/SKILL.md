@@ -10,7 +10,7 @@ Persistent memory for Sugeet's ClubKeeper SaaS. Read the relevant reference file
 ## About Sugeet
 
 - Solo founder in Pune, India
-- Less coding experience — relies on AI to write code via Claude Code (Sonnet)
+- Less coding experience — relies on AI to write all code via Claude Code (current sessions run Opus/Fable-class models; Haiku explicitly rejected for project work)
 - Building ClubKeeper as recurring-income SaaS alongside HRMS SaaS and hrdocs
 - Indian English, short and pragmatic. Communicates by sharing screenshots
 - Prefers: ready-to-paste prompts > theoretical explanations
@@ -203,13 +203,14 @@ Things that BLOCK something if forgotten. Delete the line the moment it's resolv
 - **#120 (P1) — FIX COMMITTED 7b69c11, awaiting owner verification**: boot races `getSession()` vs 8s → lock-free degraded boot from stored session + toast + in-place recovery when the lock frees (Pattern A11 — NO steal; steal rejected as a refresh-token-family risk). Runtime-proven against both the real zombie jam and a deliberate strand. Owner: verify on the affected second Chrome profile, then "close #120". Residual (documented on issue): jam + EXPIRED stored token still waits, now with an explanatory amber hint instead of a silent spinner.
 - **#119 (P2) — duplicate realtime event delivery after StrictMode-raced channel teardown**: leaked server-side pg_changes subscription doubles every event until reload; idempotent applies make it correctness-safe, cost only. Evaluate teardown-after-JOIN-ack / per-generation topics / event dedupe in a later chunk.
 - **Build gate is vacuous (#118)** — `npm run build`'s `tsc` step typechecks NOTHING (solution-style root tsconfig, no `-b`). ~15 pre-existing errors sit in `tsconfig.app.json` scope; some look like real post-v20 string/number comparison bugs (AddItemBottomSheet.tsx:361, Home.tsx:291). Until fixed, "build passed" ≠ "types clean" — run `npx tsc --noEmit -p tsconfig.app.json` for a true check (expect the known pre-existing noise). Needs its own triage session.
-- **Migration: `supabase/migrations/20260622_booking_hours_and_per_slot_advance.sql`** — per-club operating hours + per-30-min-slot advance + drop+recreate `get_club_public_info` + `submit_booking_intent` (#106). Until run, BookingScreen falls back to "Bookings not configured yet" state (NO hardcoded hours fallback). Owner UI also stays gated because Dexie hours fields default to undefined.
-- **Migration: `supabase/migrations/20260618_booking_cancel.sql`** — adds `cancel_booking_intent` RPC. Until run, player Cancel button surfaces generic "Could not cancel" error. Owner-side reconcile + no-show sweep work without it.
-- **Migration: `supabase/migrations/20260619_booked_slots_rpc.sql`** — anon `get_booked_slots` RPC for #90. Until run, player time picker shows everything available.
-- **Migration: `supabase/migrations/20260616_pricing_visibility.sql`** — adds `tables_json` + `accepts_pricing_display` + RPC update. Player Hub pricing card stays hidden until run AND owner re-saves a table.
-- **Migration: `supabase/migrations/20260610_player_hub.sql`** — creates `clubs` + `topup_intents` + `get_club_public_info` RPC. ⚠ Confirm if already run in production.
-- **Migration: `supabase/migrations/20260610_clubcoins.sql`** — adds `coins_enabled` + `coin_tiers_json`. ⚠ Confirm if already run.
-- **Migration: `supabase/migrations/20260602_cardless_trial.sql`** — cardless trial broken until done (new signups land on `/subscribe`, not `/tables`).
+- **ALL "pending manual run" migrations VERIFIED APPLIED in prod (7 Jul 2026, live anon-RPC probe against `vkczmgzujpidbwtzulel`):** `20260622_booking_hours` (RPC returns `booking_open_minutes=240`), `20260618_booking_cancel` (RPC raises `not_found`, i.e. exists), `20260619_booked_slots` (exists — but see #127: its `p_table_id` is still `integer`), `20260616_pricing_visibility` (RPC returns `tables_json` + `accepts_pricing_display`), `20260610_player_hub` + `20260610_clubcoins` (RPC returns coins fields; hub live for weeks). Their old "until run, X breaks" caveat lines are deleted — none apply.
+- **Migration `20260602_cardless_trial.sql` — inferred applied** (trial signups have worked in prod since early June); confirm incidentally on the next fresh signup, then delete this line.
+- **#127 (P1, NEW 7 Jul) — player booking flow broken post-v20**: `BookingScreen.tsx:216` + PlayerScan CTA filter tables to `typeof t.id === 'number'` but `tables_json` ids are UUID strings since v20 → every table filtered out, booking CTA hidden. `get_booked_slots.p_table_id` is `integer` (probe: 22P02 on UUID) and `submit_booking_intent`'s table-id type needs the same audit. Needs a code + migration session.
+- **#110 (P0, open since 26 Jun) — S14 outbox dead-letter**: the Pattern S14 mapper fix shipped (Chunk 4.1) but the issue was never owner-verified/closed. Verify drain is clean on owner device, then ask Sugeet to close.
+- **#103 (P0, open) — isSlugAvailable on owner client freezes slug-setup Save**: #105 added a 5s fail-open race as mitigation; root issue (owner-client auth-lock queueing) still open on the issue.
+- **#100 (P0, open) — Time Rounding not applied on stop (Pattern T2 recurrence)**: investigated 20 Jun as cannot-reproduce; stays open pending owner repro on a per-minute table.
+- **#97 (P0, REOPENED) — Accept-bookings toggle flips after nav-away (Pattern R4 recurrence)**: original fix closed 20 Jun, recurred. Needs fresh RCA against the useDexieSetting path.
+- **#126 (P1) — "Group C": ~20 customer/wallet/booking write sites OUTSIDE queries.ts still raw** (customerStore/coinExpiry/streak/nudge/walkInCode/Pending modals) — do after #125 verification.
 - **Vercel webhook config** — Razorpay Dashboard → add `/api/razorpay-webhook` URL + `RAZORPAY_WEBHOOK_SECRET` → redeploy.
 - **GST invoicing + email notifications** — next sprint.
 - **PWA update banner (S6)** — needs `useRegisterSW` + banner UI; without it, users on old SW don't get new deploys without hard refresh.
@@ -226,18 +227,13 @@ Things that BLOCK something if forgotten. Delete the line the moment it's resolv
 
 ## Dexie schema — current
 
-**Current version: v20 (Phase B step 2 COMPLETE, 24 Jun 2026)** — UUID migration fully shipped. 4 tables (`gameTables`, `sessions`, `sessionItems`, `canteenItems`) have `id` schema (caller-supplied UUID string). `.upgrade()` callback atomically rewrites all existing numeric-id rows to UUIDs, remaps all FK fields (including nested `Session.tableMoves[]`), adds `_migrationSeq` per row for Phase C resumable upload. `_outbox` table added for Phase C sync queue. All `number | string` transitional unions collapsed to `string`. `CURRENT_SCHEMA_VERSION = 20`. DB naming stays `ClubKeeperDB_${userId}`. No pre-v20 backup (owner waived).
+**Current version: v21 (Chunk 5.0, 1 Jul 2026 — store strings identical to v20; `CURRENT_SCHEMA_VERSION = 21`, `ClubKeeperBackupV21`).** v20 (24 Jun 2026) was the UUID migration, fully shipped. 4 tables (`gameTables`, `sessions`, `sessionItems`, `canteenItems`) have `id` schema (caller-supplied UUID string). `.upgrade()` callback atomically rewrites all existing numeric-id rows to UUIDs, remaps all FK fields (including nested `Session.tableMoves[]`), adds `_migrationSeq` per row for Phase C resumable upload. `_outbox` table added for Phase C sync queue. All `number | string` transitional unions collapsed to `string`. `CURRENT_SCHEMA_VERSION = 20`. DB naming stays `ClubKeeperDB_${userId}`. No pre-v20 backup (owner waived).
 
 Full version history (v1–v19) lives in `changelog.md`. When bumping the version, also update `CURRENT_SCHEMA_VERSION` in `queries.ts`, the backup interface alias, `getAllDataForExport` + `importEverythingFromFile` + `resetEverything` + `importExportRoundTrip` (Pattern D10).
 
 ## Bug Tracking — GitHub Issues
 
-**As of 14 Jun 2026, bugs are tracked at: https://github.com/Sugeet21/clubkeeper/issues**
-
-- **67 issues created** covering all bugs from bug_archive.md + the June 2026 audit
-- **Issues #1–54:** fixed bugs (all closed with commit reference)
-- **Issues #55–67:** open bugs from the audit (A1–A5, P1–P2, W1–W2, S1–S2, R1–R2)
-- **Q1 skipped:** was a false alarm — null-guard already existed in PlayerScan.tsx:102
+**Since 14 Jun 2026, bugs are tracked at: https://github.com/Sugeet21/clubkeeper/issues — GitHub is the ONLY authoritative issue state.** Never trust issue counts or open/closed claims written into skill files (they drift — proven twice); run `gh issue list` (CLI) or check the Pending section's dated snapshot (claude.ai). `bug_archive.md` is a pointer index for sessions without `gh` access.
 
 `bug_archive.md` now contains one-line pointers only. Full description, root cause, and fix details live on GitHub.
 
@@ -324,7 +320,7 @@ The "## Current State" section has ONE entry per module. The section is a snapsh
 
 ### Rule H: Settings.tsx pre-flight is mandatory
 Settings.tsx has had recurring bugs across toggles, save indicators, persistence, and section ordering (BUG-S1 through BUG-S8, 20 Jun 2026). Before any edit to `src/pages/Settings.tsx`:
-1. Read `bug_patterns.md` sections T2 (Settings flag plumbing), S4 (toggle desync), F5 (toggle component), U6 (collapse state), U10 (SaveIndicator), S11 (mirror helper), and any other pattern the change touches.
+1. Read `bug_patterns.md` sections T2 (Settings flag plumbing), R4 (settings useState-mirror class — NOT "S4", which is a Razorpay pattern; old revisions had the wrong pointer), F5 (toggle component), U6 (collapse state), U10 (SaveIndicator), S11 (mirror helper), and any other pattern the change touches.
 2. Read the `## Settings` entry in `ripple_effects.md` — note the section ordering and that Club Name + UPI save use `<SaveIndicator>` (Pattern U10).
 3. **State in your reply WHICH patterns apply to the requested change, BEFORE writing code.** No exceptions, even for one-line edits.
 4. Commit message MUST cite the patterns when relevant. Example: `fix(settings): accept-bookings persistence (Pattern S4 + S11)`. This makes pattern recurrence searchable in `git log`.

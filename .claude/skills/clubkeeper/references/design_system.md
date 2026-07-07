@@ -141,11 +141,14 @@ Example back chevron:
 </svg>
 ```
 
-## Responsive Strategy
+## Responsive Strategy (#91, Jun 2026 — desktop responsiveness SHIPPED)
 
-- Mobile-first. Build for 360px width.
-- `sm:` (640px+) for tablet enhancements only — content centers with `max-w-md mx-auto`
-- No desktop-specific layout in v1. Desktop users get the mobile layout in a centered column.
+- Mobile-first. Build for 360px width; mobile (<768px) layout is the baseline and must never regress.
+- **Desktop pattern (Critical Rule 13):** page content wraps in `max-w-[1400px] mx-auto` (NOT `max-w-5xl` — owner rejected as "most of the space is empty"). Card/agenda grids: `space-y-3 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3` (Tables, Canteen, Bookings, QuickSale all use this cascade).
+- **FAB + modals stay OUTSIDE the centered wrapper** — they're `fixed` and must anchor to the viewport, not the container edge.
+- Shared `<Modal>` becomes a centered dialog at `md:` (`md:w-[min(560px,calc(100vw-2rem))]` etc.). `PaymentSplitSheet` is the ONLY non-shared sheet that also centers on desktop; `RestockSheet` + `PaymentBottomSheet` stay true bottom-sheets on every viewport.
+- Sticky-CTA pattern (QuickSale): band spans full viewport, inner content capped at `max-w-[1400px] mx-auto px-5`.
+- Still mobile-only (remaining #91 scope): Settings page, Wallet topup success screen.
 
 ### Collapsible Section Card (Settings page)
 

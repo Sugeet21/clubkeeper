@@ -67,7 +67,7 @@ At ₹599/month, ROI = 18×. Payback period = under 2 days.
 
 This is where Sugeet is now. Direct sales by Sugeet visiting clubs.
 
-1. **Visit clubs in Pune.** Show app on his phone. Free 1-month trial.
+1. **Visit clubs in Pune.** Show app on his phone. 7-day cardless free trial (shipped 2 Jun 2026 — signup lands straight on `/tables`, no card).
 2. **Existing 2-3 clubs he's visited** = warm intros. Start there.
 3. **Google Maps prospecting:** Search "billiards club Pune", "pool hall Pune", "carrom club Pune". Call, visit, demo.
 4. **WhatsApp pitch** as follow-up after in-person visit.

@@ -1,5 +1,7 @@
 # Test Status
 
+> ⚠️ **ARCHIVED (7 Jul 2026, skill-redesign).** This checklist was last maintained 19 May 2026 and no longer reflects how verification works. Since Jun 2026 the verification truth lives in: (a) runtime-proof records inside `changelog.md` entries, (b) owner-verified GitHub issues (only Sugeet closes), (c) the Playwright suites under `tests/`. The per-change discipline ("3 scenarios: happy / existing-data / edge") lives in `session_loop.md` Phase 2. Kept for historical trace only — do not update this file.
+
 Tracks which test scenarios from TEST_SCENARIOS.md have been verified vs pending.
 
 ## Last test session: 19 May 2026 (Sugeet)

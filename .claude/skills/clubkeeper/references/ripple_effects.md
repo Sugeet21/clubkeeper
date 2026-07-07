@@ -312,7 +312,7 @@ Files in scope:
 - `src/types/index.ts` — `CanteenItem { id, name, defaultPrice, stockEnabled, currentStock, isActive, createdAt, sortOrder, peakPrice? }`; `ClubSettings.lowStockThreshold?`, `ClubSettings.peakPricingEnabled?/peakStartHour?/peakStartMinute?/peakEndHour?/peakEndMinute?`
 - `src/db/database.ts` — v8 adds `canteenItems: '++id, name, isActive, sortOrder'`
 - `src/db/queries.ts` — `getCanteenItems(includeInactive)`, `addCanteenItem`, `updateCanteenItem`, `softDeleteCanteenItem`, `decrementCanteenItemStock` (standalone-only — see Pattern D7), `getLowStockThreshold` (implemented #92, with `?? 5` fallback, clamps 1–999)
-- `src/pages/Settings.tsx` — Club Info section hosts the numeric `lowStockThreshold` input (#92). Auto-persists on blur via `handleLowStockBlur` — clamps to 1–999, reverts to current on bad parse.
+- `src/pages/Settings.tsx` — the **Canteen section** hosts the numeric `lowStockThreshold` input (#92; moved from Club Info to Canteen on 20 Jun per BUG-S5/#99 — canteen-domain settings co-located). Auto-persists on blur via `handleLowStockBlur` — clamps to 1–999, reverts to current on bad parse.
 - `src/db/seed.ts` — `DEFAULT_SETTINGS.lowStockThreshold` (default 5)
 - `src/lib/canteenMatch.ts` — `normalizeName` (trim+lowercase+collapse spaces), `findMatchingCanteenItem(name, price, items)`, `findCanteenItemByName(name, items)`. No Dexie imports.
 - `src/pages/Canteen.tsx` — list with StockPill, FAB, soft-delete confirm, opens `RestockSheet` from each item card, `StatsRow`
@@ -351,18 +351,21 @@ Last updated: 20 Jun 2026 (#92 — configurable low-stock threshold)
 
 ## Peak Hour Pricing
 
-Owns: time-of-day pricing for canteen items (#68). Framing locked as neutral time-based pricing — never tied in UI copy to specific product categories. Phase 1 (schema + Settings UI) shipped 19 Jun 2026; Phases 2–4 (Canteen UI, AddItem/QuickSale chips, bulk-edit) deferred.
+Owns: time-of-day pricing for canteen items (#68). Framing locked as neutral time-based pricing — never tied in UI copy to specific product categories. **ALL FOUR PHASES SHIPPED 19 Jun 2026** (P1 schema+Settings aee59da; P2 Canteen card+form d2995fe; P3 AddItem/QuickSale chips b3bf4ce; P4 BulkPeakPriceModal+onboarding 00453da). Verified by owner.
 
-Files in scope (Phase 1):
+Files in scope:
 - `src/types/index.ts` — `CanteenItem.peakPrice?` (optional, undefined = no peak price for this item); `ClubSettings.peakPricingEnabled?` (master toggle, undefined/false = off), `peakStartHour?` (0-23, default 22), `peakStartMinute?` (0-59, default 0), `peakEndHour?` (0-23, default 6), `peakEndMinute?` (0-59, default 0)
 - `src/db/database.ts` — v18 adds peak fields; additive only, no `.upgrade()` block, no new indexes, schema string identical to v17
 - `src/db/queries.ts` — `CURRENT_SCHEMA_VERSION = 18`; new `ClubKeeperBackupV18` interface; `ClubKeeperBackupV17`/`V16` aliased to V18 (structural superset); `getAllDataForExport()` return type updated. Import/export wiring unchanged — purely additive optional fields flow through `bulkAdd` automatically.
 - `src/components/PeakWindowBottomSheet.tsx` — bottom-sheet picker. Start + End time as paired `<select>` dropdowns (hour 0-23 displayed 12-hr AM/PM; minute in 5-min steps). Live preview with duration and "crosses midnight" tag. Save disabled when start === end. Stays a bottom-sheet on every viewport (per canonical exclusion list — small picker sheets don't promote to desktop centered dialog).
 - `src/pages/Settings.tsx` — new collapsible section `id="peak-pricing"`, slotted between Piggy (4.5) and Player Hub (4.6). **Compact layout** — toggle row + inline read-only row showing `Peak hours · 10:00 PM → 06:00 AM [Edit]`. Tap `[Edit]` opens `PeakWindowBottomSheet`. Inline row + helper text render only when toggle is ON. Local `IconPeakPricing` + `formatPeakTime12()` helper (promote to `src/lib/peakPricing.ts` in Phase 2 when more callers appear). New state: `peakSheetOpen`.
 
-Files reserved for later phases (NOT yet created — do not assume they exist):
-- `src/lib/peakPricing.ts` — Phase 2. Planned exports: `isInPeakWindow(now, start, end)` with cross-midnight handling, `getEffectivePrice(item, now, settings)`, `formatPeakWindow(settings)`.
-- `src/components/BulkPeakPriceModal.tsx` — Phase 4. Two-column list (Reg + Peak inputs) for setting peak prices on every item at once.
+Files added by later phases (ALL EXIST — shipped 19 Jun 2026):
+- `src/lib/peakPricing.ts` (P2) — `PeakConfig`, `getPeakConfig(settings)`, `isInPeakWindow(now, cfg)` (cross-midnight; equals-start inside, equals-end outside), `getEffectivePrice(item, now, cfg)`, `formatPeakWindow/formatPeakEnd`. Returns false immediately when disabled — callers pass unconditionally.
+- `src/pages/Canteen.tsx` (P2+P4) — `PriceBlock` stacked two-price card, `Peak · until N` header pill (60s tick gated on `peakCfg.enabled`), permanent "Bulk peak prices" pill, one-time amber onboarding banner (`localStorage('ck_peak_onboarding_seen')` — per-browser; does NOT revive on toggle-off/on).
+- `src/components/CanteenItemFormModal.tsx` (P2) — Peak price field, rendered only when `peakPricingEnabled`; empty = no peak price; toggling peak OFF does NOT clear stored `peakPrice` values.
+- `src/components/AddItemBottomSheet.tsx` + `src/pages/QuickSale.tsx` (P3) — chips show `getEffectivePrice` + amber `PEAK` pill during the window; QuickSale cart CAPTURES price at first tap (window edge mid-checkout keeps captured price). Quick Add chips + manual freeform intentionally NOT peak-aware.
+- `src/components/BulkPeakPriceModal.tsx` (P4) — shared `<Modal>`; diff-only save via `bulkSetCanteenItemPeakPrices` (`put()` with key-drop to clear — `.update(id, {peakPrice: undefined})` would no-op). Partial-failure toast UX tracked as #123; per-row `syncedUpdate` conversion (Chunk 7 Group A) means bulk save is no longer cross-row atomic.
 
 Cross-midnight semantics (must be preserved across all phases):
 ```ts
@@ -378,7 +381,7 @@ Start inclusive, end exclusive. `s > e` means the window wraps past midnight (e.
 Invariants (apply to all phases):
 - **Two principles enforced everywhere:** (1) when toggle is OFF, UI is 100% identical to today across every page — zero new elements; (2) no new icons or colours beyond a single amber/orange accent for the "Peak" pill/tag.
 - **No `peakPrice` set on an item** → item never uses peak pricing, no second-line UI, no `PEAK` tag. Phase 2+ must respect this.
-- Default values when peak fields are undefined: enabled=false, start=22:00, end=06:00. Read-time fallbacks live in `Settings.tsx` for now; centralise in `lib/peakPricing.ts` in Phase 2.
+- Default values when peak fields are undefined: enabled=false, start=22:00, end=06:00. Centralised in `src/lib/peakPricing.ts` (`getPeakConfig`) since P2 — read fallbacks through it, never inline.
 - Owner can always override the suggested price per add (existing AddItemBottomSheet/QuickSale behaviour — must not be broken when Phase 3 lands).
 - Framing copy: helper text shown to owner uses *"higher demand and staffing"* as the justification. Never mention specific product categories (tobacco, alcohol, etc.) in any UI string.
 
@@ -390,14 +393,9 @@ Cross-feature ripples:
 - → [Quick Sale](#quick-sale) (Phase 3: chip shows peak price + `PEAK` tag during window).
 - → [Session Items (POS)](#session-items-pos) (Phase 3: `AddItemBottomSheet` chip same treatment).
 
-Pending phases (do NOT ship as one commit — owner wants phased delivery):
-- Phase 2: `lib/peakPricing.ts` + `CanteenItemFormModal` Peak price field + Canteen page stacked two-price card + active-window header pill.
-- Phase 3: `AddItemBottomSheet` + `QuickSale` TOD-aware chips with `PEAK` tag.
-- Phase 4: `BulkPeakPriceModal` + first-time onboarding banner on Canteen page.
+See also: `changelog.md` (19 Jun 2026 — four entries, P1–P4), GitHub #68 (full UI plan + edge cases; verified by owner), #123 (bulk-save partial-failure toast, open P2).
 
-See also: `changelog.md` (19 Jun 2026 entry), GitHub #68 (full UI plan + edge cases), GitHub #92 (related — configurable low-stock threshold can share the v18 Dexie bump if not yet implemented).
-
-Last updated: 19 Jun 2026 (Phase 1 — schema + Settings UI)
+Last updated: 7 Jul 2026 (section corrected to shipped P1–P4 reality — was stale at "Phase 1 only" since 19 Jun)
 
 ---
 
@@ -569,7 +567,7 @@ Invariants:
 - Session debit shape: `{ type:'debit', referenceType:'session', referenceId: sessionId.toString() }`.
 - `customerDisplay.ts` rule (Pattern F8): NEVER add inline `customer.name ?? ... ?? 'Customer'` chains. Always use the helper. Three-way distinction (named / unnamed-with-phone / anonymous) is canonical — do not collapse to two.
 - `phoneTail` is display-only — never for identity checks or sorting.
-- TopBar right side has 4 elements at 360px (online dot, canteen, wallet, gear). Do NOT add a 5th without removing one or redesigning.
+- TopBar right side at 360px: online dot + bookings icon (conditional) + canteen + wallet — **NO gear** (removed 18 Jun 2026, #91; Critical Rule 12 — never re-add). Do NOT add another element without removing one or redesigning.
 - Wallet routes are private — do NOT add to `PUBLIC_PATHS`. Wallet is NOT a BottomNav tab; accessed via TopBar icon.
 
 Cross-feature ripples:
@@ -1248,7 +1246,7 @@ Invariants:
 - **No-show forfeit:** `applyNoShowSweep` MUST NOT write a wallet credit. The advance is forfeit by policy. Only the booking row is flipped to `'no_show'`. (Contrast with cancellation, which DOES refund.)
 - **Sweep gating:** No-show sweep runs only when the owner is signed in and DB ready. Don't run it from public Player Hub routes — those don't have access to the owner's per-user Dexie. ExpirySweepRunner's existing guards already cover this.
 - **Migration safety (pre-run):** `getClubPublicInfo` MUST default `acceptsBookings ?? false` and `bookingAdvanceAmount ?? 100` in the TS mapper so `/c/<slug>` does not crash for clubs whose migration hasn't been applied yet.
-- **Player-side defensive read (Part A):** BookingScreen MUST filter `tablesJson.filter(t => typeof t.id === 'number')` before showing the table picker. Pre-P1b `tables_json` rows lack `id` — submitting one would send `null` as `p_table_id` and the owner would get an unconfirmable intent. If filtered list is empty → "no_tables" state, never a broken picker.
+- **Player-side defensive read (Part A) — ⚠ STALE POST-v20, now BUG #127 (found 7 Jul 2026):** the original invariant ("filter `typeof t.id === 'number'`") was written when table ids were numeric. Post-v20, `tables_json` ids are UUID **strings** (verified live in prod), so the shipped numeric filter rejects EVERY table → booking CTA hidden / no_tables — player booking is effectively disabled. The applied `get_booked_slots` RPC also still declares `p_table_id integer`. The intent of the invariant survives (filter out id-less pre-P1b rows; empty list → "no_tables", never a broken picker) but the check must become "has a non-empty string id". Fix tracked on #127 — code + RPC retype, own session.
 - **Time math (Pattern T1):** `slotStart` / `slotEnd` are Unix ms internally throughout BookingScreen and Dexie `bookings` rows. ISO timestamptz strings only at the Supabase RPC boundary (`submitBookingIntent` does `new Date(ms).toISOString()`). Never store ISO strings in Dexie or do clock-counter math.
 - **Today's past-time filter:** `buildTimeOptions(date, now)` filters `ms > now` so any 30-min step earlier than the current moment never appears on TODAY's chip grid. Future days get the full window.
 - **Booked-slot visibility (#90):** `getBookedSlots` is anon-readable but exposes ONLY `(slot_start, slot_end)` — never `player_phone`, `player_name`, or `advance_amount`. Anyone scraping the slug sees timing only. The 8-day window cap blocks bulk harvesting. Status filter is `IN ('pending','confirmed')` only — rejected/expired/cancelled rows don't block future booking.
