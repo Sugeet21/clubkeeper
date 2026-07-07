@@ -44,7 +44,6 @@ Phase C sync cutover tail: Group C write sites (#126), owner verification of #12
 - **Session persistence watch** — `storage` option was linter-removed from `createClient`; monitor for session drops in production.
 - **Razorpay key rotation warning** — any rotation of `VITE_RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` requires re-verifying all 6 plan IDs (Pattern S5 curl check).
 - **GST invoicing + email notifications** — next sprint.
-- **`main` not pushed** — local `main` is several commits ahead of GitHub/Vercel (Chunk 5.4 → Group B → #125); production runs pre-Chunk-5.4 code until Sugeet pushes.
 
 ### Supabase migration ledger (verified against prod 7 Jul 2026 via anon-RPC probe)
 
