@@ -53,11 +53,11 @@ Before saying "done":
 
 1. **Mentally run the 3 scenarios** from Phase 2. If happy/existing-data/edge can't all be answered, the feature isn't done.
 2. **Run the Rule E checklist:**
-   - `changelog.md` updated?
+   - `history/changelog.md` updated?
    - `ripple_effects.md` updated for files touched?
    - Any new bug found → GitHub issue created?
    - Any new pattern → `bug_patterns.md` updated?
-   - Current State Snapshot still accurate? (Rule G — overwrite, don't append.)
+   - `STATE.md` still accurate? (Rule G — overwrite module lines in place, delete resolved pending, never append.)
 3. **Run:** `npm run check:skill` — the deterministic gate (Rule B pairing, STATE.md shape, pattern IDs/refs, migration ledger, open-P0/P1 coverage, changelog ordering, freshness stamp). Any FAIL = the session is not closed; fix and re-run. (`git log --since="2 hours ago" --name-only` remains the manual fallback if node is unavailable.)
 4. **Tell Sugeet what to verify.** Format: "Please test on your phone: (a) ___, (b) ___, (c) ___. Reply 'verified' or 'close #NN' when done. I will not close the issue."
 

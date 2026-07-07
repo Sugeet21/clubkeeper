@@ -246,4 +246,4 @@ Boolean fields: use `.filter(r => r.bool === true)`, never `.equals(1)` (Pattern
 
 ## Cloud sync status
 
-Multi-device sync is **shipped and live** (Phase C — outbox write path + SyncReader read path + realtime + polling fallback). See `ripple_effects.md` §Sync for the working contract and `bug_patterns.md` S14–S24 for the hard-won rules. The original design doc (`sync_architecture_v2.md`) is design history — where it conflicts with shipped code, the code wins.
+Multi-device sync is **shipped and live** (Phase C — outbox write path + SyncReader read path + realtime + polling fallback). See `ripple_effects.md` §Sync for the working contract and `bug_patterns.md` S14–S24 for the hard-won rules. The original design doc (`history/sync_architecture_v2.md`) is design history — where it conflicts with shipped code, the code wins.

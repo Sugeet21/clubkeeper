@@ -20,29 +20,28 @@ For the time window or commits given:
 - For each commit:
   - Did it touch `src/`, `supabase/migrations/`, or `api/`? If YES, then it MUST also touch at least one of:
     - `.claude/skills/clubkeeper/SKILL.md`
-    - `.claude/skills/clubkeeper/references/changelog.md`
+    - `.claude/skills/clubkeeper/references/history/changelog.md`
     - `.claude/skills/clubkeeper/references/ripple_effects.md`
     - `.claude/skills/clubkeeper/references/bug_patterns.md`
-    - `.claude/skills/clubkeeper/references/bug_archive.md`
+    - `.claude/skills/clubkeeper/references/history/bug_archive.md`
     - `.claude/skills/clubkeeper/references/decisions_active.md`
   - If src/migration changed but no skill file did → FAIL with the SHA and file list.
 
 ## 2. Rule E — Session-close checklist
 
 For the most recent skill update:
-- Does `changelog.md` have a new entry dated today (or in the session window)?
+- Does `history/changelog.md` have a new entry dated today (or in the session window)?
 - Does any new bug have a corresponding GitHub issue? Run `gh issue list --search "<keywords from changelog>" --state all --repo Sugeet21/clubkeeper` to verify. Flag if changelog mentions a bug code (BUG-S13, BUG-S14, etc.) but no GitHub issue is referenced.
 - If a new pattern was discovered, was `bug_patterns.md` updated?
 - If a touched file appears in `ripple_effects.md`, were the ripples updated if the change altered dependencies?
 
-## 3. Rule G — Current State overwrite
+## 3. Rule G — STATE.md overwrite discipline
 
-Scan SKILL.md's `## Current State` section:
-- Each module name (e.g. "Sync project", "Wallet", "Settings") must appear EXACTLY ONCE. Run `grep -c` for the leading `**Module name` patterns. Duplicate entries = FAIL.
-- Each entry must be ONE line. Multi-line bullet sub-lists under a single bullet = FAIL.
-- Entries should not contain build sizes, commit SHAs, or "shipped on YYYY-MM-DD" — those belong in `changelog.md`.
+(The shape checks — one line per module, no duplicates, no SHAs/sizes/dates — are already covered by `npm run check:skill` step 0.) Your judgment layer on `.claude/skills/clubkeeper/STATE.md`:
+- Is each module line TRUTHFUL for the session's changes (not just well-shaped)? A module whose behavior changed this session but whose line wasn't overwritten = FAIL.
+- Was the "Last verified" stamp updated?
 
-Scan the `## Pending` section:
+Scan STATE.md's `## Load-bearing pending` + issue-snapshot sections:
 - Each entry should be load-bearing (described as blocking something).
 - If a Pending entry's described condition is satisfied (e.g. "Migration: X" but X is now applied in production), FAIL — it should have been deleted.
 

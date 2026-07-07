@@ -1,5 +1,16 @@
 # Changelog
 
+**Purpose:** chronological record of what shipped, when, and what manual setup was done — read when Sugeet asks "when did we ship X" or a past step must be retraced. "Where are we NOW?" lives in `../../STATE.md`, not here. **Ordering law: newest entry at the top, always PREPEND** (enforced by `npm run check:skill`). Below the "Early history" divider near the bottom, the May-2026 foundation entries run oldest-first — that block is frozen.
+
+---
+
+## 8 Jul 2026 — Skill-redesign Phase 5: history/ directory + changelog repair + ripple steady-state (branch skill-redesign)
+
+- **`references/history/` created**; moved in: `changelog.md`, `decisions_archive.md`, `bug_archive.md`, `sync_architecture_v2.md`, `test_status.md`. Every live-file reference swept to the new paths (SKILL, STATE, references, agents, CLAUDE.md); Rule G targets in session_loop + auditor now point at STATE.md.
+- **Changelog repaired:** purpose header moved from mid-file to the top; misordered entries relocated (4-Jun Phase-3-Commit-2, 10-Jun v13, 12-Jun deploy fix, three loose 14-Jun notes); "Open future work" section deleted (GST/email live in STATE.md pending; the old-`ClubKeeperDB` migration + offline-migration-strategy items are superseded by per-user DB + sync §10); explicit "Early history — oldest-first" divider added before the frozen May block.
+- **ripple_effects §Advance Booking consolidated to steady-state:** seven per-phase "Files in scope (shipped <date>)" narrative blocks (~120 lines) replaced by one consolidated files list; ALL invariants (main + P2) preserved verbatim; phase narratives already lived in this changelog's 16–22 Jun entries. Section header now flags #127. (First scripted attempt hit a shell-quoting corruption; file was restored from git and redone via a script file — worth remembering: never inline-heredoc markdown with backticks through bash.)
+- `npm run check:skill` PASS after all moves (its path resolution is history/-aware).
+
 ---
 
 ## 7 Jul 2026 — Skill-redesign Phase 4: `npm run check:skill` machine gate (branch skill-redesign)
@@ -1081,72 +1092,12 @@ Phase A0 of #79 — Import follows. Build clean. Pending Sugeet verification.
 
 ---
 
-## 13 Jun 2026 — Auth fixes (commit e7b0522)
+## 14 Jun 2026 — Loose notes (relocated from file tail during 8 Jul 2026 ordering repair)
 
-- `authStore.signOut()`: `window.location.href = '/'` hard nav after clearing state. Also resets `loading` + `subscriptionLoaded` flags.
-- `supabase.ts`: `storage` option added then removed by linter — session persistence relies on Supabase default.
-- `Settings.tsx handleSaveClubName`: fires `updateClubNameRemote()` (new fn, `playerHubApi.ts`) after Dexie write — fire-and-forget Supabase sync with error toast (S1 fix).
-- `PlayerHubSettings.tsx handleToggleTopups`: Supabase-first write, Dexie only on success — eliminates permanent desync (S4 fix).
-- `AuthCallback.tsx`: 20s safety timeout — toast + navigate to `/` if Supabase hangs.
-
----
-
-## 10–11 Jun 2026 — Player Hub + ClubCoins + Engagement (commit 969076a)
-
-### Player Hub (Dexie v14)
-- Supabase migrations: `20260610_player_hub.sql` (clubs + topup_intents + RPCs) + `20260610_clubcoins.sql` (coins_enabled + coin_tiers_json columns).
-- `src/lib/playerHubApi.ts`: full API layer — `getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`, `getOwnerClub`, `upsertClub`, `updateAcceptsTopups`, `getPendingTopups`, `confirmTopupIntent`, `rejectTopupIntent`, `syncCoinConfig`.
-- `src/lib/realtimeTopups.ts` (NEW): Supabase realtime channel `topup_intents_{clubId}` + 5s/30s polling fallback.
-- `src/store/topupInbox.ts` (NEW): Zustand store — `pendingCount, modalOpen, usePendingTopupCount`.
-- `src/lib/slug.ts` (NEW): `generateSlug`, `validateSlug`, `isSlugAvailable`.
-- `src/pages/player/PlayerScan.tsx` (NEW): public `/c/:clubSlug` — form → UPI QR → poll → confirm/reject/expired states.
-- `src/pages/player/PlayerScanLayout.tsx` (NEW): minimal public layout.
-- `src/pages/Poster.tsx` (NEW): `/poster/:slug` — A4 QR poster, auto-triggers `window.print()`.
-- `src/components/PendingTopupsModal.tsx` (NEW): per-row confirm/reject state machine.
-- `src/pages/PlayerHubSettings.tsx`: slug setup modal, accept-topups toggle (Supabase-first), coin config editor, engagement config.
-- `src/hooks/useLiveData.ts`: `useSyncClubFromSupabase()` added — one-way Supabase→Dexie sync on mount.
-- `src/App.tsx`: routes `/c/:clubSlug` + `/poster/:slug` added; `ExpirySweepRunner` added.
-
-### ClubCoins (Dexie v15)
-- `src/lib/coins.ts` (NEW): `DEFAULT_COIN_CONFIG`, `coinsEarnedForTopup`, `resolveCoinConfig`, `coinsToRupees`, `coinsToMinutes`, `maxRedeemableCoins`, `formatCoins`.
-- `src/components/CoinTiersEditor.tsx` (NEW).
-- `src/components/CoinRedemptionPill.tsx` (NEW) — wired into `SessionDetail.tsx:697`.
-- `Customer.coinBalance?` · `WalletTransaction.balanceType?/coinDelta?/rupeeEquivalent?`.
-- `WalletReferenceType` extended with `coin_redemption`.
-- `recordTopupWithCoins` added to `queries.ts` — atomic wallet + coin credit + welcome bonus one-shot.
-
-### Engagement (Dexie v16)
-- `src/lib/streak.ts` (NEW): `checkAndAwardStreak` — called from `SessionDetail.tsx:750,801`.
-- `src/lib/coinExpiry.ts` (NEW): FIFO lot accounting, `applyExpirySweep` — called every 4h from `ExpirySweepRunner`.
-- `src/lib/nudge.ts` (NEW): `renderNudgeTemplate`, `buildWhatsAppLink`, `logNudgeSent`.
-- `src/lib/dormancy.ts` (NEW): `getDormantCustomers`.
-- `src/components/BringBackList.tsx` (NEW).
-- `src/components/NudgeTemplateEditor.tsx` (NEW).
-- `src/components/EngagementConfigCard.tsx` (NEW).
-- `Customer.firstTopupAt?/lastStreakBonusAt?/expiryAppliedAt?` · `ClubSettings` engagement fields.
-- `WalletReferenceType` extended with `coin_expiry, welcome_bonus, streak_bonus, engagement_log`.
-- All features **off by default** — master boolean switches.
-
----
-
-## 12 Jun 2026 — Deploy fix: SPA rewrite + favicon/PWA icons
-
-**Root cause found:** `vercel.json` was missing entirely. Vercel was treating every deep route as a file lookup and returning HTTP 404. The Workbox `navigateFallback: 'index.html'` only works once the service worker is active — useless on first load in incognito or fresh device.
-
-**Changes shipped (commit 9d474b0):**
-- `vercel.json` created at project root with catch-all SPA rewrite (excludes `/api/*`)
-- `public/favicon.ico`, `public/favicon-16x16.png`, `public/favicon-32x32.png`, `public/apple-touch-icon.png` added
-- `public/pwa-192x192.png`, `public/pwa-512x512.png` added (were missing — referenced in vite.config.ts manifest but files did not exist in `public/`)
-- `public/logo_master.svg` added
-- `index.html` `<head>` updated with `<link rel="icon">` and `<link rel="apple-touch-icon">` tags
-
-**Unblocked by this fix:** Player QR URL (`/c/<slug>`), Poster route (`/poster/<slug>`), Google OAuth callback (`/auth/callback`), all other deep-link routes.
-
-**Files touched:** `vercel.json` (new), `index.html`, `public/` (7 new files)
-
-Chronological record of what shipped, when, and what manual setup was done. Read only when Sugeet asks "when did we ship X" or needs to retrace a specific past step. Current state of the app lives in `SKILL.md` under "Current State Snapshot" — read that first for "where are we now?" questions.
-
----
+14 Jun 2026 — SKILL.md: tightened bug-tracking rules. Issues now created BEFORE code, closed ONLY after Sugeet's explicit verification (Rule F).
+14 Jun 2026 — fix #69 (2b83dd1): QuickSale now shows UPI QR overlay for the UPI split amount after a successful sale. `UpiQrCard` now has 3 consumers — ripple_effects.md updated. Bug sprint issues #68–74 created and logged in bug_archive.md.
+14 Jun 2026 — fix #72 (6be8ed0): Table Move now rejects moves across incompatible rate-card configs (billing mode / tier array / tolerance). MoveTableList mirrors same checks client-side. ripple_effects.md updated with full 6-rule compatibility spec.
+14 Jun 2026 — fix #70 (9f7e2aa + 41a7bb1): All Summary widgets now tick live. Two-commit fix: (1) removed useMemo from rankTables + bucketByHour; (2) removed useMemo from runningRevenueToday — the real cause of Day's earnings + Avg session freeze. Pattern T4 addendum: useMemo hides getElapsedMs from tick just like useLiveQuery does.
 
 ## 9 Jun 2026 — Back Entries Phase 2: Canteen items in back entry
 
@@ -1276,6 +1227,31 @@ After 5 failed attempts with various approaches (`showPicker()`, clipped/sr-only
 
 ---
 
+## Phase 3 Commit 2 — ₹10 live plan + start_at 3-scenario math (BUG-026)
+
+**Date:** 4 Jun 2026
+**Commit message:** `phase-3-commit-2: ₹10 live plan + start_at 3-scenario math (BUG-026)`
+
+### Files changed
+- `src/lib/razorpayPlans.ts` — added `'test'` to `Tier` union; `LIVE_PLANS` gains `test_monthly: 'plan_Sx0LfhJGzccBHQ'`; exported `isLiveMode`; `PlanMap` is now `Partial<Record<...>>` so `'test'` tier can be absent from TEST_PLANS
+- `api/_shared/plans.ts` — same mirror changes: `'test'` tier, `LIVE_PLANS` gains `test_monthly`, `Partial` map
+- `api/create-subscription.ts` — 3-scenario `start_at` logic reading Supabase before Razorpay create; conditional `trial_ends_at` write; scenario logged + stored in Razorpay notes; added `'test'` to `VALID_TIERS`; response now includes `startAt` and `scenario` fields
+- `src/pages/Subscribe.tsx` — `PlanId` type extended to include `'test'` and `'pro'`; `MONTHLY_PRICES`/`ANNUAL_PRICES` maps include all 4 tiers; added `visiblePlanIds` gating logic (Sugeet email + LIVE mode check); passes `visiblePlanIds` prop to `<PlanSelection>`
+- `src/components/subscribe/PlanSelection.tsx` — `VISIBLE_PLAN_IDS` removed from module scope; now receives `visiblePlanIds: readonly PlanId[]` as prop; `PLANS` renamed `ALL_PLANS`; `'test'` tier entry added (₹10/month, 2-feature list)
+- `src/components/subscribe/PlanCard.tsx` — `id` union extended to include `'test'`; LIVE TEST badge rendered for `id === 'test'`
+
+### Business impact
+- BUG-026 fixed: expired-trial users now charged immediately on subscribe (no more free trial extension)
+- Mid-trial early-subscribe honors remaining trial days correctly (no overlap, no double charge)
+- ₹10 LIVE test plan visible only to `sugeetjadhav@gmail.com` in LIVE mode — allows cheap end-to-end billing validation without touching real customer plans
+
+### What's now testable
+- Sign in as Sugeet on LIVE mode → Subscribe page shows ₹10 "Test ₹10 / month" card with 🔴 badge
+- Subscribe with ₹10 → Razorpay charges real ₹10 immediately if trial expired, or defers to trial end if mid-trial
+- Scenario (`new` / `mid_trial` / `expired`) visible in Razorpay dashboard under subscription notes
+
+---
+
 ## 3 Jun 2026 — Fix: cancel subscription fails during trial (BUG-025)
 
 `api/cancel-subscription.ts` always called `cancel(id, 1)` (cancel at cycle end). Razorpay rejects this with 400 when no billing cycle has started yet (`authenticated` state during trial). Added fallback: catch that specific 400, retry with `cancel(id, 0)` (immediate), update Supabase `status='cancelled', cancel_at_period_end=false`, return `{ cancelled: true, immediate: true }`. Normal active-subscription cancel path unchanged. See Pattern S7.
@@ -1353,6 +1329,8 @@ Fixed alarm sound quality: gain 0.3 → 1.0, tone duration 200ms → 500ms with 
 Primary production URL is now `app.handbookhq.in` (Cloudflare DNS → Vercel). Old `clubkeeper.vercel.app` still resolves as backup. No code changed; this is a Vercel + DNS config change only. Future share links, marketing material, and customer-facing references should use the custom domain.
 
 ---
+
+## ——— Early history (May 2026) — entries below this divider run OLDEST-FIRST and are frozen ———
 
 ## Prompts 0–8 — Foundations and polish
 
@@ -1722,37 +1700,68 @@ Every inline `customer.name ?? customer.walkInCode ?? 'Customer'` chain replaced
 
 ---
 
-## Open future work (not yet started)
+## 13 Jun 2026 — Auth fixes (commit e7b0522)
 
-- GST invoicing (Prompt 14)
-- Email notifications (Prompt 14)
-- One-time migration from old `ClubKeeperDB` → `ClubKeeperDB_<userId>` for users who had data before this change
-- Existing offline data migration strategy when cloud sync arrives (now unblocked — Dexie is already per-user)
+- `authStore.signOut()`: `window.location.href = '/'` hard nav after clearing state. Also resets `loading` + `subscriptionLoaded` flags.
+- `supabase.ts`: `storage` option added then removed by linter — session persistence relies on Supabase default.
+- `Settings.tsx handleSaveClubName`: fires `updateClubNameRemote()` (new fn, `playerHubApi.ts`) after Dexie write — fire-and-forget Supabase sync with error toast (S1 fix).
+- `PlayerHubSettings.tsx handleToggleTopups`: Supabase-first write, Dexie only on success — eliminates permanent desync (S4 fix).
+- `AuthCallback.tsx`: 20s safety timeout — toast + navigate to `/` if Supabase hangs.
 
 ---
 
-## Phase 3 Commit 2 — ₹10 live plan + start_at 3-scenario math (BUG-026)
+## 12 Jun 2026 — Deploy fix: SPA rewrite + favicon/PWA icons
 
-**Date:** 4 Jun 2026
-**Commit message:** `phase-3-commit-2: ₹10 live plan + start_at 3-scenario math (BUG-026)`
+**Root cause found:** `vercel.json` was missing entirely. Vercel was treating every deep route as a file lookup and returning HTTP 404. The Workbox `navigateFallback: 'index.html'` only works once the service worker is active — useless on first load in incognito or fresh device.
 
-### Files changed
-- `src/lib/razorpayPlans.ts` — added `'test'` to `Tier` union; `LIVE_PLANS` gains `test_monthly: 'plan_Sx0LfhJGzccBHQ'`; exported `isLiveMode`; `PlanMap` is now `Partial<Record<...>>` so `'test'` tier can be absent from TEST_PLANS
-- `api/_shared/plans.ts` — same mirror changes: `'test'` tier, `LIVE_PLANS` gains `test_monthly`, `Partial` map
-- `api/create-subscription.ts` — 3-scenario `start_at` logic reading Supabase before Razorpay create; conditional `trial_ends_at` write; scenario logged + stored in Razorpay notes; added `'test'` to `VALID_TIERS`; response now includes `startAt` and `scenario` fields
-- `src/pages/Subscribe.tsx` — `PlanId` type extended to include `'test'` and `'pro'`; `MONTHLY_PRICES`/`ANNUAL_PRICES` maps include all 4 tiers; added `visiblePlanIds` gating logic (Sugeet email + LIVE mode check); passes `visiblePlanIds` prop to `<PlanSelection>`
-- `src/components/subscribe/PlanSelection.tsx` — `VISIBLE_PLAN_IDS` removed from module scope; now receives `visiblePlanIds: readonly PlanId[]` as prop; `PLANS` renamed `ALL_PLANS`; `'test'` tier entry added (₹10/month, 2-feature list)
-- `src/components/subscribe/PlanCard.tsx` — `id` union extended to include `'test'`; LIVE TEST badge rendered for `id === 'test'`
+**Changes shipped (commit 9d474b0):**
+- `vercel.json` created at project root with catch-all SPA rewrite (excludes `/api/*`)
+- `public/favicon.ico`, `public/favicon-16x16.png`, `public/favicon-32x32.png`, `public/apple-touch-icon.png` added
+- `public/pwa-192x192.png`, `public/pwa-512x512.png` added (were missing — referenced in vite.config.ts manifest but files did not exist in `public/`)
+- `public/logo_master.svg` added
+- `index.html` `<head>` updated with `<link rel="icon">` and `<link rel="apple-touch-icon">` tags
 
-### Business impact
-- BUG-026 fixed: expired-trial users now charged immediately on subscribe (no more free trial extension)
-- Mid-trial early-subscribe honors remaining trial days correctly (no overlap, no double charge)
-- ₹10 LIVE test plan visible only to `sugeetjadhav@gmail.com` in LIVE mode — allows cheap end-to-end billing validation without touching real customer plans
+**Unblocked by this fix:** Player QR URL (`/c/<slug>`), Poster route (`/poster/<slug>`), Google OAuth callback (`/auth/callback`), all other deep-link routes.
 
-### What's now testable
-- Sign in as Sugeet on LIVE mode → Subscribe page shows ₹10 "Test ₹10 / month" card with 🔴 badge
-- Subscribe with ₹10 → Razorpay charges real ₹10 immediately if trial expired, or defers to trial end if mid-trial
-- Scenario (`new` / `mid_trial` / `expired`) visible in Razorpay dashboard under subscription notes
+**Files touched:** `vercel.json` (new), `index.html`, `public/` (7 new files)
+
+---
+
+## 10–11 Jun 2026 — Player Hub + ClubCoins + Engagement (commit 969076a)
+
+### Player Hub (Dexie v14)
+- Supabase migrations: `20260610_player_hub.sql` (clubs + topup_intents + RPCs) + `20260610_clubcoins.sql` (coins_enabled + coin_tiers_json columns).
+- `src/lib/playerHubApi.ts`: full API layer — `getClubPublicInfo`, `submitTopupIntent`, `getTopupIntentStatus`, `getOwnerClub`, `upsertClub`, `updateAcceptsTopups`, `getPendingTopups`, `confirmTopupIntent`, `rejectTopupIntent`, `syncCoinConfig`.
+- `src/lib/realtimeTopups.ts` (NEW): Supabase realtime channel `topup_intents_{clubId}` + 5s/30s polling fallback.
+- `src/store/topupInbox.ts` (NEW): Zustand store — `pendingCount, modalOpen, usePendingTopupCount`.
+- `src/lib/slug.ts` (NEW): `generateSlug`, `validateSlug`, `isSlugAvailable`.
+- `src/pages/player/PlayerScan.tsx` (NEW): public `/c/:clubSlug` — form → UPI QR → poll → confirm/reject/expired states.
+- `src/pages/player/PlayerScanLayout.tsx` (NEW): minimal public layout.
+- `src/pages/Poster.tsx` (NEW): `/poster/:slug` — A4 QR poster, auto-triggers `window.print()`.
+- `src/components/PendingTopupsModal.tsx` (NEW): per-row confirm/reject state machine.
+- `src/pages/PlayerHubSettings.tsx`: slug setup modal, accept-topups toggle (Supabase-first), coin config editor, engagement config.
+- `src/hooks/useLiveData.ts`: `useSyncClubFromSupabase()` added — one-way Supabase→Dexie sync on mount.
+- `src/App.tsx`: routes `/c/:clubSlug` + `/poster/:slug` added; `ExpirySweepRunner` added.
+
+### ClubCoins (Dexie v15)
+- `src/lib/coins.ts` (NEW): `DEFAULT_COIN_CONFIG`, `coinsEarnedForTopup`, `resolveCoinConfig`, `coinsToRupees`, `coinsToMinutes`, `maxRedeemableCoins`, `formatCoins`.
+- `src/components/CoinTiersEditor.tsx` (NEW).
+- `src/components/CoinRedemptionPill.tsx` (NEW) — wired into `SessionDetail.tsx:697`.
+- `Customer.coinBalance?` · `WalletTransaction.balanceType?/coinDelta?/rupeeEquivalent?`.
+- `WalletReferenceType` extended with `coin_redemption`.
+- `recordTopupWithCoins` added to `queries.ts` — atomic wallet + coin credit + welcome bonus one-shot.
+
+### Engagement (Dexie v16)
+- `src/lib/streak.ts` (NEW): `checkAndAwardStreak` — called from `SessionDetail.tsx:750,801`.
+- `src/lib/coinExpiry.ts` (NEW): FIFO lot accounting, `applyExpirySweep` — called every 4h from `ExpirySweepRunner`.
+- `src/lib/nudge.ts` (NEW): `renderNudgeTemplate`, `buildWhatsAppLink`, `logNudgeSent`.
+- `src/lib/dormancy.ts` (NEW): `getDormantCustomers`.
+- `src/components/BringBackList.tsx` (NEW).
+- `src/components/NudgeTemplateEditor.tsx` (NEW).
+- `src/components/EngagementConfigCard.tsx` (NEW).
+- `Customer.firstTopupAt?/lastStreakBonusAt?/expiryAppliedAt?` · `ClubSettings` engagement fields.
+- `WalletReferenceType` extended with `coin_expiry, welcome_bonus, streak_bonus, engagement_log`.
+- All features **off by default** — master boolean switches.
 
 ---
 
@@ -1811,8 +1820,3 @@ Every inline `customer.name ?? customer.walkInCode ?? 'Customer'` chain replaced
 - Settings → Piggy → Set opening balance → Summary PIGGY tile reflects it. Restock from /canteen with source=Piggy → piggy drops by cost; source=Other → unchanged.
 
 ---
-
-14 Jun 2026 — SKILL.md: tightened bug-tracking rules. Issues now created BEFORE code, closed ONLY after Sugeet's explicit verification (Rule F).
-14 Jun 2026 — fix #69 (2b83dd1): QuickSale now shows UPI QR overlay for the UPI split amount after a successful sale. `UpiQrCard` now has 3 consumers — ripple_effects.md updated. Bug sprint issues #68–74 created and logged in bug_archive.md.
-14 Jun 2026 — fix #72 (6be8ed0): Table Move now rejects moves across incompatible rate-card configs (billing mode / tier array / tolerance). MoveTableList mirrors same checks client-side. ripple_effects.md updated with full 6-rule compatibility spec.
-14 Jun 2026 — fix #70 (9f7e2aa + 41a7bb1): All Summary widgets now tick live. Two-commit fix: (1) removed useMemo from rankTables + bucketByHour; (2) removed useMemo from runningRevenueToday — the real cause of Day's earnings + Avg session freeze. Pattern T4 addendum: useMemo hides getElapsedMs from tick just like useLiveQuery does.

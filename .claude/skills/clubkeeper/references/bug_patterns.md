@@ -2,7 +2,7 @@
 
 Preventive reference. Grouped by area. Read the relevant section BEFORE editing code in that area — this kills repeated bugs.
 
-For full chronological bug history with all the prose context, see `bug_archive.md`.
+For full chronological bug history with all the prose context, see `history/bug_archive.md`.
 
 ---
 
@@ -878,8 +878,8 @@ Vite alone doesn't serve serverless functions. Local dev with `npm run dev` retu
 
 ## When you find a new bug
 
-1. **Look at the symptom signatures above first.** If it matches a pattern, apply the rule and append the bug to `bug_archive.md` referencing the pattern.
-2. **If it's a new class of bug**, append a new pattern entry here (under the right area) AND a full entry in `bug_archive.md`.
+1. **Look at the symptom signatures above first.** If it matches a pattern, apply the rule and append the bug to `history/bug_archive.md` referencing the pattern.
+2. **If it's a new class of bug**, append a new pattern entry here (under the right area) AND a full entry in `history/bug_archive.md`.
 3. **If it crosses multiple areas**, add to whichever section is primary, then cross-reference.
 4. **Update `ripple_effects.md`** if the fix touches files that weren't previously known to be coupled.
 

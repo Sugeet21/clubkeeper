@@ -167,7 +167,7 @@ Failure mode and root-cause detail: see `bug_patterns.md` Pattern R4 (#97, 20 Ju
 
 ## Cloud Sync (SHIPPED — Phase C, Jun–Jul 2026)
 
-Multi-device sync is live: Dexie stays the on-device source of truth; writes go through sync wrappers (`src/db/syncWrappers.ts`) into a `_outbox` queue drained by `SyncRunner` (`src/db/syncRunner.ts`) over the lock-free `supabaseSync` client; reads pull via `SyncReader` (`src/db/syncReader.ts`) with 4 grouped realtime channels + polling fallback; conflicts resolve last-write-wins on epoch-ms `updatedAt` (Pattern S17). Working contract: `ripple_effects.md` §Sync + `bug_patterns.md` S14–S24. Design history: `sync_architecture_v2.md` (code wins where they differ).
+Multi-device sync is live: Dexie stays the on-device source of truth; writes go through sync wrappers (`src/db/syncWrappers.ts`) into a `_outbox` queue drained by `SyncRunner` (`src/db/syncRunner.ts`) over the lock-free `supabaseSync` client; reads pull via `SyncReader` (`src/db/syncReader.ts`) with 4 grouped realtime channels + polling fallback; conflicts resolve last-write-wins on epoch-ms `updatedAt` (Pattern S17). Working contract: `ripple_effects.md` §Sync + `bug_patterns.md` S14–S24. Design history: `history/sync_architecture_v2.md` (code wins where they differ).
 
 ## Performance Guidelines
 

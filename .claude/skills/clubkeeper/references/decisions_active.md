@@ -2,7 +2,7 @@
 
 Currently-load-bearing decisions affecting the codebase. Each entry is one line of decision + brief why + revisit trigger (when relevant).
 
-For rejected ideas, historical decisions that have been superseded, and full reasoning of why alternatives were rejected, see `decisions_archive.md`.
+For rejected ideas, historical decisions that have been superseded, and full reasoning of why alternatives were rejected, see `history/decisions_archive.md`.
 
 ---
 

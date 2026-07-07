@@ -7,7 +7,7 @@ description: ClubKeeper is Sugeet's offline-first PWA for managing indoor games 
 
 **Read order, every session: this file → `STATE.md` (what is true right now) → task-specific references (loading map below).** This file holds only STABLE content — laws, workflow, routing. Volatile truth (module status, pending blockers, open-issue snapshot, migration ledger) lives in `STATE.md` and is overwritten in place, never appended.
 
-**One fact, one home:** what-is-true-now → STATE.md · laws → this file · what-breaks-if-you-change-X → `references/ripple_effects.md` · bug classes → `references/bug_patterns.md` · why-we-chose-X → `references/decisions_active.md` · what-happened-when → `references/changelog.md` + git log + GitHub. Cross-reference, never copy — duplicated facts are how this skill previously accumulated 27 contradictions (see `skill_redesign_proposal.md` at repo root).
+**One fact, one home:** what-is-true-now → STATE.md · laws → this file · what-breaks-if-you-change-X → `references/ripple_effects.md` · bug classes → `references/bug_patterns.md` · why-we-chose-X → `references/decisions_active.md` · what-happened-when → `references/history/changelog.md` + git log + GitHub. Cross-reference, never copy — duplicated facts are how this skill previously accumulated 27 contradictions (see `skill_redesign_proposal.md` at repo root).
 
 ## About Sugeet
 
@@ -61,15 +61,15 @@ Replaces the paper notebook used at Indian indoor game clubs for tracking who pl
 | ClubSettings field | `references/checklists/new_settings_field.md` (mandatory, Rule 15) |
 | Settings.tsx edit | Rule H below + patterns T2/R4/F5/U6/U10/S11 |
 | Schema / types question | `references/data_model.md`, then `src/types/index.ts` (code is the type authority) |
-| Sync work | ripple_effects §Sync + bug_patterns S14–S25; `references/sync_architecture_v2.md` ONLY for Phase-D/staff plans + contracts (it's design history — code wins) |
+| Sync work | ripple_effects §Sync + bug_patterns S14–S25; `references/history/sync_architecture_v2.md` ONLY for Phase-D/staff plans + contracts (it's design history — code wins) |
 | Owner-app UI | `references/design_system.md` |
 | Player-facing UI (`/c/:slug`) | `references/player_design_system.md` (note its status header — shipped pages use the dark theme) |
 | Architecture / file structure | `references/architecture.md` |
-| "Why did we…" | `references/decisions_active.md`, then `references/decisions_archive.md` |
-| "When did we ship…" | `references/changelog.md` (newest at top) + `git log` |
+| "Why did we…" | `references/decisions_active.md`, then `references/history/decisions_archive.md` |
+| "When did we ship…" | `references/history/changelog.md` (newest at top) + `git log` |
 | Business / pricing / sales | `references/business_context.md` |
 | Deploy / infra / domains | `references/deployment.md` |
-| Bug report intake | GitHub first (`gh issue list --search`, CLI) or STATE.md issue snapshot (claude.ai); `references/bug_archive.md` = offline pointer index |
+| Bug report intake | GitHub first (`gh issue list --search`, CLI) or STATE.md issue snapshot (claude.ai); `references/history/bug_archive.md` = offline pointer index |
 | Considering a subagent | `## Project Agents` below (CLI only) |
 
 Read MULTIPLE files when the question spans domains.
@@ -108,7 +108,7 @@ Brief agents like a colleague who just walked in — goal, file paths, response 
 3. **Reply to Sugeet with the issue numbers and links** before writing fix code. Wait for his go-ahead.
 4. **Fix.** Commit message uses `refs #NN`, NEVER `closes/fixes/resolves` (those auto-close on push; only Sugeet closes): `fix(<area>): <one-line> (refs #NN — pending owner verification)`.
 5. **NEVER close the issue yourself.** Post the SHA as an issue comment, then: "Issue #NN — fix committed in <SHA>. Please verify on your device. Reply 'close #NN' only after you've tested it. I will not close it until you do."
-6. **Only after Sugeet's explicit "close #NN" / "verified":** `gh issue close NN --repo Sugeet21/clubkeeper --comment "Verified by owner. Fixed in <SHA>."` Then update the `bug_archive.md` pointer.
+6. **Only after Sugeet's explicit "close #NN" / "verified":** `gh issue close NN --repo Sugeet21/clubkeeper --comment "Verified by owner. Fixed in <SHA>."` Then update the `history/bug_archive.md` pointer.
 
 **This overrides any urge to be efficient.** Even a one-line fix gets an issue first. Only exception: a typo/wording change Sugeet asked for in plain English with no symptom.
 

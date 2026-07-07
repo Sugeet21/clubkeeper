@@ -1,11 +1,11 @@
 # STATE — what is true right now
 
 **Last verified: 7 Jul 2026 (CLI session, live prod probe + `gh issue list`).**
-Rules for this file: OVERWRITE in place, never append (Rule G lives here). One line per module. No commit SHAs, no build sizes, no dates inside status lines — history belongs in `references/changelog.md` + `git log`. Pending entries are deleted the moment they resolve. **claude.ai sessions:** if the stamp above is more than ~7 days old, say so to Sugeet and trust GitHub/his answers over this file.
+Rules for this file: OVERWRITE in place, never append (Rule G lives here). One line per module. No commit SHAs, no build sizes, no dates inside status lines — history belongs in `references/history/changelog.md` + `git log`. Pending entries are deleted the moment they resolve. **claude.ai sessions:** if the stamp above is more than ~7 days old, say so to Sugeet and trust GitHub/his answers over this file.
 
 ## Current focus
 
-Phase C sync cutover tail: Group C write sites (#126), owner verification of #122/#125, then Phase D (staff login) per `references/sync_architecture_v2.md` §2–3. Immediate P1: #127 (player booking broken post-v20).
+Phase C sync cutover tail: Group C write sites (#126), owner verification of #122/#125, then Phase D (staff login) per `references/history/sync_architecture_v2.md` §2–3. Immediate P1: #127 (player booking broken post-v20).
 
 ## Module status (one line each — overwrite in place)
 
@@ -33,7 +33,7 @@ Phase C sync cutover tail: Group C write sites (#126), owner verification of #12
 - **Desktop responsiveness (#91)** — Verified for Tables/Canteen/Bookings/QuickSale/shared Modal/PaymentSplitSheet; Settings + Wallet-topup-success still mobile-only.
 - **PWA + deployment** — Vercel auto-deploy from `main`, SPA rewrite, per-user IndexedDB `ClubKeeperDB_<userId>`, custom domain `app.handbookhq.in`.
 - **Dexie schema** — **v21 current** (`CURRENT_SCHEMA_VERSION = 21`); v20 was the UUID migration; details in `references/data_model.md`.
-- **Bug tracking** — GitHub issues ONLY authoritative; `bug_archive.md` is the offline pointer index.
+- **Bug tracking** — GitHub issues ONLY authoritative; `history/bug_archive.md` is the offline pointer index.
 
 ## Load-bearing pending (blocks something; delete when resolved)
 
