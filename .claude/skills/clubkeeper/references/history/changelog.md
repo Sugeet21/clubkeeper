@@ -4,6 +4,14 @@
 
 ---
 
+## 8 Jul 2026 — Skill-redesign Phase 6 (final): STATE generator + frontmatter — MIGRATION COMPLETE
+
+- **NEW `scripts/sync-state.mjs`** — regenerates STATE.md's open-issues block from `gh issue list` (markers `ISSUES:BEGIN/END`; hand-notes live above the markers) + refreshes the "Last verified" stamp. Ran live: 4 P0 / 13 P1 / 15 P2 captured. `check:skill` remains the independent verifier.
+- SKILL.md frontmatter description updated for claude.ai: documents the SKILL → STATE → references → references/history structure so web Claude navigates the zip correctly.
+- Migration complete: Phases 0–6 all shipped on branch `skill-redesign`, one commit each; `npm run check:skill` PASS at every phase boundary. Self-verification (12 old-skill facts traced to new homes) recorded in the session log; merge + re-zip steps handed to owner.
+
+---
+
 ## 8 Jul 2026 — Skill-redesign Phase 5: history/ directory + changelog repair + ripple steady-state (branch skill-redesign)
 
 - **`references/history/` created**; moved in: `changelog.md`, `decisions_archive.md`, `bug_archive.md`, `sync_architecture_v2.md`, `test_status.md`. Every live-file reference swept to the new paths (SKILL, STATE, references, agents, CLAUDE.md); Rule G targets in session_loop + auditor now point at STATE.md.

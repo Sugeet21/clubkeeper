@@ -1,6 +1,6 @@
 # STATE — what is true right now
 
-**Last verified: 7 Jul 2026 (CLI session, live prod probe + `gh issue list`).**
+**Last verified: 8 Jul 2026 (CLI session, live prod probe + `gh issue list`).**
 Rules for this file: OVERWRITE in place, never append (Rule G lives here). One line per module. No commit SHAs, no build sizes, no dates inside status lines — history belongs in `references/history/changelog.md` + `git log`. Pending entries are deleted the moment they resolve. **claude.ai sessions:** if the stamp above is more than ~7 days old, say so to Sugeet and trust GitHub/his answers over this file.
 
 ## Current focus
@@ -51,11 +51,15 @@ Phase C sync cutover tail: Group C write sites (#126), owner verification of #12
 APPLIED: `20260602_cardless_trial` (inferred — trials work in prod; confirm on next fresh signup), `20260610_player_hub`, `20260610_clubcoins`, `20260615_enable_realtime`, `20260615_topup_intents_coins_credited`, `20260616_pricing_visibility`, `20260617_booking_intents`, `20260618_booking_cancel`, `20260619_booked_slots_rpc` (⚠ `p_table_id` still `integer` — #127), `20260622_booking_hours_and_per_slot_advance`, `20260625_phase_c_sync_tables`, `20260628_lww_guard`, `20260702_sync_client_fields`.
 UNAPPLIED: none known. **Any NEW migration file added under `supabase/migrations/` MUST get a line here (applied or unapplied) in the same session.**
 
-## Open issues — P0/P1 snapshot (from `gh issue list`, 7 Jul 2026; GitHub is authoritative)
+## Open issues — snapshot (GitHub is authoritative; regenerate with `node scripts/sync-state.mjs`)
 
-**P0:** #97 accept-bookings toggle flips after nav (R4 recurrence, reopened) · #100 time rounding not applied on stop (T2 recurrence, awaiting owner repro) · #103 isSlugAvailable on owner client freezes slug Save (5s fail-open mitigates; root cause open) · #110 S14 outbox dead-letter (mapper fix shipped; needs owner verify + close).
-**P1:** #56 Subscribe 1500ms delay vs webhook · #59 authStore openAndSeed on INITIAL_SESSION re-fire · #61 handleSaveSlug null clubName crash · #62 Wallet fetch no cancellation · #63 WalletTopup freeze on get() fail · #65 stale reset-dialog session count · #67 realtime initial count no error recovery · #112 Chunk 5 umbrella (owner verification tail) · #120 GoTrue lock-jam boot (fix committed, pending owner verify) · #122 syncedBatch (shipped, pending owner verify) · #125 lastVisitAt mapper gap (fixed, pending owner verify) · #126 Group C raw write sites · #127 player booking broken post-v20 (NEW).
-**P2 / unlabelled:** #55 #57 #58 #60 #64 #66 #102 #113 #114 #115 #118 (vacuous tsc build gate — biggest regression risk, needs own triage session) #119 #121 #123 #124. (#114 & #121 are duplicates — ask Sugeet to close one.)
+Hand-notes that survive regeneration: #110/#120/#122/#125 have fixes shipped and only await Sugeet's device verification + "close #NN". #114 & #121 are duplicates — ask Sugeet to close one. #118 (vacuous tsc build gate) is the biggest regression risk in the repo and needs its own triage session.
+
+<!-- ISSUES:BEGIN (generated — do not hand-edit between markers) -->
+**P0:** #97 Accept bookings toggle flips state after navigating away and back (Pat · #100 Time Rounding setting (15 min / 30 min) not applied on session stop (P · #103 isSlugAvailable uses owner supabase client, freezes slug setup Save bu · #110 Sync outbox dead-letters with 'Could not find camelCase column in sche.
+**P1:** #56 A2 — Subscribe.tsx hardcoded 1500ms delay instead of waiting for webho · #59 A5 — authStore calls openAndSeed on every INITIAL_SESSION re-fire (ris · #61 P2 — PlayerHubSettings handleSaveSlug crashes if clubName is null · #62 W1 — Wallet.tsx has no fetch cancellation on navigate away (setState o · #63 W2 — WalletTopup.tsx UI freezes if db.customers.get() fails after topu · #65 S2 — Settings reset dialog shows stale session count (count read at re · #67 R2 — Realtime initial count never loads if first fetch throws (no erro · #112 Phase C Chunk 5 — SyncReader: initial pull + realtime + server-side LW · #120 App never boots when a zombie tab strands the GoTrue navigator lock (a · #122 syncWrappers has no mixed-op atomic batch; 8 of 17 Group A mutation si · #125 customer.lastVisitAt dropped by sync mappers → pulled customers invisi · #126 ~20 customer/wallet/booking write sites OUTSIDE queries.ts still write · #127 Player booking flow broken post-v20: BookingScreen filters tables to n.
+**P2 / unlabelled:** #55 #57 #58 #60 #64 #66 #102 #113 #114 #115 #118 #119 #121 #123 #124.
+<!-- ISSUES:END -->
 
 ## Known limitations
 
