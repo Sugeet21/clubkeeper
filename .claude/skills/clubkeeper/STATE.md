@@ -12,7 +12,7 @@ Phase C sync cutover tail: Group C write sites (#126), owner verification of #12
 - **Sync (Phase C)** — Write path (outbox + SyncRunner on lock-free `supabaseSync`) + read path (SyncReader: serialized queue, direct-apply LWW on epoch-ms, 4 realtime channel groups, 30s-grace/60s polling fallback) LIVE across all 9 tables; `queries.ts` cutover complete through Group B incl. `syncedBatch` mixed-op wrapper; Group C (~20 sites outside queries.ts) open (#126); #122/#125 runtime-proven, pending owner verification. Contract: `ripple_effects.md` §Sync + Patterns S14–S24.
 - **Auth + cardless trial** — Supabase Google OAuth (`select_account`), 7-day cardless trial via Postgres trigger, `subscriptionLoaded` race guard, stranded-lock degraded boot (Pattern A11; #120 fix pending owner verification).
 - **Subscription (Razorpay)** — LIVE mode in production, NACH auto-debit collecting ₹599; V1-LAUNCH shows Standard Monthly only; serverless create/webhook/cancel.
-- **Advance booking (#84/#106)** — Owner side + per-club hours + per-30-min-slot advance shipped; **player-side flow currently BROKEN by #127** (numeric-id filter vs UUID `tables_json`); owner E2E of P1c–P2 still pending.
+- **Advance booking (#84/#106/#127)** — Owner side + per-club hours + per-30-min-slot advance shipped; player-side #127 code fix landed (table-id retyped `number`→`string` across BookingScreen/PlayerScan/playerHubApi + `PublicTableInfo.id`), pending the `20260708_booking_table_id_uuid` migration run + owner E2E of P1c–P2.
 - **Player Hub + topups** — Live: slug setup, `/c/:slug` UPI topup flow with polling, realtime inbox + badge, `/poster/:slug` auto-print.
 - **Pricing visibility** — Player-side collapsible pricing card, gated on `acceptsPricingDisplay` + populated `tables_json`.
 - **ClubCoins** — Off by default; tiered earn on topup, configurable redemption, FIFO expiry sweep every 4h.
@@ -47,8 +47,9 @@ Phase C sync cutover tail: Group C write sites (#126), owner verification of #12
 
 ### Supabase migration ledger (verified against prod 7 Jul 2026 via anon-RPC probe)
 
-APPLIED: `20260602_cardless_trial` (inferred — trials work in prod; confirm on next fresh signup), `20260610_player_hub`, `20260610_clubcoins`, `20260615_enable_realtime`, `20260615_topup_intents_coins_credited`, `20260616_pricing_visibility`, `20260617_booking_intents`, `20260618_booking_cancel`, `20260619_booked_slots_rpc` (⚠ `p_table_id` still `integer` — #127), `20260622_booking_hours_and_per_slot_advance`, `20260625_phase_c_sync_tables`, `20260628_lww_guard`, `20260702_sync_client_fields`.
-UNAPPLIED: none known. **Any NEW migration file added under `supabase/migrations/` MUST get a line here (applied or unapplied) in the same session.**
+APPLIED: `20260602_cardless_trial` (inferred — trials work in prod; confirm on next fresh signup), `20260610_player_hub`, `20260610_clubcoins`, `20260615_enable_realtime`, `20260615_topup_intents_coins_credited`, `20260616_pricing_visibility`, `20260617_booking_intents`, `20260618_booking_cancel`, `20260619_booked_slots_rpc`, `20260622_booking_hours_and_per_slot_advance`, `20260625_phase_c_sync_tables`, `20260628_lww_guard`, `20260702_sync_client_fields`.
+UNAPPLIED: `20260708_booking_table_id_uuid` (#127 — retypes `booking_intents.table_id` + `submit_booking_intent.p_table_id` + `get_booked_slots.p_table_id` from `int`→`text`; supersedes the old `p_table_id integer` decls in `20260617`/`20260619`). Paste-ready; awaiting owner run in Supabase SQL editor.
+**Any NEW migration file added under `supabase/migrations/` MUST get a line here (applied or unapplied) in the same session.**
 
 ## Open issues — snapshot (GitHub is authoritative; regenerate with `node scripts/sync-state.mjs`)
 

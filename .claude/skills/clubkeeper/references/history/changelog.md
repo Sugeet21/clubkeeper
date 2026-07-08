@@ -4,6 +4,15 @@
 
 ---
 
+## 8 Jul 2026 — #127 fix: player booking table-id retyped number→string (post-v20)
+
+- **Root cause:** post-v20 `tables_json` ids are UUID **strings**, but the booking CTA gate (`PlayerScan`) + `BookingScreen` filter used `typeof t.id === 'number'` → every table filtered out → "Book a table" hidden / `no_tables`. Second layer: `get_booked_slots`/`submit_booking_intent` RPCs + `booking_intents.table_id` still `int` → `22P02` on UUID.
+- **Code (Pattern R5/D12 — never `Number()` an id):** `PublicTableInfo.id?: number`→`string`; `BookingScreen` `tableId` state + `pickTable` + the load-time filter + the table-row onClick gate now use `typeof t.id === 'string' && t.id.length > 0`; `PlayerScan` CTA `.some()` gate likewise; `playerHubApi` `submitBookingIntent`/`getBookedSlots`/`PendingBookingRow` tableId + the `getPendingBookings` mapper cast → `string`. Side effect: removed 2 pre-existing #118-baseline tsc errors (PendingBookingsModal:65 number→string mismatch, playerHubApi:274 tables_json id) — `npx tsc -p tsconfig.app.json` went 120→118, **zero new**. `npm run build` clean.
+- **NEW migration `20260708_booking_table_id_uuid.sql` (UNAPPLIED):** retypes `booking_intents.table_id` + `submit_booking_intent.p_table_id` + `get_booked_slots.p_table_id` `int`→`text` (drop+recreate for the two functions; `::text` cast for existing rows). Supersedes the `p_table_id integer` decls in `20260617`/`20260619`. Awaiting owner run in Supabase SQL editor.
+- **refs #127** — not closed; awaiting owner migration-run + device E2E on `/c/<slug>/book` against prod.
+
+---
+
 ## 8 Jul 2026 — Skill-redesign Phase 6 (final): STATE generator + frontmatter — MIGRATION COMPLETE
 
 - **NEW `scripts/sync-state.mjs`** — regenerates STATE.md's open-issues block from `gh issue list` (markers `ISSUES:BEGIN/END`; hand-notes live above the markers) + refreshes the "Last verified" stamp. Ran live: 4 P0 / 13 P1 / 15 P2 captured. `check:skill` remains the independent verifier.
