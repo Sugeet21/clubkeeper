@@ -162,7 +162,7 @@ export default function BookingScreen() {
   // Wizard state
   const [step, setStep] = useState<Step>('gameType')
   const [gameType, setGameType] = useState<string | null>(null)
-  const [tableId, setTableId] = useState<number | null>(null)
+  const [tableId, setTableId] = useState<string | null>(null)   // v20+ (#127): UUID string, never Number() it (Pattern R5)
   const [dateMs, setDateMs] = useState<number | null>(null)       // midnight ms of chosen day
   const [slotStartMs, setSlotStartMs] = useState<number | null>(null)
   const [durationMin, setDurationMin] = useState<number | null>(null)
@@ -210,16 +210,20 @@ export default function BookingScreen() {
           setPageState('not_configured')
           return
         }
-        // Defensive read (Part A): drop any table missing an id. Without id we
-        // cannot safely submit a booking. If ALL are missing → setup-in-progress
-        // state instead of a broken picker. Log once for diagnosis.
-        const bookable = info.tablesJson.filter((t) => typeof t.id === 'number')
+        // Defensive read (Part A, #127): drop any table missing an id. Post-v20
+        // GameTable.id is a UUID **string** (Post-v20 ID law) — validity = a
+        // non-empty string. NEVER Number() it (Pattern R5). Without id we cannot
+        // safely submit a booking. If ALL are missing → setup-in-progress state
+        // instead of a broken picker. Log once for diagnosis.
+        const hasValidId = (t: PublicTableInfo): boolean =>
+          typeof t.id === 'string' && t.id.length > 0
+        const bookable = info.tablesJson.filter(hasValidId)
         if (bookable.length !== info.tablesJson.length) {
           // eslint-disable-next-line no-console
           console.warn(
             '[booking] %d table(s) skipped — missing id (stale tables_json row, owner needs to re-save):',
             info.tablesJson.length - bookable.length,
-            info.tablesJson.filter((t) => typeof t.id !== 'number').map((t) => t.name),
+            info.tablesJson.filter((t) => !hasValidId(t)).map((t) => t.name),
           )
         }
         if (bookable.length === 0) {
@@ -421,7 +425,7 @@ export default function BookingScreen() {
     setStep('table')
   }
 
-  function pickTable(id: number) {
+  function pickTable(id: string) {
     setTableId(id)
     setDateMs(null)
     setSlotStartMs(null)
@@ -924,7 +928,7 @@ export default function BookingScreen() {
             {tablesForGameType.map((t) => (
               <button
                 key={t.id}
-                onClick={() => typeof t.id === 'number' && pickTable(t.id)}
+                onClick={() => typeof t.id === 'string' && t.id.length > 0 && pickTable(t.id)}
                 className="w-full text-left bg-bg-card border border-border rounded-2xl px-4 py-3.5 min-h-[52px]"
               >
                 <p className="text-text font-semibold text-[15px]">{t.name}</p>

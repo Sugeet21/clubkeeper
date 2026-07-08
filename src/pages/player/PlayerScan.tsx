@@ -738,7 +738,7 @@ export default function PlayerScan() {
             Shown only when the club has opted in (`accepts_bookings=true` in
             Supabase) AND there's at least one mirrored table with an `id`
             (Part A defensive read — without ids we can't safely submit). */}
-        {clubInfo?.acceptsBookings && clubInfo.tablesJson.some((t) => typeof t.id === 'number') && (
+        {clubInfo?.acceptsBookings && clubInfo.tablesJson.some((t) => typeof t.id === 'string' && t.id.length > 0) && (
           <button
             type="button"
             onClick={() => clubSlug && navigate(`/c/${clubSlug}/book`)}

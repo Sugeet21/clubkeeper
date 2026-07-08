@@ -298,7 +298,7 @@ export async function syncTablesJsonBySlug(
 // `slotStartIso` MUST be an ISO timestamptz string in the future.
 export async function submitBookingIntent(payload: {
   slug: string
-  tableId: number
+  tableId: string                      // v20+ (#127): GameTable.id UUID string
   tableName: string
   gameType: string
   playerName: string
@@ -377,7 +377,7 @@ export async function cancelBookingIntent(params: {
 // doesn't exist yet (caller catches and treats as no-blockers).
 export async function getBookedSlots(params: {
   slug: string
-  tableId: number
+  tableId: string                      // v20+ (#127): GameTable.id UUID string
   dayStartIso: string
   dayEndIso: string
 }): Promise<{ slotStartIso: string; slotEndIso: string }[]> {
@@ -423,7 +423,7 @@ export async function getBookingIntentStatus(
 // Owner-authenticated: read all pending booking intents for this club.
 export interface PendingBookingRow {
   id: string
-  tableId: number
+  tableId: string                      // v20+ (#127): GameTable.id UUID string
   tableName: string
   gameType: string
   playerName: string | null
@@ -449,7 +449,7 @@ export async function getPendingBookings(clubId: string): Promise<PendingBooking
   if (error) throw error
   return (data ?? []).map((r) => ({
     id: r.id as string,
-    tableId: r.table_id as number,
+    tableId: r.table_id as string,
     tableName: r.table_name as string,
     gameType: r.game_type as string,
     playerName: (r.player_name as string | null) ?? null,

@@ -19,7 +19,11 @@ import type { CoinTier, RateTier, GameType } from '.'
 // carries no PII, so exposing it is safe.
 // Mirrored to Supabase clubs.tables_json on owner-side table save.
 export interface PublicTableInfo {
-  id?: number                       // v17: optional for back-compat with rows mirrored pre-booking; treat missing as opaque
+  // v20+ (#127): GameTable.id is a UUID **string** (Post-v20 ID law). Optional
+  // for back-compat with pre-P1b mirrored rows that carry no id — treat a
+  // missing/empty id as opaque and filter it out at the booking boundary
+  // (validity = non-empty string). Never `Number()` it — Pattern R5/D12.
+  id?: string
   name: string
   gameType: GameType
   ratePerHour: number
