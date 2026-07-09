@@ -1,4 +1,5 @@
 import { db } from '../db/database'
+import { syncedCreate } from '../db/syncWrappers'
 import type { Customer } from '../types/customer'
 import { customerDisplayName } from './customerDisplay'
 import { daysUntilExpiry } from './coinExpiry'
@@ -96,7 +97,9 @@ export async function buildNudgeVars(
  * a nudge WhatsApp message is opened. No balance impact (amount=0, coinDelta=0).
  */
 export async function logNudgeSent(customerId: string): Promise<void> {
-  await db.walletTransactions.add({
+  // Group C (#126) — single-table append, no paired customer write (zero
+  // balance impact), so a lone syncedCreate is the right shape.
+  const auditRow: WalletTransaction = {
     id: crypto.randomUUID(),
     customerId,
     type: 'credit',           // type must be valid; credit with 0 amount = no-op
@@ -107,5 +110,6 @@ export async function logNudgeSent(customerId: string): Promise<void> {
     referenceId: null,
     notes: 'Nudge sent via WhatsApp',
     createdAt: Date.now(),
-  })
+  }
+  await syncedCreate('wallet_transactions', auditRow)
 }

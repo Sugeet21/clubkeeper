@@ -1,6 +1,8 @@
 import { startOfDay } from 'date-fns'
 import Dexie from 'dexie'
 import { db } from '../db/database'
+import { syncedBatch } from '../db/syncWrappers'
+import type { WalletTransaction } from '../types/walletTransaction'
 
 // ─── Engagement config helpers ────────────────────────────────────────────────
 
@@ -97,15 +99,17 @@ export async function checkAndAwardStreak(
     return { awarded: false, coins: 0, customerName: customer.name }
   }
 
-  // Award bonus in its own transaction
+  // Award bonus atomically — Group C (#126): coin credit INSERT + customer
+  // UPDATE ride one syncedBatch with their outbox rows. wallet_transactions is
+  // append-only (§4.6) — the bonus row is b.insert.
   const bonus = engagement.streakBonusCoins
-  await db.transaction('rw', db.customers, db.walletTransactions, async () => {
+  await syncedBatch(['customers', 'wallet_transactions'], async (b) => {
     const fresh = await db.customers.get(customerId)
     if (!fresh) return
 
     const newCoinBalance = (fresh.coinBalance ?? 0) + bonus
 
-    await db.walletTransactions.add({
+    const bonusRow: WalletTransaction = {
       id: crypto.randomUUID(),
       customerId,
       type: 'credit',
@@ -118,9 +122,10 @@ export async function checkAndAwardStreak(
       referenceId: null,
       notes: `Streak: ${distinctDays.size} visit days in ${engagement.streakWindowDays} days`,
       createdAt: now,
-    })
+    }
+    await b.insert('wallet_transactions', bonusRow)
 
-    await db.customers.update(customerId, {
+    await b.update('customers', customerId, {
       coinBalance: newCoinBalance,
       lastStreakBonusAt: now,
     })

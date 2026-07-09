@@ -1,5 +1,6 @@
 import Dexie from 'dexie'
 import { db } from '../db/database'
+import { syncedBatch } from '../db/syncWrappers'
 import { getCoinConfig } from '../db/queries'
 import type { WalletTransaction } from '../types/walletTransaction'
 
@@ -108,21 +109,27 @@ export async function applyExpiryForCustomer(customerId: string): Promise<{ expi
   const config = await getCoinConfig()
   if (!config.coinsEnabled || !config.coinExpiryDays) return { expired: 0 }
 
-  return db.transaction('rw', db.customers, db.walletTransactions, async () => {
+  // Group C (#126) — FIFO expiry debit INSERT + customer stamp/balance UPDATE,
+  // atomic with their outbox rows. Callback reads BOTH tables (customer row +
+  // full coin tx history), so both ride the tables list. wallet_transactions
+  // is append-only (§4.6) — the expiry debit is b.insert. syncedBatch returns
+  // void, so capture `expired` outside.
+  let expired = 0
+  await syncedBatch(['customers', 'wallet_transactions'], async (b) => {
     const customer = await db.customers.get(customerId)
-    if (!customer) return { expired: 0 }
+    if (!customer) return
 
     const now = Date.now()
 
     // Per-customer debounce: at most once per hour
     if (customer.expiryAppliedAt && now - customer.expiryAppliedAt < 60 * 60 * 1000) {
-      return { expired: 0 }
+      return
     }
 
     // Skip customers with no coins — just stamp and exit
     if ((customer.coinBalance ?? 0) <= 0) {
-      await db.customers.update(customerId, { expiryAppliedAt: now })
-      return { expired: 0 }
+      await b.update('customers', customerId, { expiryAppliedAt: now })
+      return
     }
 
     const txs = await db.walletTransactions
@@ -138,7 +145,7 @@ export async function applyExpiryForCustomer(customerId: string): Promise<{ expi
     if (coinsToExpire > 0) {
       const newCoinBalance = Math.max(0, (customer.coinBalance ?? 0) - coinsToExpire)
 
-      await db.walletTransactions.add({
+      const debitRow: WalletTransaction = {
         id: crypto.randomUUID(),
         customerId,
         type: 'debit',
@@ -151,18 +158,21 @@ export async function applyExpiryForCustomer(customerId: string): Promise<{ expi
         referenceId: null,
         notes: `Expired ${coinsToExpire} coins from ${expiredBatches.length} batch(es)`,
         createdAt: now,
-      })
+      }
+      await b.insert('wallet_transactions', debitRow)
 
-      await db.customers.update(customerId, {
+      await b.update('customers', customerId, {
         coinBalance: newCoinBalance,
         expiryAppliedAt: now,
       })
     } else {
-      await db.customers.update(customerId, { expiryAppliedAt: now })
+      await b.update('customers', customerId, { expiryAppliedAt: now })
     }
 
-    return { expired: coinsToExpire }
+    expired = coinsToExpire
   })
+
+  return { expired }
 }
 
 // ─── Sweep across all customers ───────────────────────────────────────────────
