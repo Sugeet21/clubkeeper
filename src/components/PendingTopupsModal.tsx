@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { Modal } from './Modal'
 import { db } from '../db/database'
+import { syncedCreate } from '../db/syncWrappers'
 import { supabase } from '../lib/supabase'
 import { useTopupInbox } from '../store/topupInbox'
 import { useToastStore } from '../store/toastStore'
@@ -109,7 +110,9 @@ function ConfirmRow({
           createdAt: now,
           lastVisitAt: now,
         }
-        await db.customers.add(newCustomer)
+        // Group C (#126) — bare customer create; the wallet credit below goes
+        // through recordTopupWithCoins, which runs its own syncedBatch.
+        await syncedCreate('customers', newCustomer)
         customer = newCustomer
       }
 

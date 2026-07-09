@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { useSessionItems, useRecentItems, useSettings } from '../hooks/useLiveData'
 import { addSessionItem, addOrIncrementSessionItem, updateSessionItem, deleteSessionItem, restoreSessionItem, getCanteenItems, getLowStockThreshold, InsufficientStockError } from '../db/queries'
 import { db } from '../db/database'
+import { syncedBatch } from '../db/syncWrappers'
 import { useToastStore } from '../store/toastStore'
 import { validateItemName } from '../lib/validation'
 import { normalizeName, findMatchingCanteenItem, findCanteenItemByName } from '../lib/canteenMatch'
@@ -45,7 +46,10 @@ interface AddItemBottomSheetProps {
 }
 
 // ─── Shared inline atomic transaction ────────────────────────────────────────
-// Pattern D7: single flat tx — stock logic INLINED, NOT via decrementCanteenItemStock()
+// Pattern D7/S24: one syncedBatch — stock logic INLINED, NOT via
+// decrementCanteenItemStock() or addOrIncrementSessionItem() (both open their
+// own tx). Group C (#126): stock check → decrement + session-item merge stay
+// atomic with their outbox rows.
 
 async function runCanteenAddTransaction(
   ci: CanteenItem,
@@ -56,13 +60,13 @@ async function runCanteenAddTransaction(
 ): Promise<{ oldStock: number; newStock: number } | null> {
   if (!ci.stockEnabled || ci.id === undefined) return null
   let crossing: { oldStock: number; newStock: number } | null = null
-  await db.transaction('rw', db.canteenItems, db.sessionItems, async () => {
+  await syncedBatch(['canteen_items', 'session_items'], async (b) => {
     const fresh = await db.canteenItems.get(ci.id!)
     if (!fresh) throw new Error('Canteen item not found')
     const oldStock = fresh.currentStock ?? 0
     const newStock = oldStock - qtyNum
     if (newStock < 0) throw new Error('Insufficient stock')
-    await db.canteenItems.update(ci.id!, { currentStock: newStock })
+    await b.update('canteen_items', ci.id!, { currentStock: newStock })
     // Inline merge — do NOT call addOrIncrementSessionItem here (Pattern D7)
     const normalized = normalizeName(itemName)
     const existing = await db.sessionItems
@@ -71,9 +75,10 @@ async function runCanteenAddTransaction(
       .filter(item => normalizeName(item.name) === normalized && item.price === priceNum)
       .first()
     if (existing && existing.id != null) {
-      await db.sessionItems.update(existing.id, { quantity: Math.min(99, existing.quantity + qtyNum) })
+      await b.update('session_items', existing.id, { quantity: Math.min(99, existing.quantity + qtyNum) })
     } else {
-      await db.sessionItems.add({ id: crypto.randomUUID(), sessionId, name: itemName.trim(), price: priceNum, quantity: qtyNum, addedAt: Date.now() })
+      const row = { id: crypto.randomUUID(), sessionId, name: itemName.trim(), price: priceNum, quantity: qtyNum, addedAt: Date.now() }
+      await b.insert('session_items', row)
     }
     crossing = { oldStock, newStock }
   })

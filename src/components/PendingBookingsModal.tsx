@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { Modal } from './Modal'
-import { db } from '../db/database'
+import { syncedCreate } from '../db/syncWrappers'
 import { useBookingInbox } from '../store/bookingInbox'
 import { useToastStore } from '../store/toastStore'
 import { confirmBookingIntent, rejectBookingIntent } from '../lib/playerHubApi'
@@ -76,7 +76,9 @@ function ConfirmRow({
         notes: intent.notes ?? undefined,
       }
       try {
-        await db.bookings.add(booking)
+        // Group C (#126) — syncedCreate rethrows the ConstraintError after its
+        // tx aborts (no data row, no outbox row), so the guard below still works.
+        await syncedCreate('bookings', booking)
       } catch (e: unknown) {
         // Already-confirmed re-tap path. Don't surface as error.
         const msg = e instanceof Error ? e.message.toLowerCase() : ''
