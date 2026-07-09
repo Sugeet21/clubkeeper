@@ -96,7 +96,11 @@ export default function Home() {
 
     const sessionIds = todaySessions.map((s) => s.id!).filter(Boolean)
     const sessionItems = sessionIds.length
-      ? await db.sessionItems.where('sessionId').anyOf(sessionIds).toArray()
+      ? await db.sessionItems
+          .where('sessionId')
+          .anyOf(sessionIds)
+          .filter((i) => !i.deletedAt) // #124 — soft-deleted excluded
+          .toArray()
       : []
 
     const completedAmount = todaySessions

@@ -289,7 +289,12 @@ export async function pauseForPayment(
     billableMs = applyRounding(rawElapsedMs, settings.rounding)
   }
   const tableAmt = calculateAmount(session, billableMs, settings?.rounding ?? 'none')
-  const sessionItems = await db.sessionItems.where('sessionId').equals(sessionId).toArray()
+  // #124 — soft-deleted items never count toward a bill
+  const sessionItems = await db.sessionItems
+    .where('sessionId')
+    .equals(sessionId)
+    .filter((i) => !i.deletedAt)
+    .toArray()
   const itemsTotal = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
   const grandTotal = tableAmt + itemsTotal
 
@@ -363,7 +368,12 @@ export async function confirmPaymentAndStop(
       }
       const amount = calculateAmount(session, billableMs, settings?.rounding ?? 'none')
 
-      const sessionItems = await db.sessionItems.where('sessionId').equals(sessionId).toArray()
+      // #124 — soft-deleted items never count toward a bill
+      const sessionItems = await db.sessionItems
+        .where('sessionId')
+        .equals(sessionId)
+        .filter((i) => !i.deletedAt)
+        .toArray()
       const itemsTotal = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
       const grandTotal = amount + itemsTotal
 
@@ -773,10 +783,12 @@ export async function addOrIncrementSessionItem(input: {
   // insert). syncedBatch returns void, so capture the target id in an outer var.
   let resultId = ''
   await syncedBatch(['session_items'], async (b) => {
+    // #124 — !deletedAt: matching a tombstoned row would increment an
+    // invisible item instead of inserting a visible one
     const existing = await db.sessionItems
       .where('sessionId')
       .equals(sessionId)
-      .filter(item => normalizeName(item.name) === normalized && item.price === price)
+      .filter(item => !item.deletedAt && normalizeName(item.name) === normalized && item.price === price)
       .first()
 
     if (existing && existing.id != null) {
@@ -812,6 +824,7 @@ export async function getRecentItems(limit = 8): Promise<RecentItem[]> {
   const items = await db.sessionItems
     .where('addedAt')
     .above(thirtyDaysAgo)
+    .filter((i) => !i.deletedAt) // #124 — soft-deleted excluded
     .toArray()
 
   // Group by name (case-insensitive), keep most recent price, count uses
@@ -1339,6 +1352,7 @@ export async function recordSessionPaymentBreakdown(
       const sessionItems = await db.sessionItems
         .where('sessionId')
         .equals(sessionId)
+        .filter((i) => !i.deletedAt) // #124 — soft-deleted items never count toward a bill
         .toArray()
       const itemsTotal = sessionItems.reduce(
         (sum, i) => sum + i.price * i.quantity,

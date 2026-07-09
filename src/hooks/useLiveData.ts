@@ -130,7 +130,11 @@ export function useSessionsInRange(startMs: number, endMs: number): SessionWithI
         .toArray()
       const sessionIds = sessions.map((s) => s.id!).filter(Boolean)
       const allItems = sessionIds.length
-        ? await db.sessionItems.where('sessionId').anyOf(sessionIds).toArray()
+        ? await db.sessionItems
+            .where('sessionId')
+            .anyOf(sessionIds)
+            .filter((i) => !i.deletedAt) // #124 — soft-deleted excluded
+            .toArray()
         : []
       const itemsBySessionId = new Map<number, SessionItem[]>()
       for (const item of allItems) {
@@ -152,7 +156,11 @@ export function useSessionItems(sessionId: number | undefined): SessionItem[] {
       () =>
         sessionId === undefined
           ? Promise.resolve([] as SessionItem[])
-          : db.sessionItems.where('sessionId').equals(sessionId).sortBy('addedAt'),
+          : db.sessionItems
+              .where('sessionId')
+              .equals(sessionId)
+              .filter((i) => !i.deletedAt) // #124 — soft-deleted excluded
+              .sortBy('addedAt'),
       [sessionId],
       [] as SessionItem[],
     ) ?? []

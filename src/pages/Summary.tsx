@@ -272,7 +272,11 @@ export default function Summary() {
 
         const sessionIds = sessions.map((s) => s.id!).filter(Boolean)
         const allItems = sessionIds.length
-          ? await db.sessionItems.where('sessionId').anyOf(sessionIds).toArray()
+          ? await db.sessionItems
+              .where('sessionId')
+              .anyOf(sessionIds)
+              .filter((i) => !i.deletedAt) // #124 — soft-deleted excluded
+              .toArray()
           : []
 
         const itemsBySessionId = new Map<number, SessionItem[]>()
@@ -340,6 +344,7 @@ export default function Summary() {
       const allItems = await db.sessionItems
         .where('sessionId')
         .anyOf(sessionIds)
+        .filter((i) => !i.deletedAt) // #124 — soft-deleted excluded
         .toArray()
       const itemsBySessionId = new Map<number, SessionItem[]>()
       for (const item of allItems) {

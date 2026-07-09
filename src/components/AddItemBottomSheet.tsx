@@ -69,10 +69,12 @@ async function runCanteenAddTransaction(
     await b.update('canteen_items', ci.id!, { currentStock: newStock })
     // Inline merge — do NOT call addOrIncrementSessionItem here (Pattern D7)
     const normalized = normalizeName(itemName)
+    // #124 — !deletedAt: matching a tombstoned row would increment an
+    // invisible item instead of inserting a visible one
     const existing = await db.sessionItems
       .where('sessionId')
       .equals(sessionId)
-      .filter(item => normalizeName(item.name) === normalized && item.price === priceNum)
+      .filter(item => !item.deletedAt && normalizeName(item.name) === normalized && item.price === priceNum)
       .first()
     if (existing && existing.id != null) {
       await b.update('session_items', existing.id, { quantity: Math.min(99, existing.quantity + qtyNum) })
