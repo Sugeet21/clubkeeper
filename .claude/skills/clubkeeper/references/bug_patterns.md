@@ -200,7 +200,7 @@ const id = crypto.randomUUID()
 await db.sessions.add({ ...data, id, /* rest */ })
 return id
 ```
-Do NOT rely on the `db.x.add(row)` return value to obtain the id post-v20 — generate first, pass into the row, return your generated id. Same applies inside transactions (the `createBackEntry` pattern). The `restoreSessionItem` undo path mints a FRESH UUID — do not attempt to resurrect the deleted row's key, because the old id may now be a number that no longer satisfies the new schema's key path semantics in some edge cases, and Undo doesn't require key continuity (it's anchored on `addedAt`, not `id`).
+Do NOT rely on the `db.x.add(row)` return value to obtain the id post-v20 — generate first, pass into the row, return your generated id. Same applies inside transactions (the `createBackEntry` pattern). *(Historical note: `restoreSessionItem` originally minted a FRESH UUID on undo. Superseded by #124 (9 Jul 2026) — delete is now a SOFT delete, so the row still exists and restore clears `deletedAt` on the SAME id with no `.add()` at all. Same-row restore is REQUIRED for sync symmetry: a fresh-UUID insert would leave peers the tombstone plus a duplicate.)*
 
 **`crypto.randomUUID()` polyfill:** installed at boot in `src/main.tsx`. Always available — no need to feature-detect in call sites.
 
@@ -1015,7 +1015,7 @@ Branch-specific fields (`updated_at`, `owner_id`, server-defaulted columns) stay
 1. `tables` must list every synced table the callback READS or WRITES — omitting one → Dexie throws "not part of transaction" the first time `fn` touches it. Do NOT lock all 9 tables to dodge that throw; the tight scope IS the safety net.
 2. Non-synced reads (e.g. `db.settings`, not a `SyncTableName`) cannot ride the tables list — hoist them BEFORE the batch, and only if they're not part of the atomic guarantee (DB-static config like `rounding` is fine; a balance/stock read is NOT).
 3. tx-zone discipline (Pattern D7 family): inside `fn`, ONLY Dexie reads/writes + pure synchronous compute. NEVER await supabase/network/a timer — that yields the tx zone and closes the tx. `crypto.randomUUID()`/`Date.now()` are sync and safe.
-4. Ops that could split an append-only or delete invariant stay out: `b.softDelete('wallet_transactions', ...)` throws (write a reversal row); a hard local delete has no sync op (needs a soft-delete model + reader filters — see #124, do NOT smuggle that semantics change into a plumbing chunk).
+4. Ops that could split an append-only or delete invariant stay out: `b.softDelete('wallet_transactions', ...)` throws (write a reversal row); a hard local delete has no sync op — the soft-delete model + reader `!deletedAt` filters shipped in #124 (9 Jul 2026, `deleteSessionItem`/`restoreSessionItem`; template in ripple_effects §Session Items). A delete-semantics change is its own chunk, never smuggled into a plumbing swap.
 **Create-only exception:** if EVERY write is a plain create with no read-dependency, `syncedCreateBatch(items[])` (the simpler ops-list form) is still correct — the ops-list weakness only bites read-then-write.
 **Files affected:** `src/db/syncWrappers.ts` (`syncedBatch` + `BatchContext`), `src/db/queries.ts` (createCanteenSale, recordStockPurchase, updateSessionItem, createBackEntry). Relevant for ALL of Group B.
 
