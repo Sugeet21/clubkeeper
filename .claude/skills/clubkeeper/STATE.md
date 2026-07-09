@@ -5,7 +5,7 @@ Rules for this file: OVERWRITE in place, never append (Rule G lives here). One l
 
 ## Current focus
 
-Phase D (staff login) STARTED — D0 done (chunk plan `references/phase_d_plan.md` + migration draft); next chunk: D1 (owner applies `20260710_phase_d_staff_login`, fresh-JWT regression). Two plan questions await Sugeet (History owner-only? staff customer-create?). Phase C tail: #125/#126 verification outstanding. Immediate P1: #127 (player booking broken post-v20, migration held by owner).
+Phase D (staff login) STARTED — D0 done (chunk plan `references/phase_d_plan.md` + migration draft; owner answered both plan questions — matrix amended: staff keep back-entry creation, staff can create customers); next chunk: D1 (owner applies `20260710_phase_d_staff_login`, fresh-JWT regression). Phase C tail: #125/#126 verification outstanding. Immediate P1: #127 (player booking broken post-v20, migration held by owner).
 
 ## Module status (one line each — overwrite in place)
 

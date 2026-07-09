@@ -27,11 +27,11 @@ These override any older assumption in prompts or docs:
 - **Staff sign-out affordance:** staff visiting `/settings` get a minimal Account card (name, username, club name, Sign out) — nothing else. Satisfies "Settings entire page ❌" while keeping the §3 account-switch flow reachable.
 - **Revoke = `users_meta.active=false` + kill refresh** (`auth.admin.updateUserById(id, { ban_duration: '87600h' })`; if the installed supabase-js exposes an admin session-invalidation call, use it additionally). Residual access = JWT TTL (≤1h), the §4.5 accepted trade-off. No un-revoke UI in v1 (re-create instead).
 
-## Open questions for Sugeet (answer before the affected chunk)
+## Owner answers (Sugeet, 10 Jul 2026) — these AMEND the §2 matrix
 
-1. **History page for staff?** The §2 matrix doesn't list History. It exposes previous days' sessions/revenue — same sensitivity as full Summary. **Plan default: owner-only** (staff BottomNav drops History). Confirm before D5.
-2. **Can staff CREATE a customer?** Matrix lists "Top up wallet ✅" but not "Add customer". Walk-in reality says yes. **Plan default: staff can create customers** (RLS already allows INSERT). Confirm before D6.
-3. **Staff-device settings parity (DEFERRED — know the gap):** Dexie `ClubSettings` is device-local; a staff device runs on defaults (`rounding: 'none'`, default low-stock threshold, etc.). Billing-critical values mostly live on synced `game_tables` rows (rate cards, tolerance), so exposure is small — and #100 says rounding isn't applied on stop anyway. Full settings sync is deferred past Phase D; recorded in STATE as load-bearing pending. Say if any specific field must sync sooner.
+1. **History: owner-only, EXCEPT "Log past session".** The past-sessions list/revenue history is owner-only, but staff MUST be able to log past sessions (back entries). This amends the §2 matrix row "Back Entries page ❌ staff" → **staff ✅ for back-entry CREATION only**. Implementation: `/history` stays reachable for staff; staff render = ONLY the "Log past session" card/CTA (BackEntryModal), NO past-session list, no revenue. No migration change needed — the draft RLS already lets staff INSERT sessions/session_items and UPDATE canteen stock, which is exactly what a back entry writes.
+2. **Staff CAN create customers.** Plan default confirmed; RLS already allows it.
+3. **Staff-device settings parity (DEFERRED — know the gap):** Dexie `ClubSettings` is device-local; a staff device runs on defaults (`rounding: 'none'`, default low-stock threshold, etc.). Billing-critical values mostly live on synced `game_tables` rows (rate cards, tolerance), so exposure is small — and #100 says rounding isn't applied on stop anyway. Full settings sync is deferred past Phase D; recorded in STATE as load-bearing pending. Sugeet says if any specific field must sync sooner.
 
 ---
 
@@ -153,7 +153,7 @@ COMMIT: feat(staff): #<issue> D4 — claim-gated seed + account switch verificat
 Paste-ready prompt:
 
 ```
-TASK: Phase D Chunk D5 — enforce the §2 permission matrix on the operations screens. Requires D4. CONFIRM WITH SUGEET FIRST: History owner-only? (plan default: yes).
+TASK: Phase D Chunk D5 — enforce the §2 permission matrix on the operations screens. Requires D4. Owner answers of 10 Jul apply (see plan "Owner answers"): History owner-only EXCEPT staff keep back-entry creation.
 
 MANDATORY reading: SKILL.md + STATE.md; references/phase_d_plan.md; sync_architecture_v2.md §2 (the matrix rows for sessions/back-entries) + Appendix F (useRole/OwnerOnly sketch — sketch only, the shipped useRole from D3 wins); ripple_effects.md for each touched page.
 
@@ -161,7 +161,7 @@ MANDATORY reading: SKILL.md + STATE.md; references/phase_d_plan.md; sync_archite
 2. Matrix application (staff loses; owner byte-identical):
    - Home/tables grid + StartSession: NO gating — staff start/stop/pause/resume/add-item all allowed.
    - SessionDetail: hide for staff — edit start time, move table, delete session, edit paymentBreakdown. Keep stop/pause/add-canteen-item.
-   - History: if Sugeet confirms owner-only → route-level fallback to /tables (D7 wires the route guard; here gate the page content + its BottomNav tab visibility comes in D7). Back Entries entry point (BackEntryModal trigger in History) is owner-only regardless.
+   - History (per owner answer 10 Jul, matrix AMENDED): staff render of /history = ONLY the "Log past session" card/CTA (BackEntryModal fully functional — staff make back entries); the past-session list, filters, and any revenue figures are owner-only. Do NOT route-block /history for staff (D7 keeps the tab). Back-entry writes already pass staff RLS (sessions/session_items INSERT + canteen stock UPDATE).
 3. CRITICAL: a gate must remove the ACTION, not just the button — check each hidden CTA has no keyboard/route/sheet path a staff user can still reach (e.g. a bottom sheet opened by a different trigger). Grep each gated handler for other call sites.
 4. Remember WHY the client gate matters (D0 finding 2): a staff-queued owner-only write dead-letters in the outbox after 10 RLS 403s. The UI gate is the primary defense.
 
@@ -174,14 +174,14 @@ COMMIT: feat(staff): #<issue> D5 — role gates on operations screens (refs #<is
 Paste-ready prompt:
 
 ```
-TASK: Phase D Chunk D6 — matrix enforcement on commerce screens. Requires D5 (RoleGuard primitives exist). CONFIRM WITH SUGEET FIRST: staff can create customers? (plan default: yes).
+TASK: Phase D Chunk D6 — matrix enforcement on commerce screens. Requires D5 (RoleGuard primitives exist). Owner answer of 10 Jul applies: staff CAN create customers.
 
 MANDATORY reading: SKILL.md + STATE.md; references/phase_d_plan.md; sync_architecture_v2.md §2 matrix rows (canteen/customers/wallet/quick-sale/piggy); ripple_effects.md §Wallet + §Canteen; bug_patterns.md PM*/P* sections for the wallet flows you touch.
 
 Staff loses (hide via RoleGuard; owner byte-identical):
 - Canteen: item create/edit (name/price), peak pricing management, RestockSheet trigger. Staff keeps: view items, sell (stock decrement rides the existing atomic sale path — RLS allows staff canteen_items UPDATE for exactly this).
 - Wallet/CustomerProfile: manual adjustment CTA (RLS also blocks kind='adjustment' server-side — the D9 proof target), customer edit (name/phone), any delete. Staff keeps: customers list/detail, top-up, approve player-hub topup intents (PendingTopupsModal), walk-in codes.
-- WalletNewCustomer: per Sugeet's answer (default: staff allowed).
+- WalletNewCustomer: staff allowed (owner answer 10 Jul).
 - Piggy: entire page owner-only (content gate here; route + nav in D7).
 - QuickSale: NO gating (staff allowed, including PaymentSplitSheet).
 Same discipline as D5: remove the ACTION not the button; grep gated handlers for alternate entry points (sheets/modals especially — RestockSheet and adjustment sheets have multiple triggers).
@@ -199,10 +199,10 @@ TASK: Phase D Chunk D7 — route-level enforcement + BottomNav + the staff Summa
 
 MANDATORY reading: SKILL.md + STATE.md; references/phase_d_plan.md; sync_architecture_v2.md §2 ("How today-only Summary works") + Appendix F route list; src/App.tsx routes; src/components/BottomNav.tsx; Critical Rule 12 (NO gear icon in TopBar — the staff Settings tab stays in BottomNav).
 
-1. Route guard: <RequireOwner> wrapper (inside RequireAccess) that redirects role==='staff' to /tables. Wrap: /summary handled specially (below), /piggy, /history (per Sugeet's D5 answer), /wallet/... adjustment-specific routes if any exist as routes (check), /settings/* NOT wrapped (staff needs the Account card from D4 — the page itself branches on role).
+1. Route guard: <RequireOwner> wrapper (inside RequireAccess) that redirects role==='staff' to /tables. Wrap: /piggy + /wallet/... adjustment-specific routes if any exist as routes (check). NOT wrapped: /summary (today-card, below), /history (staff get the stripped log-past-session view from D5), /settings/* (staff Account card from D4) — those pages branch on role internally.
 2. Summary: /summary stays reachable for staff but renders ONLY the today-card — today's total revenue, session count, canteen sales count, business-day boundary per the existing summary math. No date picker, no charts, no piggy strip, no comparisons. Full component behind role==='owner'. Reuse existing summary aggregation (Pattern T9 — Quick Sale included); do NOT fork the math.
-3. BottomNav for staff: Tables / Summary / Settings (History tab hidden if owner-only). Keep grid-cols consistent with the tab count (grid-cols-4 → grid-cols-3 for staff) — 360px, ≥44px targets.
-4. Deep-link test is the gate: staff pasting /piggy or /history URLs must bounce to /tables, not flash content first (guard renders null while deciding, never the child).
+3. BottomNav for staff: all 4 tabs STAY (Tables / Summary / History / Settings) — each owner-only page renders its staff-reduced view instead (today-card, log-past-session, Account card). No grid-cols change.
+4. Deep-link test is the gate: staff pasting /piggy URLs must bounce to /tables, not flash content first (guard renders null while deciding, never the child); /summary, /history, /settings show ONLY their staff-reduced views.
 
 GATE: build + tsc diff. Runtime: staff deep-links to every owner-only route → bounce; staff Summary shows exactly one card with today's numbers matching the owner device; owner UI byte-identical.
 COMMIT: feat(staff): #<issue> D7 — route guards + staff nav + today-only Summary card (refs #<issue>). Paired skill commit (ripple_effects §Roles route table; STATE module line for staff gating).
@@ -242,7 +242,7 @@ CHECKLIST (in order):
 3. RLS SCOPE — on B: staff sees exactly the club's data. Negative scope check: in B's console, fetch a sync table with the staff bearer and a DIFFERENT club_id filter → zero rows (claim-scoped SELECT).
 4. STAFF WRITE PATH — on B: start a session, add a canteen item, stop with payment; wallet top-up on a customer. Each lands in Supabase (created_by = staff user id) and appears on A within ~2s. Staff outbox drains to 0 — this proves the D1 staff policies (a 403 here dead-letters).
 5. FORBIDDEN 403 — server-side, NOT via the app UI (an outbox write would dead-letter; use direct REST): from B's console, plain fetch to /rest/v1/wallet_transactions with the staff bearer, body kind='adjustment' → expect 403 (42501). Repeat for an INSERT to game_tables → 403. Then confirm the UI never offers either action to staff anyway.
-6. PERMISSION SWEEP — on B: walk the §2 matrix screen by screen: SessionDetail owner CTAs absent; Canteen edit/restock/peak absent; adjustment absent; Piggy/History bounce; Summary = single today-card matching A's numbers; Settings = Account card only; deep-links bounce.
+6. PERMISSION SWEEP — on B: walk the §2 matrix (as amended 10 Jul) screen by screen: SessionDetail owner CTAs absent; Canteen edit/restock/peak absent; adjustment absent; Piggy bounces; History = log-past-session card only (and a staff back entry syncs to A); Summary = single today-card matching A's numbers; Settings = Account card only.
 7. REVOKE MID-SHIFT — on A: remove Rajesh. On B: within the JWT TTL the app may keep working (accepted §4.5); force the boundary — sign out on B, attempt sign-in → "account removed" error (hook raises on active=false). users_meta.active=false.
 8. ACCOUNT SWITCH — on B: owner signs in on the same device (per-user DB switch, no data bleed, no ghost tables); then staff2 created fresh → sign-in works (create/reset round-trip).
 
