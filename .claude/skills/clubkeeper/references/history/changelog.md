@@ -4,6 +4,14 @@
 
 ---
 
+## 10 Jul 2026 — Phase D D1: `20260710_phase_d_staff_login` APPLIED (owner-run, same day as draft)
+
+- Sugeet ran the full migration in the Supabase SQL editor, then did the fresh-JWT owner regression: sign out → sign in → real write → sync dot green / outbox drained. That proves the rewritten owner RLS policies AND that the hook still mints `user_club_id` (sync cannot run without it). Staff policies sit dormant until D2 creates the first staff user.
+- `get_club_subscription_status()` RPC smoke not yet run — folded into D3's gate (its first consumer).
+- Ledger flipped UNAPPLIED → APPLIED. Next chunk: D2 (staff admin endpoints).
+
+---
+
 ## 10 Jul 2026 — Phase D Session D0: staff-login chunk plan + migration draft (docs + SQL only, no src/)
 
 - **NEW `references/phase_d_plan.md`** — the Phase D build plan: 9 chunks (D1 apply-migration → D2 staff admin endpoints → D3 role-in-auth-state + staff login + owner-subscription gate → D4 account-switch/seed-gate/staff-Account-card → D5/D6/D7 role gates by page cluster → D8 Settings staff management → D9 two-profile E2E runtime proof), each with a paste-ready prompt, gates, and commit lines. Fresh-JWT-only verification law baked into every RLS chunk (SQL editor runs as postgres — proves nothing).
