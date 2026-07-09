@@ -16,6 +16,12 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 10 Jul 2026 — Phase C write-site cutover close
+
+- **#124** (closed by owner 10 Jul 2026, fixed 39f44c5 + ca69c55) — deleteSessionItem/restoreSessionItem hard-delete had no sync round-trip. Converted to soft-delete model: tombstone + restock in one syncedBatch; Undo clears `deletedAt` on the SAME row id via op `update` (payload mapper now emits explicit `deleted_at: null`); `!deletedAt` filters on all 11 session_items readers. Owner-verified 3-round runtime proof. See ripple_effects §Session Items + §Sync un-delete invariants. — see GitHub
+
+---
+
 ## 3 Jul 2026 — Phase C Chunk 5.3 runtime proof
 
 - **#116** (closed by owner 3 Jul 2026, plumbing in 6a8d2f9) — SyncReader broken-hook TOKEN_REFRESHED single-fire proof; runtime capture on the issue shows one deferral warn, exactly one retry across two refresh events, listener torn down after firing. — see GitHub
