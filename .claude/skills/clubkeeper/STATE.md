@@ -1,15 +1,15 @@
 # STATE — what is true right now
 
-**Last verified: 8 Jul 2026 (CLI session, live prod probe + `gh issue list`).**
+**Last verified: 9 Jul 2026 (CLI session, live prod probe + `gh issue list`).**
 Rules for this file: OVERWRITE in place, never append (Rule G lives here). One line per module. No commit SHAs, no build sizes, no dates inside status lines — history belongs in `references/history/changelog.md` + `git log`. Pending entries are deleted the moment they resolve. **claude.ai sessions:** if the stamp above is more than ~7 days old, say so to Sugeet and trust GitHub/his answers over this file.
 
 ## Current focus
 
-Phase C sync cutover tail: Group C write sites (#126), owner verification of #122/#125, then Phase D (staff login) per `references/history/sync_architecture_v2.md` §2–3. Immediate P1: #127 (player booking broken post-v20).
+Phase C sync cutover tail: #124 (session-item soft-delete, the last raw sites), owner verification of #122/#125/#126, then Phase D (staff login) per `references/history/sync_architecture_v2.md` §2–3. Immediate P1: #127 (player booking broken post-v20).
 
 ## Module status (one line each — overwrite in place)
 
-- **Sync (Phase C)** — Write path (outbox + SyncRunner on lock-free `supabaseSync`) + read path (SyncReader: serialized queue, direct-apply LWW on epoch-ms, 4 realtime channel groups, 30s-grace/60s polling fallback) LIVE across all 9 tables; `queries.ts` cutover complete through Group B incl. `syncedBatch` mixed-op wrapper; Group C (~20 sites outside queries.ts) open (#126); #122/#125 runtime-proven, pending owner verification. Contract: `ripple_effects.md` §Sync + Patterns S14–S24.
+- **Sync (Phase C)** — Write path (outbox + SyncRunner on lock-free `supabaseSync`) + read path (SyncReader: serialized queue, direct-apply LWW on epoch-ms, 4 realtime channel groups, 30s-grace/60s polling fallback) LIVE across all 9 tables; write-site cutover COMPLETE through Group C (#126 — queries.ts Groups A+B plus customerStore/coinExpiry/streak/nudge/walkInCode/Pending modals/AddItemBottomSheet), runtime-proven (top-up + manual adjustment round-trip, outbox 0); only #124's deferred delete sites remain raw; #122/#125/#126 pending owner verification. Contract: `ripple_effects.md` §Sync + Patterns S14–S24.
 - **Auth + cardless trial** — Supabase Google OAuth (`select_account`), 7-day cardless trial via Postgres trigger, `subscriptionLoaded` race guard, stranded-lock degraded boot (Pattern A11; #120 fix pending owner verification).
 - **Subscription (Razorpay)** — LIVE mode in production, NACH auto-debit collecting ₹599; V1-LAUNCH shows Standard Monthly only; serverless create/webhook/cancel.
 - **Advance booking (#84/#106/#127)** — Owner side + per-club hours + per-30-min-slot advance shipped; player-side #127 code fix landed (table-id retyped `number`→`string` across BookingScreen/PlayerScan/playerHubApi + `PublicTableInfo.id`), pending the `20260708_booking_table_id_uuid` migration run + owner E2E of P1c–P2.
@@ -57,12 +57,12 @@ Hand-notes that survive regeneration: #110/#120/#122/#125 have fixes shipped and
 
 <!-- ISSUES:BEGIN (generated — do not hand-edit between markers) -->
 **P0:** #97 Accept bookings toggle flips state after navigating away and back (Pat · #100 Time Rounding setting (15 min / 30 min) not applied on session stop (P · #103 isSlugAvailable uses owner supabase client, freezes slug setup Save bu · #110 Sync outbox dead-letters with 'Could not find camelCase column in sche.
-**P1:** #56 A2 — Subscribe.tsx hardcoded 1500ms delay instead of waiting for webho · #59 A5 — authStore calls openAndSeed on every INITIAL_SESSION re-fire (ris · #61 P2 — PlayerHubSettings handleSaveSlug crashes if clubName is null · #62 W1 — Wallet.tsx has no fetch cancellation on navigate away (setState o · #63 W2 — WalletTopup.tsx UI freezes if db.customers.get() fails after topu · #65 S2 — Settings reset dialog shows stale session count (count read at re · #67 R2 — Realtime initial count never loads if first fetch throws (no erro · #112 Phase C Chunk 5 — SyncReader: initial pull + realtime + server-side LW · #120 App never boots when a zombie tab strands the GoTrue navigator lock (a · #122 syncWrappers has no mixed-op atomic batch; 8 of 17 Group A mutation si · #125 customer.lastVisitAt dropped by sync mappers → pulled customers invisi · #126 ~20 customer/wallet/booking write sites OUTSIDE queries.ts still write · #127 Player booking flow broken post-v20: BookingScreen filters tables to n.
+**P1:** #56 A2 — Subscribe.tsx hardcoded 1500ms delay instead of waiting for webho · #59 A5 — authStore calls openAndSeed on every INITIAL_SESSION re-fire (ris · #61 P2 — PlayerHubSettings handleSaveSlug crashes if clubName is null · #62 W1 — Wallet.tsx has no fetch cancellation on navigate away (setState o · #63 W2 — WalletTopup.tsx UI freezes if db.customers.get() fails after topu · #65 S2 — Settings reset dialog shows stale session count (count read at re · #67 R2 — Realtime initial count never loads if first fetch throws (no erro · #112 Phase C Chunk 5 — SyncReader: initial pull + realtime + server-side LW · #120 App never boots when a zombie tab strands the GoTrue navigator lock (a · #125 customer.lastVisitAt dropped by sync mappers → pulled customers invisi · #126 ~20 customer/wallet/booking write sites OUTSIDE queries.ts still write · #127 Player booking flow broken post-v20: BookingScreen filters tables to n.
 **P2 / unlabelled:** #55 #57 #58 #60 #64 #66 #102 #113 #114 #115 #118 #119 #121 #123 #124.
 <!-- ISSUES:END -->
 
 ## Known limitations
 
-- **LIMIT-001 (largely resolved):** per-user IndexedDB shipped; cross-device sync live (Phase C) but write-site cutover incomplete (#126) — data written by non-converted sites doesn't sync yet.
+- **LIMIT-001 (largely resolved):** per-user IndexedDB shipped; cross-device sync live (Phase C); write-site cutover complete through Group C (#126) — only #124's deferred session-item delete sites still bypass sync.
 - **LIMIT-002:** `/api/*` requires `vercel dev` locally; `npm run dev` returns 404 (friendly error in `handlePayNow`).
 - **LIMIT-003 (superseded):** the "build sync at 3+ customer asks" threshold was overridden at 2 asks — sync is built.
