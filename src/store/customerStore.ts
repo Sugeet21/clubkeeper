@@ -6,6 +6,7 @@
 
 import { create } from 'zustand'
 import { db } from '../db/database'
+import { syncedCreate, syncedUpdate, syncedBatch } from '../db/syncWrappers'
 import type { Customer } from '../types/customer'
 import type { WalletTransaction } from '../types/walletTransaction'
 import { createWalkInCustomer } from '../lib/walkInCode'
@@ -87,7 +88,7 @@ export const useCustomerStore = create<CustomerStore>(() => ({
       createdAt: now,
       lastVisitAt: now,
     }
-    await db.customers.add(customer)
+    await syncedCreate('customers', customer)
     return customer
   },
 
@@ -105,7 +106,7 @@ export const useCustomerStore = create<CustomerStore>(() => ({
       )
     }
     // If this customer was a walk-in, clear the walk-in code when a phone is added
-    await db.customers.update(customerId, {
+    await syncedUpdate<Customer & { id: string }>('customers', customerId, {
       phone,
       walkInCode: null,
       lastVisitAt: Date.now(),
@@ -113,7 +114,9 @@ export const useCustomerStore = create<CustomerStore>(() => ({
   },
 
   async updateCustomerName(customerId, name) {
-    await db.customers.update(customerId, { name: name?.trim() || null })
+    await syncedUpdate<Customer & { id: string }>('customers', customerId, {
+      name: name?.trim() || null,
+    })
   },
 
   async updateCustomer(customerId, { name, phone }) {
@@ -128,7 +131,7 @@ export const useCustomerStore = create<CustomerStore>(() => ({
       }
     }
     const trimmedName = name?.trim() || null
-    await db.customers.update(customerId, {
+    await syncedUpdate<Customer & { id: string }>('customers', customerId, {
       name: trimmedName,
       phone,
       lastVisitAt: Date.now(),
@@ -164,7 +167,13 @@ export const useCustomerStore = create<CustomerStore>(() => ({
   // ── Wallet operations ─────────────────────────────────────────────────────
 
   async topUp({ customerId, amountPaid, bonus, paymentMode }) {
-    return db.transaction('rw', db.customers, db.walletTransactions, async () => {
+    // Group C (#126) — wallet credit INSERT + customer balance UPDATE, atomic
+    // with their outbox rows. wallet_transactions is append-only (§4.6): the
+    // ledger row is always b.insert. syncedBatch returns void, so capture the
+    // return values outside.
+    let updated: Customer | undefined
+    let transaction: WalletTransaction | undefined
+    await syncedBatch(['customers', 'wallet_transactions'], async (b) => {
       const customer = await db.customers.get(customerId)
       if (!customer) throw new Error('Customer not found')
 
@@ -172,7 +181,7 @@ export const useCustomerStore = create<CustomerStore>(() => ({
       const newBalance = customer.walletBalance + totalCredited
       const now = Date.now()
 
-      const transaction: WalletTransaction = {
+      transaction = {
         id: crypto.randomUUID(),
         customerId,
         type: 'credit',
@@ -185,19 +194,24 @@ export const useCustomerStore = create<CustomerStore>(() => ({
         createdAt: now,
       }
 
-      await db.walletTransactions.add(transaction)
-      await db.customers.update(customerId, {
+      await b.insert('wallet_transactions', transaction)
+      await b.update('customers', customerId, {
         walletBalance: newBalance,
         lastVisitAt: now,
       })
 
-      const updated = (await db.customers.get(customerId))!
-      return { customer: updated, transaction }
+      updated = (await db.customers.get(customerId))!
     })
+    return { customer: updated!, transaction: transaction! }
   },
 
   async applyManualAdjustment({ customerId, type, amount, notes }) {
-    return db.transaction('rw', db.customers, db.walletTransactions, async () => {
+    // Group C (#126) — same shape as topUp. The insufficient-balance throw
+    // stays INSIDE the callback: it aborts the whole tx, so no ledger row and
+    // no outbox row survive a rejected debit (same semantics as the old tx).
+    let updated: Customer | undefined
+    let transaction: WalletTransaction | undefined
+    await syncedBatch(['customers', 'wallet_transactions'], async (b) => {
       const customer = await db.customers.get(customerId)
       if (!customer) throw new Error('Customer not found')
 
@@ -211,7 +225,7 @@ export const useCustomerStore = create<CustomerStore>(() => ({
       }
 
       const now = Date.now()
-      const transaction: WalletTransaction = {
+      transaction = {
         id: crypto.randomUUID(),
         customerId,
         type,        // 'credit' or 'debit' — direction preserved; referenceType:'manual' is the category
@@ -224,15 +238,15 @@ export const useCustomerStore = create<CustomerStore>(() => ({
         createdAt: now,
       }
 
-      await db.walletTransactions.add(transaction)
-      await db.customers.update(customerId, {
+      await b.insert('wallet_transactions', transaction)
+      await b.update('customers', customerId, {
         walletBalance: newBalance,
         lastVisitAt: now,
       })
 
-      const updated = (await db.customers.get(customerId))!
-      return { customer: updated, transaction }
+      updated = (await db.customers.get(customerId))!
     })
+    return { customer: updated!, transaction: transaction! }
   },
 
   async getTransactionHistory(customerId) {
