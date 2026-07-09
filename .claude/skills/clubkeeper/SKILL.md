@@ -62,6 +62,7 @@ Replaces the paper notebook used at Indian indoor game clubs for tracking who pl
 | Settings.tsx edit | Rule H below + patterns T2/R4/F5/U6/U10/S11 |
 | Schema / types question | `references/data_model.md`, then `src/types/index.ts` (code is the type authority) |
 | Sync work | ripple_effects §Sync + bug_patterns S14–S25; `references/history/sync_architecture_v2.md` ONLY for Phase-D/staff plans + contracts (it's design history — code wins) |
+| Phase D / staff-login work | `references/phase_d_plan.md` (chunk plan D1–D9, the working doc) + sync_architecture_v2 §2–3/§4.5/Appendix B (locked contracts) |
 | Owner-app UI | `references/design_system.md` |
 | Player-facing UI (`/c/:slug`) | `references/player_design_system.md` (note its status header — shipped pages use the dark theme) |
 | Architecture / file structure | `references/architecture.md` |

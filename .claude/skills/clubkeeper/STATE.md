@@ -5,7 +5,7 @@ Rules for this file: OVERWRITE in place, never append (Rule G lives here). One l
 
 ## Current focus
 
-Phase C write-site cutover DONE (#124 closed by owner; #125/#126 verification outstanding); next: Phase D (staff login) per `references/history/sync_architecture_v2.md` §2–3. Immediate P1: #127 (player booking broken post-v20).
+Phase D (staff login) STARTED — D0 done (chunk plan `references/phase_d_plan.md` + migration draft); next chunk: D1 (owner applies `20260710_phase_d_staff_login`, fresh-JWT regression). Two plan questions await Sugeet (History owner-only? staff customer-create?). Phase C tail: #125/#126 verification outstanding. Immediate P1: #127 (player booking broken post-v20, migration held by owner).
 
 ## Module status (one line each — overwrite in place)
 
@@ -49,6 +49,7 @@ Phase C write-site cutover DONE (#124 closed by owner; #125/#126 verification ou
 
 APPLIED: `20260602_cardless_trial` (inferred — trials work in prod; confirm on next fresh signup), `20260610_player_hub`, `20260610_clubcoins`, `20260615_enable_realtime`, `20260615_topup_intents_coins_credited`, `20260616_pricing_visibility`, `20260617_booking_intents`, `20260618_booking_cancel`, `20260619_booked_slots_rpc`, `20260622_booking_hours_and_per_slot_advance`, `20260625_phase_c_sync_tables`, `20260628_lww_guard`, `20260702_sync_client_fields`.
 UNAPPLIED: `20260708_booking_table_id_uuid` (#127 — retypes `booking_intents.table_id` + `submit_booking_intent.p_table_id` + `get_booked_slots.p_table_id` from `int`→`text`; supersedes the old `p_table_id integer` decls in `20260617`/`20260619`). Paste-ready; awaiting owner run in Supabase SQL editor.
+UNAPPLIED: `20260710_phase_d_staff_login` (Phase D chunk D1 — users_meta owner-read policy, staff RLS on the 9 sync tables per §2 matrix, `handle_new_user` staff trial-skip, `get_club_subscription_status()` RPC, drops the wallet_transactions update-policy artifact). Paste-ready; blocks D2–D9; verification is fresh-JWT only (SQL editor bypasses RLS/hook). Independent of `20260708` — either can run first.
 **Any NEW migration file added under `supabase/migrations/` MUST get a line here (applied or unapplied) in the same session.**
 
 ## Open issues — snapshot (GitHub is authoritative; regenerate with `node scripts/sync-state.mjs`)
