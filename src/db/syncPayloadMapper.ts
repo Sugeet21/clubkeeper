@@ -260,8 +260,12 @@ const MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
     if (row.quantity !== undefined) out.quantity = row.quantity
     if (row.addedAt !== undefined) out.created_at = msToIso(row.addedAt as number | string)
     if (row.updatedAt !== undefined) out.updated_at = msToIso(row.updatedAt as number | string)
-    if (row.deletedAt !== undefined && row.deletedAt !== null) {
-      out.deleted_at = msToIso(row.deletedAt as number | string)
+    // #124 — deletedAt: null must reach the wire as an EXPLICIT `deleted_at:
+    // null`: the restoreSessionItem un-delete rides op 'update', and dropping
+    // the key here would leave the server tombstone in place forever.
+    // undefined still means "omit the column".
+    if (row.deletedAt !== undefined) {
+      out.deleted_at = row.deletedAt === null ? null : msToIso(row.deletedAt as number | string)
     }
     return out
   },

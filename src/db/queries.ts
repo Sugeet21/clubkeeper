@@ -698,24 +698,45 @@ export async function updateSessionItem(
 }
 
 export async function deleteSessionItem(id: string): Promise<void> {
-  await db.transaction('rw', db.sessionItems, db.canteenItems, async () => {
+  // #124 — SOFT delete. A hard db.sessionItems.delete() cannot round-trip
+  // through sync (outbox ops are insert/update/soft_delete; Supabase RLS has
+  // no DELETE policy). Restock + tombstone in one atomic syncable op
+  // (Pattern S24): the callback reads session_items (get) + canteen_items
+  // (match scan) and writes both — exactly those two ride the tables list.
+  // Every session_items reader filters !row.deletedAt (#124 invariant).
+  await syncedBatch(['session_items', 'canteen_items'], async (b) => {
     const existing = await db.sessionItems.get(id)
-    if (!existing) return // idempotent — already gone
+    // Idempotent — missing or already tombstoned. Without the deletedAt
+    // check a double-delete would restock the same quantity twice.
+    if (!existing || existing.deletedAt) return
 
     const matched = await findMatchingCanteenItemForRow(existing.name, existing.price)
     if (matched && matched.stockEnabled === true && matched.id !== undefined) {
       const currentStock = matched.currentStock ?? 0
-      await db.canteenItems.update(matched.id, {
+      await b.update('canteen_items', matched.id, {
         currentStock: currentStock + existing.quantity,
       })
     }
 
-    await db.sessionItems.delete(id)
+    await b.softDelete('session_items', id)
   })
 }
 
 export async function restoreSessionItem(item: SessionItem): Promise<void> {
-  await db.transaction('rw', db.sessionItems, db.canteenItems, async () => {
+  // #124 — Undo clears the tombstone on the SAME row id (the soft-deleted row
+  // is still in Dexie). A fresh-UUID insert would leave peers with the
+  // tombstone AND a duplicate. The un-delete rides op 'update' — the full
+  // merged row incl. deletedAt: null — because the soft_delete push op can
+  // only SET deleted_at, never clear it; the session_items payload mapper
+  // emits an explicit `deleted_at: null` for this. Wrapper stamps updatedAt.
+  const id = item.id
+  if (!id) throw new Error('restoreSessionItem: item has no id')
+  await syncedBatch(['session_items', 'canteen_items'], async (b) => {
+    const existing = await db.sessionItems.get(id)
+    // Idempotent — missing or not tombstoned. Without the deletedAt check a
+    // double-undo would decrement stock twice.
+    if (!existing || !existing.deletedAt) return
+
     const matched = await findMatchingCanteenItemForRow(item.name, item.price)
     if (matched && matched.stockEnabled === true && matched.id !== undefined) {
       const currentStock = matched.currentStock ?? 0
@@ -723,18 +744,10 @@ export async function restoreSessionItem(item: SessionItem): Promise<void> {
       if (newStock < 0) {
         throw new InsufficientStockError(currentStock, matched.name)
       }
-      await db.canteenItems.update(matched.id, { currentStock: newStock })
+      await b.update('canteen_items', matched.id, { currentStock: newStock })
     }
-    // v20: id is caller-supplied. Mint a new UUID rather than re-using the
-    // deleted row's id (preserves Undo semantics without resurrecting old key).
-    await db.sessionItems.add({
-      id: crypto.randomUUID(),
-      sessionId: item.sessionId,
-      name: item.name,
-      price: item.price,
-      quantity: item.quantity,
-      addedAt: item.addedAt,
-    })
+
+    await b.update('session_items', id, { deletedAt: null })
   })
 }
 
