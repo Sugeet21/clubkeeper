@@ -4,6 +4,16 @@
 
 ---
 
+## 11 Jul 2026 — #133 fix: server-side actor stamping on all 9 synced tables — commit 860e868 (refs #133; closed #132)
+
+- **Owner closed #132** after the E2E proof; bug_archive pointer updated.
+- **NEW migration `20260711_server_actor_stamping`** — `stamp_actor()` BEFORE INSERT-OR-UPDATE trigger on the 8 mutable synced tables (INSERT stamps `created_by`+`updated_by` = `auth.uid()`, UPDATE stamps `updated_by`) + `stamp_created_by()` BEFORE INSERT on append-only `wallet_transactions`. Triggers, NOT column defaults: `coalesce(auth.uid(), new.<col>)` makes attribution unforgeable for JWT clients (a payload sending someone else's uuid is overwritten) while service-role writes (api/ endpoints, cleanup scripts) keep whatever they provide. `zz_` prefix sorts after `lww_*` so vetoed updates are never stamped. Applied to prod via Supabase MCP; all 9 triggers confirmed in `pg_trigger`.
+- **Ripple handled:** syncReader's equal-ms tie-break (`updated_by !== currentUserId`) is now a live self-vs-peer discriminator — exactly the activation the Chunk 5.3 comment anticipated; self-echoes at equal ms are skipped, peer writes accepted, pre-migration/service-role NULL rows keep old always-remote behavior. Stale comments updated in `syncReader.ts` + ripple_effects §Sync. Read mappers drop both columns → zero Dexie shape change. Build clean.
+- **E2E GREEN 26/26** (extended `d6-rls-e2e.cjs`): staff top-up `created_by`=staff; staff item update `updated_by`=staff with `created_by` preserved=owner; **forge probe — staff payload sending `created_by=<owner uuid>` lands stamped staff**; owner writes stamped owner; all #130/#131/#132 checks still hold. Cleanup re-read-verified; throwaway staff removed.
+- Backfill: pre-existing rows stay NULL (authorship unknowable). Proof comment on #133; awaits owner close.
+
+---
+
 ## 11 Jul 2026 — #132 fix: 'manual' added to staff wallet RLS exclusion — commit 958ed11 (refs #132; closed #130, #131)
 
 - **Owner closed #130 + #131** after the morning's E2E proof (fixed in e3a0507, migration applied 11 Jul); bug_archive pointers added.
