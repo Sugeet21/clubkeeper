@@ -4,6 +4,15 @@
 
 ---
 
+## 11 Jul 2026 — Phase D D6 tail: staff-write RLS fix migration applied + E2E verified — (refs #130, #131; filed #132, #133)
+
+- **Owner ran `20260710_phase_d6_staff_write_rls_fix` in prod** (SQL Editor); both rewritten policies confirmed verbatim in `pg_policies`. Ledger line moved to APPLIED.
+- **E2E GREEN (fresh-JWT law, exact syncRunner wire calls — `upsert(..., { onConflict: 'id' })`, mapper-shaped payloads, throwaway staff via real `create-staff` handler):** #130 staff ₹200 top-up (`kind='credit'`) passes RLS + row lands + customer balance bump passes; #131 staff stock-decrement upsert passes with `stock_qty` 5→4 confirmed server-side + staff `canteen_sales` insert passes. Negative proofs hold: staff `kind='adjustment'` / `reference_type='refund'` / pre-deleted `canteen_items` row all 42501. Owner regressions green (item insert, restock upsert, top-up). Proof comments posted on #130/#131; both await owner close.
+- **Found during verification (filed, not fixed):** **#132 (P1)** — the staff exclusion list blocks `reference_type IN ('adjustment','refund','reversal')` but the app's real manual-adjustment shape is `reference_type='manual'` (`customerStore.ts:235`) — gap-probe with a staff JWT PASSED RLS, so the Pattern-A12 UI gate is the only barrier against staff wallet adjustments; one-line follow-up migration needed (S26 rule 1 extended: exclusion lists are wire-contract too). **#133 (P2)** — `wallet_transactions.created_by` is NULL on every row (no default, no trigger, mapper never sends it; pre-existing D1-era DDL, not a D6 regression) — no server-side attribution of staff vs owner ledger writes; wants `default auth.uid()`.
+- Test script: `d6-rls-e2e.cjs` (session scratchpad, recipe in memory `localhost-api-testing-recipe`). Cleanup: all test rows hard-deleted server-side and verified by re-read (D5 trap honored); throwaway staff deleted, `users_meta` cascaded.
+
+---
+
 ## 10 Jul 2026 — Phase D D6: role gates on commerce screens + staff-RLS bug discovery — (refs #128, #130, #131)
 
 - **Canteen.tsx** — `<OwnerOnly>` (Pattern A12, every trigger + mount): per-card Edit/Delete buttons, Restock button, FAB, "Bulk peak prices" pill, peak-onboarding banner, and all four mounts (`CanteenItemFormModal`, `BulkPeakPriceModal`, `RestockSheet`, delete-confirm `Modal`). Staff empty-state drops the "Tap + to add one" hint. Informational "Peak · until X" pill stays for staff (they sell at peak prices). Grep-verified: all gated modals have exactly ONE mount and their state setters no other call sites.
