@@ -11,6 +11,7 @@ import { SaveIndicator, useSaveIndicator } from '../components/SaveIndicator'
 import { PeakWindowBottomSheet } from '../components/PeakWindowBottomSheet'
 import { useToastStore } from '../store/toastStore'
 import { useAuthStore } from '../store/authStore'
+import { useRole } from '../hooks/useRole'
 import { validatePlayerName, validateUpiId } from '../lib/validation'
 import { db } from '../db/database'
 import { supabase } from '../lib/supabase'
@@ -234,7 +235,91 @@ function importErrorMessage(reason: ImportFailureReason): string {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+// ─── D4: role split ──────────────────────────────────────────────────────────
+// Staff get ONLY the minimal Account view; every owner section (and its hooks,
+// live queries, and the clubs-row sync) unmounts entirely — not hidden by CSS.
+// The split lives in a thin wrapper so neither branch conditionally skips
+// hooks (Rules of Hooks) and the owner component stays byte-identical.
+
 export default function Settings() {
+  const role = useRole()
+  if (role === 'staff') return <StaffAccountView />
+  return <OwnerSettings />
+}
+
+function StaffAccountView() {
+  const navigate = useNavigate()
+  const { user, profile } = useAuthStore()
+  const settings = useSettings()
+  const [signingOut, setSigningOut] = useState(false)
+
+  // Display name: profiles.display_name is seeded from the ck user_metadata
+  // name at staff creation. Club name is device-local Dexie settings — on a
+  // staff device this stays the seed default until settings sync ships
+  // (deferred gap, recorded in STATE.md), so it renders only when present.
+  const displayName = profile?.displayName ?? ''
+  const clubName = settings?.clubName ?? ''
+
+  return (
+    <div className="pt-safe min-h-screen bg-bg pb-32">
+      {/* Top bar — same chrome as the owner page */}
+      <div className="flex items-center px-3 pt-3 pb-4">
+        <button
+          onClick={() => navigate('/tables')}
+          className="flex items-center gap-1 text-text-dim px-1 min-h-[44px] -ml-1 active:text-text transition-colors"
+        >
+          <ChevronLeft />
+          <span className="text-sm">Home</span>
+        </button>
+        <h1 className="text-[18px] font-bold text-text ml-2">Settings</h1>
+      </div>
+
+      <div className="px-4">
+        <div className="bg-bg-card border border-border rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-3 text-text">
+            <IconAccount />
+            <h2 className="text-[15px] font-bold">Account</h2>
+          </div>
+
+          {displayName && (
+            <div className="p-3 bg-bg rounded-xl mb-3">
+              <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Name</p>
+              <p className="text-text text-sm mt-0.5 truncate">{displayName}</p>
+            </div>
+          )}
+          {user?.email && (
+            <div className="p-3 bg-bg rounded-xl mb-3">
+              <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Username</p>
+              <p className="text-text text-sm mt-0.5 truncate">{user.email}</p>
+            </div>
+          )}
+          {clubName && (
+            <div className="p-3 bg-bg rounded-xl mb-3">
+              <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Club</p>
+              <p className="text-text text-sm mt-0.5 truncate">{clubName}</p>
+            </div>
+          )}
+
+          <button
+            onClick={() => {
+              if (signingOut) return
+              setSigningOut(true)
+              // signOut ends in a hard navigation — the flag only guards
+              // against a double-tap in the window before it fires.
+              void useAuthStore.getState().signOut()
+            }}
+            disabled={signingOut}
+            className="w-full min-h-[44px] py-3.5 bg-busy/8 text-busy border border-busy/20 rounded-xl text-[14px] font-semibold active:bg-busy/15 transition-colors disabled:opacity-60"
+          >
+            {signingOut ? 'Signing out…' : 'Sign out'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OwnerSettings() {
   useSyncClubFromSupabase()
   const navigate = useNavigate()
   const tables = useTables()

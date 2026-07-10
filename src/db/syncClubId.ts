@@ -105,6 +105,21 @@ export async function getOwnerClubIdFromJwt(): Promise<string> {
   return clubId
 }
 
+/**
+ * Phase D (D4) — does the CURRENT JWT carry a user_club_id claim? Lock-free,
+ * never throws. Used by seedIfEmpty to skip the demo-table seed: a claim
+ * means the initial pull will populate real tables, so seeding would create
+ * 5 local-only ghost tables (staff first sign-in AND owner-second-device).
+ * Respects the DEV __force_no_claim__ toggle (#116) so the no-claim legacy
+ * path stays testable from the console.
+ */
+export function jwtHasClubClaim(): boolean {
+  if (import.meta.env.DEV && localStorage.getItem('__force_no_claim__') === '1') return false
+  const token = readAccessTokenLockFree()
+  if (!token) return false
+  return typeof decodeJwtClaims(token).user_club_id === 'string'
+}
+
 /** Test/dev hook — clears the cache. */
 export function _resetClubIdCache(): void {
   cached = null

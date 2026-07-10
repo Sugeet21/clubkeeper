@@ -1,4 +1,5 @@
 import { db } from './database'
+import { jwtHasClubClaim } from './syncClubId'
 import type { GameTable, ClubSettings } from '../types'
 
 const SAMPLE_TABLES: Omit<GameTable, 'id'>[] = [
@@ -74,7 +75,15 @@ export async function seedIfEmpty(): Promise<void> {
 
   const ops: Promise<unknown>[] = []
 
-  if (tableCount === 0) {
+  // Phase D (D4) — demo tables only for CLAIM-LESS accounts (fresh owner
+  // signup before users_meta provisioning, i.e. offline-only legacy mode).
+  // A user_club_id claim means SyncReader's initial pull will populate the
+  // REAL club tables; seeding here would add 5 local-only ghost demo tables
+  // alongside them (staff first sign-in AND an owner's second device both
+  // hit this). Lock-free JWT read — never supabase.auth.* (Pattern S16).
+  // The settings singleton below is still ALWAYS seeded: it is device-local
+  // (not synced) and Dexie settings queries need the row to exist.
+  if (tableCount === 0 && !jwtHasClubClaim()) {
     // Pre-assign UUIDs so seed rows work on both v19 (++id accepts caller-supplied id)
     // and v20 (plain id schema requires caller to supply id — no auto-generation).
     const tablesWithIds = SAMPLE_TABLES.map(t => ({ ...t, id: crypto.randomUUID() }))
