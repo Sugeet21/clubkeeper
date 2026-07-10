@@ -4,6 +4,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import BottomNav from './components/BottomNav'
 import { ToastContainer } from './components/ToastContainer'
 import { RequireAccess } from './components/RequireAccess'
+import { RequireOwner } from './components/auth/RequireOwner'
 import { useAuthStore } from './store/authStore'
 import { unlockAudio } from './lib/alarm'
 import { applyExpirySweep } from './lib/coinExpiry'
@@ -203,7 +204,12 @@ function AppLayout() {
             <Route path="/customer/:customerId" element={<CustomerProfile />} />
             <Route path="/canteen" element={<Canteen />} />
             <Route path="/quick-sale" element={<QuickSale />} />
-            <Route path="/piggy" element={<Piggy />} />
+            {/* Phase D (D7) — owner-only routes: staff deep-links bounce to
+                /tables at the router, before the page mounts. Piggy's D6
+                role split stays as defense-in-depth behind this guard. */}
+            <Route element={<RequireOwner />}>
+              <Route path="/piggy" element={<Piggy />} />
+            </Route>
             <Route path="/bookings" element={<Bookings />} />
             {/* Phase C Chunk 3 — DEV-only sync wrapper smoke test. Gated on
                 import.meta.env.DEV so production never serves this. */}

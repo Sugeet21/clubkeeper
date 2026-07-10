@@ -11,6 +11,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/database'
 import { getCanteenItems, getLowStockThreshold, getPiggyBalance } from '../db/queries'
 import { useTables, useActiveSessions, useSettings } from '../hooks/useLiveData'
+import { useRole } from '../hooks/useRole'
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatDuration } from '../lib/time'
 import { calculateAmount, calculateItemsTotal } from '../lib/money'
@@ -219,7 +220,120 @@ function SessionRow({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+// Phase D (D7) — role split (Pattern A12, same shape as the D5 History split).
+// Staff get ONLY the today-card: no date picker, no deltas, no heatmap, no
+// piggy/cash-flow strip, no export. Whole-component branch keeps the Rules of
+// Hooks happy and the owner render byte-identical.
 export default function Summary() {
+  const role = useRole()
+  if (role === 'staff') return <StaffSummaryToday />
+  return <OwnerSummary />
+}
+
+// Staff view: one card — today's earnings, session count, canteen sales count.
+// The revenue formula MIRRORS OwnerSummary's headline (do not fork the math):
+// completed session amounts + non-deleted session items (#124) + live running
+// amounts recomputed per tick in the render body (Pattern T4) + walk-in Quick
+// Sale totals (Pattern T9). Home's today-strip is NOT the reference — it
+// omits walk-in sales.
+function StaffSummaryToday() {
+  const activeSessions = useActiveSessions()
+
+  useTick() // drives the live running-session portion every second
+
+  // Day key as the query dep so the static totals re-fire at midnight
+  // (useTick re-renders make the key flip without a remount).
+  const dayKey = todayISO()
+
+  const todayStatic = useLiveQuery(
+    async () => {
+      const start = startOfDay(new Date()).getTime()
+      const end = endOfDay(new Date()).getTime()
+      const sessions = await db.sessions
+        .where('startedAt')
+        .between(start, end, true, true)
+        .toArray()
+
+      const sessionIds = sessions.map((s) => s.id!).filter(Boolean)
+      const items = sessionIds.length
+        ? await db.sessionItems
+            .where('sessionId')
+            .anyOf(sessionIds)
+            .filter((i) => !i.deletedAt) // #124 — soft-deleted excluded
+            .toArray()
+        : []
+
+      const completedRevenue = sessions
+        .filter((s) => s.status === 'completed')
+        .reduce((sum, s) => sum + s.amount, 0)
+      const itemsRevenue = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
+
+      const canteenSales = await db.canteenSales
+        .where('createdAt')
+        .between(start, end, true, true)
+        .toArray()
+      const walkInRevenue = canteenSales.reduce((sum, s) => sum + s.total, 0)
+
+      return {
+        completedRevenue,
+        itemsRevenue,
+        walkInRevenue,
+        sessionCount: sessions.length,
+        saleCount: canteenSales.length,
+      }
+    },
+    [dayKey],
+  )
+
+  // Pattern T4 — live portion in the render body, never useMemo.
+  const todayStart = startOfDay(new Date()).getTime()
+  const runningRevenue = activeSessions
+    .filter((s) => s.startedAt >= todayStart)
+    .reduce((sum, s) => sum + calculateAmount(s, getElapsedMs(s)), 0)
+
+  const totalRevenue =
+    (todayStatic?.completedRevenue ?? 0) +
+    (todayStatic?.itemsRevenue ?? 0) +
+    (todayStatic?.walkInRevenue ?? 0) +
+    runningRevenue
+
+  const sessionCount = todayStatic?.sessionCount ?? 0
+  const saleCount = todayStatic?.saleCount ?? 0
+
+  return (
+    <div className="pt-safe min-h-screen bg-bg pb-32">
+      <div className="px-5 pt-4 pb-3">
+        <h1 className="text-2xl font-bold text-text">Summary</h1>
+        <p className="text-[13px] font-mono text-text-dim mt-1">Today</p>
+      </div>
+
+      <div className="px-5 pt-4">
+        <div className="bg-bg-card border border-border rounded-2xl p-5">
+          <p className="text-[11px] font-mono uppercase tracking-widest text-text-faint mb-1">
+            Day's earnings
+          </p>
+          {/* formatINR unconditionally — mirrors the OwnerSummary headline */}
+          <p className="text-[40px] font-mono font-bold text-text leading-none tabular-nums">
+            {formatINR(totalRevenue)}
+          </p>
+
+          <div className="grid grid-cols-2 gap-2 mt-5">
+            <div className="bg-bg border border-border rounded-2xl p-3 flex flex-col gap-0.5">
+              <p className="text-[20px] font-mono font-bold text-text tabular-nums">{sessionCount}</p>
+              <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Sessions</p>
+            </div>
+            <div className="bg-bg border border-border rounded-2xl p-3 flex flex-col gap-0.5">
+              <p className="text-[20px] font-mono font-bold text-text tabular-nums">{saleCount}</p>
+              <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Canteen sales</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function OwnerSummary() {
   const tables = useTables()
   const settings = useSettings()
   const activeSessions = useActiveSessions()
