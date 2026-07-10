@@ -29,6 +29,7 @@ import { Modal } from '../components/Modal'
 import { AddItemBottomSheet } from '../components/AddItemBottomSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
+import { OwnerOnly } from '../components/auth/RoleGuard'
 import { CoinRedemptionPill } from '../components/CoinRedemptionPill'
 import { redeemCoins, getCoinConfig } from '../db/queries'
 import { resolveCoinConfig } from '../lib/coins'
@@ -766,13 +767,17 @@ export default function SessionDetail() {
             <ChevronLeft />
             <span className="text-sm">Home</span>
           </button>
-          <button
-            onClick={() => setEditStartOpen(true)}
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim active:text-text transition-colors"
-            aria-label="Edit start time"
-          >
-            <PencilIcon />
-          </button>
+          {/* Edit start time — owner-only (Pattern A12): staff RLS forbids
+              started_at edits; matrix "Edit session start time ❌ staff". */}
+          <OwnerOnly>
+            <button
+              onClick={() => setEditStartOpen(true)}
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim active:text-text transition-colors"
+              aria-label="Edit start time"
+            >
+              <PencilIcon />
+            </button>
+          </OwnerOnly>
         </div>
       </div>
 
@@ -980,24 +985,28 @@ export default function SessionDetail() {
           </button>
         )}
 
-        {/* Move table button — active sessions only */}
-        {isActive && (
-          <button
-            onClick={() => setMoveModalOpen(true)}
-            className="w-full min-h-[44px] bg-bg-card text-text-dim border border-border rounded-2xl flex items-center justify-center gap-2 font-medium text-[14px] active:scale-[0.99] transition-transform"
-          >
-            <MoveIcon />
-            Move table
-          </button>
-        )}
+        {/* Move table + edit start — owner-only (Pattern A12, §2 matrix):
+            both are staff-forbidden writes; a staff-queued one dead-letters. */}
+        <OwnerOnly>
+          {/* Move table button — active sessions only */}
+          {isActive && (
+            <button
+              onClick={() => setMoveModalOpen(true)}
+              className="w-full min-h-[44px] bg-bg-card text-text-dim border border-border rounded-2xl flex items-center justify-center gap-2 font-medium text-[14px] active:scale-[0.99] transition-transform"
+            >
+              <MoveIcon />
+              Move table
+            </button>
+          )}
 
-        {/* Edit start time */}
-        <button
-          onClick={() => setEditStartOpen(true)}
-          className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
-        >
-          Edit Start Time
-        </button>
+          {/* Edit start time */}
+          <button
+            onClick={() => setEditStartOpen(true)}
+            className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
+          >
+            Edit Start Time
+          </button>
+        </OwnerOnly>
       </div>
 
       {/* ── Stop confirmation modal ─────────────────────────────────────── */}
@@ -1065,7 +1074,9 @@ export default function SessionDetail() {
         </div>
       </Modal>
 
-      {/* ── Edit start time modal ───────────────────────────────────────── */}
+      {/* ── Edit start time modal ── owner-only mount (Pattern A12: gate the
+          action, not just the trigger) ──────────────────────────────────── */}
+      <OwnerOnly>
       <Modal
         open={editStartOpen}
         onClose={() => setEditStartOpen(false)}
@@ -1116,6 +1127,7 @@ export default function SessionDetail() {
           </div>
         </div>
       </Modal>
+      </OwnerOnly>
 
       {/* ── Add Item bottom sheet ───────────────────────────────────────── */}
       <AddItemBottomSheet
@@ -1221,14 +1233,16 @@ export default function SessionDetail() {
         </div>
       </Modal>
 
-      {/* ── Move Table modal ────────────────────────────────────────────── */}
-      <MoveTableModal
-        open={moveModalOpen}
-        onClose={() => setMoveModalOpen(false)}
-        session={session}
-        allTables={allTables}
-        onMoved={() => setMoveModalOpen(false)}
-      />
+      {/* ── Move Table modal ── owner-only mount (Pattern A12) ─────────── */}
+      <OwnerOnly>
+        <MoveTableModal
+          open={moveModalOpen}
+          onClose={() => setMoveModalOpen(false)}
+          session={session}
+          allTables={allTables}
+          onMoved={() => setMoveModalOpen(false)}
+        />
+      </OwnerOnly>
 
       {/* ── Payment split sheet + coin pill ─────────────────────────────── */}
       {/* Rendered in main tree so it's accessible from both fresh stop and auto-resume paths. */}

@@ -5,6 +5,7 @@ import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatDuration } from '../lib/time'
 import { calculateAmount } from '../lib/money'
 import { BackEntryModal } from '../components/BackEntryModal'
+import { useRole } from '../hooks/useRole'
 import type { GameType, GameTable, Session } from '../types'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -107,7 +108,54 @@ function SessionRow({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+// Phase D (D5) — role split (Pattern A12; owner answer 10 Jul amends the §2
+// matrix): the past-session list, filters, revenue figures, and CSV export are
+// owner-only, but staff MUST keep back-entry creation. Whole-component branch
+// (same shape as the D4 Settings split) keeps the Rules of Hooks happy and the
+// owner render byte-identical.
 export default function History() {
+  const role = useRole()
+  if (role === 'staff') return <StaffHistoryView />
+  return <OwnerHistory />
+}
+
+// Staff view: ONLY the "Log past session" card — no session list, no revenue.
+// BackEntryModal is fully functional (staff RLS allows sessions/session_items
+// INSERT + canteen stock UPDATE, exactly what a back entry writes).
+function StaffHistoryView() {
+  const [showBackEntry, setShowBackEntry] = useState(false)
+
+  return (
+    <div className="pt-safe min-h-screen bg-bg pb-32">
+      <div className="px-4 pt-4 pb-3">
+        <h1 className="text-[22px] font-bold tracking-tight text-text">History</h1>
+      </div>
+
+      <div className="px-4">
+        <div className="bg-bg-card border border-border rounded-2xl p-5">
+          <p className="text-[15px] font-semibold text-text">Log a past session</p>
+          <p className="text-[13px] text-text-dim mt-1 leading-snug">
+            Forgot to start the timer? Add the session from the paper notebook here.
+          </p>
+          <button
+            onClick={() => setShowBackEntry(true)}
+            className="mt-4 w-full min-h-[48px] bg-accent text-bg font-bold rounded-2xl text-[15px] active:scale-[0.99] transition-transform"
+          >
+            + Log past session
+          </button>
+        </div>
+      </div>
+
+      <BackEntryModal
+        open={showBackEntry}
+        onClose={() => setShowBackEntry(false)}
+        onSaved={() => setShowBackEntry(false)}
+      />
+    </div>
+  )
+}
+
+function OwnerHistory() {
   const tables = useTables()
   const settings = useSettings()
   const currency = settings?.currency ?? '₹'

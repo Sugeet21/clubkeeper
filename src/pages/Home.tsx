@@ -16,6 +16,7 @@ import FilterPills from '../components/FilterPills'
 import TableCard from '../components/TableCard'
 import { Modal } from '../components/Modal'
 import { TableFormModal } from '../components/TableFormModal'
+import { OwnerOnly } from '../components/auth/RoleGuard'
 import { SubscriptionStatusBanner } from '../components/SubscriptionStatusBanner'
 import { SessionAlarmModal } from '../components/SessionAlarmModal'
 import type { GameType, Session } from '../types'
@@ -234,22 +235,26 @@ export default function Home() {
       </div>
       {/* /max-w-5xl — FAB and modals are viewport-fixed, must live outside */}
 
-      {/* FAB — opens Add Table modal inline */}
-      <button
-        onClick={() => setAddTableOpen(true)}
-        className="fixed bottom-20 right-5 w-14 h-14 bg-accent text-bg rounded-2xl flex items-center justify-center text-2xl font-bold z-50 active:scale-95 transition-transform"
-        style={{ boxShadow: '0 0 24px rgba(184,255,90,0.35), 0 4px 12px rgba(0,0,0,0.4)' }}
-        aria-label="Add table"
-      >
-        +
-      </button>
+      {/* FAB — opens Add Table modal inline. Owner-only (Pattern A12): a table
+          create is a game_tables INSERT, which staff RLS forbids — a staff tap
+          would dead-letter the outbox. Gate removes trigger AND modal mount. */}
+      <OwnerOnly>
+        <button
+          onClick={() => setAddTableOpen(true)}
+          className="fixed bottom-20 right-5 w-14 h-14 bg-accent text-bg rounded-2xl flex items-center justify-center text-2xl font-bold z-50 active:scale-95 transition-transform"
+          style={{ boxShadow: '0 0 24px rgba(184,255,90,0.35), 0 4px 12px rgba(0,0,0,0.4)' }}
+          aria-label="Add table"
+        >
+          +
+        </button>
 
-      {/* Add Table modal — opened by FAB */}
-      <TableFormModal
-        open={addTableOpen}
-        onClose={() => setAddTableOpen(false)}
-        existingTables={tables}
-      />
+        {/* Add Table modal — opened by FAB */}
+        <TableFormModal
+          open={addTableOpen}
+          onClose={() => setAddTableOpen(false)}
+          existingTables={tables}
+        />
+      </OwnerOnly>
 
       {/* Session alarm modal — fullscreen, covers bottom nav (z-50) */}
       {alarmSession && (
