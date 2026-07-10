@@ -476,13 +476,14 @@ class SyncReader {
    *      local Dexie `updatedAt` is already epoch ms. Missing local
    *      `updatedAt` compares as 0 (any stamped remote wins — mirrors the
    *      server trigger's NULL semantics). Tie-break per §7.3: equal ms +
-   *      `updated_by !== currentUserId` → accept remote. NOTE the actual
-   *      semantics today: our push mapper never sends updated_by, so the
-   *      server column is always NULL and equal-ms ALWAYS yields to remote
-   *      (server-authoritative; the server LWW trigger owns true ties). A
-   *      self-echo at equal ms therefore does one idempotent re-put —
-   *      harmless. If push ever starts populating updated_by, this branch
-   *      becomes a real self-vs-peer discriminator; re-verify then.
+   *      `updated_by !== currentUserId` → accept remote. Since migration
+   *      20260711_server_actor_stamping (#133), the server stamps
+   *      updated_by = auth.uid() via BEFORE trigger on every JWT write
+   *      (the push mapper still never sends it), so this branch is a real
+   *      self-vs-peer discriminator: a SELF-echo at equal ms is skipped;
+   *      a PEER write at equal ms is accepted. Rows written before that
+   *      migration (or by service role) carry NULL and keep the old
+   *      always-yield-to-remote behavior — an idempotent re-put, harmless.
    *   4. Map (fail-loud) + put.
    *   5. Cursor advance — only forward (numeric compare), and NEVER from a
    *      null cursor: null means this table's epoch pull hasn't recorded
