@@ -1,6 +1,6 @@
 # STATE — what is true right now
 
-**Last verified: 10 Jul 2026 (CLI session, #124 close — owner-run runtime proof + `gh` issue comment).**
+**Last verified: 10 Jul 2026 (CLI session, Phase D D2 close — runtime matrix 24/24, auditor PASS).**
 Rules for this file: OVERWRITE in place, never append (Rule G lives here). One line per module. No commit SHAs, no build sizes, no dates inside status lines — history belongs in `references/history/changelog.md` + `git log`. Pending entries are deleted the moment they resolve. **claude.ai sessions:** if the stamp above is more than ~7 days old, say so to Sugeet and trust GitHub/his answers over this file.
 
 ## Current focus
