@@ -46,6 +46,7 @@ If you're changing... → Read sections...
 | `Settings.tsx` collapsible sections, `ClubSettings`, UPI ID, rounding control | [Settings](#settings) |
 | `<Modal>`, `<Toggle>`, `<ConfirmModal>`, `<BottomNav>`, theme/spacing/colors/typography | [Shared UI & Theme](#shared-ui--theme) |
 | `authStore`, `useAccessGuard`, `RequireAccess`, `AuthCallback`, `subscriptionLoaded`, per-user IndexedDB, cardless trial routing | [Auth & Access Guard](#auth--access-guard) |
+| `useRole`, `RoleGuard` (`OwnerOnly`/`HideForStaff`), staff-hidden CTAs, §2 permission matrix, role-split pages | [Roles & Staff Gating (Phase D)](#roles--staff-gating-phase-d) |
 | Subscribe page, plan IDs, Razorpay, webhook, `api/*.ts`, Landing/ROI/Pricing | [Subscription & Funnel](#subscription--funnel) |
 | New route (public or private), rename route, BottomNav, PUBLIC_PATHS | [Routing & Cross-cutting](#routing--cross-cutting) |
 | `/c/:slug`, `/poster/:slug`, PlayerScan, Poster, `playerHubApi.ts`, `supabasePublic.ts`, `slug.ts`, `TopupRealtimeBridge`, three-client rule (Pattern S16) | [Player Hub](#player-hub) |
@@ -59,6 +60,35 @@ If you're changing... → Read sections...
 | `getAllDataForExport`, `importEverythingFromFile`, `resetEverything`, `ClubKeeperBackupV16` | [Import / Export / Reset](#import--export--reset) |
 | Dexie version bump, `.upgrade()` callbacks, new store | [Schema & Migrations](#schema--migrations) |
 | `syncedCreate/Update/SoftDelete/CreateBatch`, `OutboxRow`, `SyncRunner`, `scheduleDrain`, `SyncRunnerBoot`, `_outbox` table, snake_case ↔ camelCase mapping | [Sync (Phase C — outbox + drain engine)](#sync-phase-c--outbox--drain-engine) |
+
+---
+
+## Roles & Staff Gating (Phase D)
+
+Owns: the client-side enforcement of the §2 permission matrix (`sync_architecture_v2.md`, as amended by owner answers 10 Jul 2026). Started in D5 (operations cluster); D6 (commerce) and D7 (routes/nav/Summary) extend this table. **Pattern A12 is the law: a gate must remove the ACTION (every trigger + the modal/sheet mount), not just one button — a staff-queued owner-only write 403s at RLS and dead-letters the outbox.**
+
+Files in scope:
+- `src/components/auth/RoleGuard.tsx` — `<OwnerOnly fallback?>` (children only when `role==='owner'`) + `<HideForStaff>` (hides only from `'staff'`). Render-time reads of `useRole()`; no loading state (role is in lockstep with the session — see §Auth).
+- `src/hooks/useRole.ts` — the store read both primitives use (D3).
+
+Matrix-row → gate map (extend this table in D6/D7; every new gate gets a row):
+
+| §2 matrix row (staff ❌) | Gate location |
+|---|---|
+| Add/edit table (`game_tables` INSERT) | `Home.tsx` FAB + `TableFormModal` mount in `<OwnerOnly>` (D5 plan amendment — prompt said "Home: no gating" but the FAB is an owner-only write). Settings table CRUD is unreachable for staff via the D4 role split. |
+| Edit session start time | `SessionDetail.tsx`: top-bar pencil + "Edit Start Time" button + edit-start `Modal` mount, all in `<OwnerOnly>` |
+| Move session between tables | `SessionDetail.tsx`: "Move table" button + `MoveTableModal` mount in `<OwnerOnly>` |
+| Delete session | NO UI exists anywhere (verified D5) — nothing to gate; if a delete UI is ever added it MUST ship inside `<OwnerOnly>` |
+| History list / revenue / CSV export | `History.tsx` role split: default export branches on `useRole()` → `StaffHistoryView` (ONLY the "Log a past session" card + `BackEntryModal`) vs `OwnerHistory` (old body, byte-identical). Staff KEEP back-entry creation (owner amendment 10 Jul). |
+| Settings (entire page) | D4: `Settings.tsx` role split → `StaffAccountView` |
+
+Staff-ALLOWED on the operations screens (do not gate; regressions here break the core staff job): table grid, start/stop/pause/resume, add canteen item to session, alarm, frames stepper, the full `PaymentSplitSheet` stop-payment flow INCLUDING the Pattern-P4 auto-payment-capture on completed-without-breakdown sessions, today-strip on Home (§2 "today-only Summary ✅").
+
+If you change:
+- **`RoleGuard.tsx` semantics** → re-check every consumer; `OwnerOnly` treats `null` role as not-owner (safe: unreachable behind RequireAccess), a claim-less live session derives `'owner'` (legacy owners keep full UI — never break this).
+- **Any gated handler or modal** → grep for ALTERNATE triggers (sheets/modals often have several openers); the gate must cover all of them plus the mount.
+- **`useRole`/`authStore.role`** → see §Auth & Access Guard (role set in lockstep at all four session set-points).
+- **Adding a staff-visible page section** → check the §2 matrix FIRST; if the write inside it is staff-forbidden by RLS, the UI must be gated no matter what the chunk plan says (the D5 Home-FAB amendment is the precedent).
 
 ---
 

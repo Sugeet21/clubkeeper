@@ -543,6 +543,17 @@ useEffect(() => {
 **StrictMode note:** two concurrent `initialize()` racers both time out; a module-level `degradedBootStarted` guard ensures only ONE runs the degraded boot (state sets are idempotent; the guard exists to stop duplicate toasts). Reset in `signOut()`.
 **Files affected:** `src/store/authStore.ts` (race + degraded boot + `authLockBlocked`), `src/lib/authBootFallback.ts` (NEW — lock-free session read + REST fetch), `src/components/RequireAccess.tsx` (blocked hint).
 
+### Pattern A12 — A role gate must remove the ACTION, not just the button (Phase D D5, 10 Jul 2026)
+**Symptom signature (the failure this prevents):** a staff user reaches an owner-only write through a side door (second trigger, keyboard path, modal opened by another sheet, auto-open effect) → the write queues in the outbox → Supabase RLS returns 403 (42501) → the outbox row retries to the 10-attempt dead-letter. No error the staff user understands; data silently never syncs.
+**Root cause:** treating RLS as the enforcement layer. RLS is defense-in-depth; the outbox architecture makes a server rejection a PERMANENT client failure, so the UI gate is the PRIMARY defense (D0 finding 2).
+**Rule:**
+1. Gate with `<OwnerOnly>` / `<HideForStaff>` from `src/components/auth/RoleGuard.tsx` — render-time reads of `useRole()`, no loading state (role is in lockstep with the session per D3; a claim-less live session = legacy owner = full UI).
+2. Wrap EVERY trigger AND the modal/sheet mount itself. Before calling a gate done, grep the state setter (`setXOpen`) and the handler for other call sites — sheets and modals in this app routinely have 2+ openers.
+3. Whole-page restrictions use the role-split shape (D4 Settings, D5 History): default export branches on `useRole()` to sibling components — never hide-behind-CSS, never conditional hooks. The owner component must stay byte-identical.
+4. When a chunk plan says "no gating" for a screen but the screen contains a staff-forbidden write, the matrix + RLS win over the plan (precedent: D5 Home Add-Table FAB).
+5. Flows staff legitimately complete must NOT be gated even when they touch owner-ish records — e.g. the Pattern-P4 auto-payment-capture on a completed session with no `paymentBreakdown` is part of the staff stop flow.
+**Files affected:** `src/components/auth/RoleGuard.tsx`, `src/pages/Home.tsx`, `src/pages/SessionDetail.tsx`, `src/pages/History.tsx` (D5); extended by D6/D7. Map of every gate: `ripple_effects.md` §Roles & Staff Gating.
+
 ---
 
 ## Subscription & Razorpay (payments, fetch errors)

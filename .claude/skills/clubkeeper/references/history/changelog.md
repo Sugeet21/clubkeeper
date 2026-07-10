@@ -4,6 +4,18 @@
 
 ---
 
+## 10 Jul 2026 — Phase D D5: role gates on operations screens — commit 462b7c9 (refs #128)
+
+- **NEW `src/components/auth/RoleGuard.tsx`** — `<OwnerOnly fallback?>` + `<HideForStaff>`, render-time gates on `useRole()`. **New Pattern A12:** a gate must remove the ACTION (every trigger + modal mount), not just one button — a staff-queued owner-only write 403s at RLS and dead-letters the outbox, so the UI gate is the primary defense.
+- **SessionDetail** — owner-only for staff: edit-start (top-bar pencil + button + modal) and move-table (button + modal). Staff keep stop/pause/resume/add-item/alarm/frames and the Pattern-P4 auto-payment-capture. "Delete session" has NO UI anywhere — nothing to gate.
+- **History** — role split (D4 Settings shape): staff render = ONLY the "Log a past session" card + fully functional `BackEntryModal` (owner amendment 10 Jul: staff keep back-entry creation); list/filters/revenue/CSV owner-only; `OwnerHistory` byte-identical (reviewer-verified via diff).
+- **Home** — Add-Table FAB + `TableFormModal` gated `OwnerOnly`. **Plan amendment:** the D5 prompt said "Home: no gating", but the FAB is a `game_tables` INSERT (staff-forbidden by RLS) — A12 rule 4 precedent. Session ops on Home stay ungated.
+- **Gates:** build clean; strict tsc = 117 = #118 baseline, zero new. Reviewer APPROVE, 0 violations. New ripple_effects §Roles & Staff Gating section (matrix-row → gate map; D6/D7 extend it).
+- **Runtime (localhost session-injection, fresh-JWT law):** owner walk zero diff (FAB, all 7 SessionDetail CTAs, full History). Staff walk: FAB absent; SessionDetail pencil/move/edit-start absent with pause→resume→stop round-trip working; the staff-written session landed in Supabase on the staff JWT (outbox 0, row verified server-side — first staff WRITE-path proof, D1 RLS policies work through the real app); staff `/history` = card only; BackEntryModal opens with pulled canteen items. Cleanup: test sessions + test table soft-deleted server-side (propagates as UPDATE), throwaway staff user deleted, localhost Dexie DBs wiped, token scratch files removed.
+- Testing note: full-page loads of deep routes on dev bounce via the #115 StrictMode race (pre-existing, prod-safe) — use client-side nav (link clicks) when driving the dev app.
+
+---
+
 ## 10 Jul 2026 — Phase D D4: claim-gated seed + account switch + staff Account card — commit 8354f2f (refs #128)
 
 - **seed.ts** — `seedIfEmpty` skips the 5 demo `SAMPLE_TABLES` when the JWT carries `user_club_id` (new lock-free `jwtHasClubClaim()` in syncClubId, honors DEV `__force_no_claim__`). Settings singleton still always seeded. Kills the D0-finding-4 ghost-tables trap for staff first sign-in AND owner second device; claim-less legacy owners still get demo tables (proven via the toggle).
