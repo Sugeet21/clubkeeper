@@ -4,6 +4,17 @@
 
 ---
 
+## 10 Jul 2026 — Phase D D2: staff admin endpoints — commit d90537c (refs #128)
+
+- **Tracking issue #128 created** ("Phase D — staff login + roles") — all Phase D commits ref it.
+- **NEW `api/create-staff.ts`** — owner-JWT-verified staff creation: Bearer → `getUser` → explicit `users_meta` owner+active check (service role bypasses RLS; the query IS the authorization) → §3.3 show-once credentials (`<name>.<4digits>@<clubslug>.ck.local`, crypto rejection-sampled 8-char password, no 0/O/1/l/I) → `admin.createUser` with `ck_role:'staff'` metadata (trigger-skip key) → `users_meta` insert with compensating `deleteUser` on failure.
+- **NEW `api/manage-staff.ts`** — revoke (`active=false` + `ban_duration '87600h'`; supabase-js 2.106.1 has no admin invalidate-sessions-by-user-id — checked `GoTrueAdminApi.d.ts`; §4.5 ≤1h residual accepted) + reset_password (active targets only, 409 otherwise). Target must be same-club `role='staff'` — owner can never revoke an owner or cross-club.
+- **Gates:** `npm run build` clean; Node16-mirror tsc on both files clean (neither tsconfig includes `api/` — Vercel typechecks at deploy); `npx tsc -p tsconfig.app.json` 117 = #118 baseline, zero new. clubkeeper-reviewer: APPROVE, 0 violations.
+- **Runtime matrix 24/24 GREEN** (local handler shim on :3111 — `vercel dev` needed an interactive Vercel login this session; same handlers + same env, node-script matrix instead of raw curl for the token legs): 405/401/400 guards; owner create → 200 + `users_meta` row + **NO `subscriptions` row (retroactive D1 trigger-skip proof)** + profiles row kept; staff JWT minted via `signInWithPassword` carries `user_role='staff'` + owner club → **403 on both endpoints**; unknown target 404; owner-target 403; reset round-trip (old password rejected, new accepted); revoke → `active=false` + sign-in rejected ("User is banned") + reset-on-revoked 409. Bonus negative proof: a claim-less legacy account (sugeetjadhav7) got 403 from the explicit users_meta check. Test staff user deleted from prod after the run (cascade verified).
+- Deploy note: endpoints go live on next push to `main` (Vercel). D8 builds the Settings UI that calls them; D9 re-proves the matrix against real `vercel dev`/prod.
+
+---
+
 ## 10 Jul 2026 — Phase D D1: `20260710_phase_d_staff_login` APPLIED (owner-run, same day as draft)
 
 - Sugeet ran the full migration in the Supabase SQL editor, then did the fresh-JWT owner regression: sign out → sign in → real write → sync dot green / outbox drained. That proves the rewritten owner RLS policies AND that the hook still mints `user_club_id` (sync cannot run without it). Staff policies sit dormant until D2 creates the first staff user.

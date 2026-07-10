@@ -829,7 +829,9 @@ Files in scope:
 - `src/pages/AuthCallback.tsx` — routes by status: active/past_due → `/tables`; trialing-active → `/tables`; trialing-expired → `/subscribe` with state; none/cancelled/expired → `/subscribe`
 - `src/App.tsx` — `AuthInitializer` calls `initialize()`. **AuthInitializer SKIPS `initialize()` on `/c/` and `/poster/` routes (#83 fix)** — Player Hub public pages must never trigger owner auth. `ExpirySweepRunner` has the same gate.
 - `src/db/database.ts` — exports `initDbForUser`, `closeDb`, `isDbReadyForUser`, `getDbName`. DB name: `ClubKeeperDB_<userId>`.
-- Supabase trigger `handle_new_user()` (migration `20260602_cardless_trial.sql` — ⚠ pending manual run): creates `status='trialing'` + `trial_ends_at = now()+7d`.
+- Supabase trigger `handle_new_user()` (migration `20260602_cardless_trial.sql`, amended by `20260710_phase_d_staff_login.sql` APPLIED): creates `status='trialing'` + `trial_ends_at = now()+7d` — SKIPPED for staff (`ck_role='staff'` user-metadata marker or `.ck.local` email).
+- `api/create-staff.ts` (Phase D D2) — POST `{name}` → owner-JWT-verified staff creation. Bearer → `getUser` → **explicit `users_meta` role='owner'+active check (service role bypasses RLS — this query IS the authorization; never remove)** → club slug (fallback `'c'+club_id[0:8]`) → §3.3 credentials (`<name>.<4digits>@<slug>.ck.local`, 8-char crypto rejection-sampled password, charset excludes 0/O/1/l/I) → `admin.createUser` with `user_metadata.ck_role='staff'` (the trigger-skip key — NEVER omit) → `users_meta` insert; on insert failure compensating `admin.deleteUser` (auth user without users_meta would mint claim-less JWTs = treated as legacy owner). Returns `{userId,email,password,name}`; password shown ONCE client-side, stored nowhere.
+- `api/manage-staff.ts` (Phase D D2) — POST `{action:'revoke'|'reset_password', staffUserId}`. Same owner gate; target must be `role='staff'` AND same `club_id` (owner can never touch an owner or another club). Revoke = `users_meta.active=false` (hook blocks every future mint incl. refresh) + `ban_duration:'87600h'` belt-and-braces; supabase-js 2.106.1 has NO admin invalidate-sessions-by-user-id (`admin.signOut` needs the target's JWT) — residual ≤1h JWT TTL accepted (§4.5). Reset requires `active=true` (409 otherwise). Both endpoints are SELF-CONTAINED by design (no relative imports → no Node16 `.js` coupling); the duplicated credential generator between them is intentional — keep the two copies in lockstep if the charset/scheme ever changes.
 
 Invariants:
 - **Per-user DB lifecycle:** ONLY `authStore` calls `initDbForUser`/`closeDb`. `_db` swap is owned by these helpers. `initDbForUser` is idempotent — safe to call on every `INITIAL_SESSION` re-fire (Pattern A1). `closeDb()` resets `_db` to a `ClubKeeperDB__pending` placeholder — never null. Public routes (Landing/Signup/AuthCallback/`/c/`/`/poster/`) do NOT query Dexie — no `dbReady` check needed.
@@ -853,7 +855,7 @@ Subscription schema column map (snake_case DB → camelCase TS): `trial_ends_at�
 
 See also: `bug_patterns.md` Pattern A1 (init idempotency), A5 (loading finally), A6/A7/A8 (Bridge guards), A11 (#120 stranded-lock boot resilience), `decisions_active.md` (per-user DB, cardless trial).
 
-Last updated: 3 Jul 2026 (#120 — getSession race + lock-free degraded boot, `authBootFallback.ts` added)
+Last updated: 10 Jul 2026 (#128 D2 — `api/create-staff.ts` + `api/manage-staff.ts` staff admin endpoints)
 
 ---
 

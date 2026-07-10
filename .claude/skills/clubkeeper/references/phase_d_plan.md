@@ -1,6 +1,6 @@
 # Phase D — Staff Login: chunked build plan
 
-**Status:** D0 + D1 complete (10 Jul 2026 — migration APPLIED by owner, fresh-sign-in regression green; the D1 prompt below is kept for history but is DONE except the `get_club_subscription_status()` RPC smoke, which now rides D3's gate). Next: D2.
+**Status:** D0–D2 complete (10 Jul 2026 — migration APPLIED by owner, fresh-sign-in regression green; D2 endpoints shipped with a 24/24 runtime matrix incl. staff-token 403 + the trigger-skip proof, so that part of D1 is retroactively proven too; the `get_club_subscription_status()` RPC smoke still rides D3's gate). Tracking issue: **#128** — every Phase D commit refs it. Next: D3.
 **Contract sources:** `references/history/sync_architecture_v2.md` §2 (permission matrix — LOCKED), §3 (identity model), §4.5 (JWT claims), Appendix B (RLS). Role strings LOCKED: `'owner'` / `'staff'` — never rename.
 **Migration draft:** `supabase/migrations/20260710_phase_d_staff_login.sql` (UNAPPLIED — see STATE.md ledger).
 **Testing law (project memory):** SQL-editor tests run as `postgres` and bypass RLS + the access-token hook. Every RLS/hook claim in this phase is proven ONLY by a freshly-minted JWT (fresh sign-in). This is baked into every chunk's proof step below.
