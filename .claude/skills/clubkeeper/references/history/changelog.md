@@ -4,6 +4,19 @@
 
 ---
 
+## 10 Jul 2026 — Phase D D3: role in auth state + staff login + club-subscription gate — commit 5798e92 (refs #128)
+
+- **NEW `src/hooks/useRole.ts`** — pure `deriveRole(session)` from the `user_role` JWT claim (lock-free decode via now-exported `decodeJwtClaims`, Pattern S16); missing claim on a live session = legacy owner → `'owner'`. `useRole()` reads `authStore.role` — zero Supabase queries per screen.
+- **authStore** — `role: 'owner'|'staff'|null` set in lockstep with `session` at all four set-points (initialize normal, #120 degraded, onAuthStateChange, signOut). `refreshProfile` staff branch: skips the user_id-scoped `subscriptions` query, calls `get_club_subscription_status()` RPC, synthesizes into the existing `Subscription` shape (`id:'club'`, razorpay nulls) — `useAccessGuard` unchanged; fail-closed (RPC error → null → staff renew card, logged). A5/A6 intact.
+- **NEW `StaffSigninSection`** (mounted in SigninForm) — collapsed username+password staff sign-in, button-onClick only, A4 double-tap guard, mapped errors (wrong creds / removed-by-owner via `not active|banned` / generic). Google path unchanged.
+- **Signup effect** now gates on `subscriptionLoaded` (kills the pre-existing transition-screen flash) and routes staff straight to `/tables`. **Subscribe** renders an "Ask the owner to renew" card + Sign out for blocked staff (never the Razorpay CTA); usable club sub → `null` while the guard bounces (no flash on deep links).
+- **authBootFallback** — `fetchProfileAndSubscriptionRows` gained `{skipSubscription}` for staff degraded boots (subscription null + subscriptionLoaded true; re-checks on recovery).
+- **Gates:** build clean; strict tsc = #118 baseline, zero new (verified via HEAD-worktree diff — only 2 pre-existing TS2719 lines shifted). Reviewer: 1 violation (raw `text-red-400` → `text-busy`) + concerns fixed (focus:border-accent, single store subscription, RPC error logged).
+- **Runtime:** node matrix 9/9 — **`get_club_subscription_status()` RPC smoke done for BOTH roles (closes the D1 leftover)**; staff direct `subscriptions` query = zero rows (RLS), proving the branch is load-bearing. Browser (localhost vite, session-injection): staff boots to `/tables` with an RPC call and NO `subscriptions` request; SyncReader initial pull runs on the staff JWT (all 200); staff deep-link `/subscribe` → clean bounce; owner regression byte-identical (`subscriptions` query, no RPC); wrong-password error mapping renders. Staff first-boot demo-seed ghost tables observed as predicted — D4's seed gate fixes it. Test staff deleted from prod after the run.
+- Ops note: a `git worktree remove --force` traversed a node_modules junction used for the baseline-tsc worktree and wiped `node_modules/.bin` — restored by `npm install` (lockfile unchanged). Baseline-diff workflow note: run worktree tsc BEFORE creating junctions, or remove the junction before `git worktree remove`.
+
+---
+
 ## 10 Jul 2026 — Phase D D2: staff admin endpoints — commit d90537c (refs #128)
 
 - **Tracking issue #128 created** ("Phase D — staff login + roles") — all Phase D commits ref it.
