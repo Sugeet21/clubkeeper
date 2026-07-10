@@ -16,6 +16,14 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 11 Jul 2026 — Phase D D6 staff-commerce RLS close
+
+- **#130** (closed by owner 11 Jul 2026, fixed e3a0507, migration `20260710_phase_d6_staff_write_rls_fix`) — staff wallet top-up dead-lettered: D1 RLS whitelisted the advisory DDL enum (`kind in ('topup',…)`) but the mapper sends Dexie `type` verbatim → `kind='credit'` 403. See Pattern S26. — see GitHub
+- **#131** (closed by owner 11 Jul 2026, fixed e3a0507, same migration) — staff stock decrement dead-lettered: runner pushes updates as `.upsert()`, Postgres checks INSERT WITH CHECK on every upsert row, canteen_items INSERT was owner-only. See Pattern S26. — see GitHub
+- **#132** (fix 958ed11, migration `20260711_staff_manual_adjustment_rls_exclusion` applied + E2E-verified, awaiting owner close) — the D6 fix's exclusion list blocked `'adjustment'`/`'reversal'` (strings the app never sends) but missed `'manual'` — the real adjustment shape passed staff RLS. See Pattern S26 rule 1 (extended). — see GitHub
+
+---
+
 ## 10 Jul 2026 — Phase C write-site cutover close
 
 - **#124** (closed by owner 10 Jul 2026, fixed 39f44c5 + ca69c55) — deleteSessionItem/restoreSessionItem hard-delete had no sync round-trip. Converted to soft-delete model: tombstone + restock in one syncedBatch; Undo clears `deletedAt` on the SAME row id via op `update` (payload mapper now emits explicit `deleted_at: null`); `!deletedAt` filters on all 11 session_items readers. Owner-verified 3-round runtime proof. See ripple_effects §Session Items + §Sync un-delete invariants. — see GitHub

@@ -4,6 +4,16 @@
 
 ---
 
+## 11 Jul 2026 — #132 fix: 'manual' added to staff wallet RLS exclusion — commit 958ed11 (refs #132; closed #130, #131)
+
+- **Owner closed #130 + #131** after the morning's E2E proof (fixed in e3a0507, migration applied 11 Jul); bug_archive pointers added.
+- **NEW migration `20260711_staff_manual_adjustment_rls_exclusion`** — recreates `wallet_transactions_insert_own_club` with `'manual'` added to the staff exclusion list (now `('manual','adjustment','refund','reversal')`). Safe by wire-contract review: legit staff pushes never carry `reference_type='manual'`; the database.ts v6 upgrade that writes it is a local Dexie rewrite with no outbox op; SyncReader direct-applies pulled owner rows without re-pushing.
+- **Applied to prod by Claude via Supabase MCP `apply_migration`** (owner's go-ahead "do the #132 migration"; recorded in the prod migrations table — first migration NOT hand-pasted in SQL Editor). Policy confirmed in `pg_policies`.
+- **E2E re-run fully GREEN** (`d6-rls-e2e.cjs`, fresh JWTs, exact syncRunner wire calls): staff `kind='debit', reference_type='manual'` now **42501** (gap closed); owner manual adjustment still passes; all #130/#131 positives + negatives + owner regressions hold. Cleanup hard-delete verified by re-read; throwaway staff removed.
+- Proof comment on #132; awaits owner close. #133 (`created_by` NULL — attribution) remains open, unstarted.
+
+---
+
 ## 11 Jul 2026 — Phase D D6 tail: staff-write RLS fix migration applied + E2E verified — (refs #130, #131; filed #132, #133)
 
 - **Owner ran `20260710_phase_d6_staff_write_rls_fix` in prod** (SQL Editor); both rewritten policies confirmed verbatim in `pg_policies`. Ledger line moved to APPLIED.
