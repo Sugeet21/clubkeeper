@@ -2,7 +2,7 @@
 
 **Status:** D0–D3 complete (10 Jul 2026 — migration APPLIED by owner; D2 endpoints 24/24; D3 client role state + staff sign-in + RPC-backed club-subscription gate shipped, `get_club_subscription_status()` smoke green for BOTH roles, staff browser boot to /tables proven via session injection — the D4 demo-seed ghost tables were observed live, exactly as D0 finding 4 predicted). Tracking issue: **#128** — every Phase D commit refs it. Next: D4.
 **Contract sources:** `references/history/sync_architecture_v2.md` §2 (permission matrix — LOCKED), §3 (identity model), §4.5 (JWT claims), Appendix B (RLS). Role strings LOCKED: `'owner'` / `'staff'` — never rename.
-**Migration draft:** `supabase/migrations/20260710_phase_d_staff_login.sql` (UNAPPLIED — see STATE.md ledger).
+**Migration:** `supabase/migrations/20260710_phase_d_staff_login.sql` (APPLIED 10 Jul 2026 — see STATE.md ledger).
 **Testing law (project memory):** SQL-editor tests run as `postgres` and bypass RLS + the access-token hook. Every RLS/hook claim in this phase is proven ONLY by a freshly-minted JWT (fresh sign-in). This is baked into every chunk's proof step below.
 
 ---
