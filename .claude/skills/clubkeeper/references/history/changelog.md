@@ -4,6 +4,17 @@
 
 ---
 
+## 10 Jul 2026 — Phase D D4: claim-gated seed + account switch + staff Account card — commit 8354f2f (refs #128)
+
+- **seed.ts** — `seedIfEmpty` skips the 5 demo `SAMPLE_TABLES` when the JWT carries `user_club_id` (new lock-free `jwtHasClubClaim()` in syncClubId, honors DEV `__force_no_claim__`). Settings singleton still always seeded. Kills the D0-finding-4 ghost-tables trap for staff first sign-in AND owner second device; claim-less legacy owners still get demo tables (proven via the toggle).
+- **Settings.tsx** — default export is now a thin `useRole()` wrapper: staff → new `StaffAccountView` (Account card only: name / username / club / Sign out); owner → `OwnerSettings`, the old body renamed byte-identical (85 ins / 0 del). Staff never mount owner sections or `useSyncClubFromSupabase`.
+- **Account switch (§3) verified, no gaps:** staff Sign out cleared the session key + landed on `/`; owner re-sign-in opened the owner per-user DB with zero bleed; S15/S16 teardown order intact; SyncReaderBoot cleanup (S22) fires on dbReady/userId change with the hard nav as backstop.
+- **Gates:** build clean; strict tsc = baseline (117), zero new. Reviewer APPROVE 0 violations. Runtime matrix (browser session-injection): staff fresh DB → NO demo tables, settings row present, pull landed 77 customers + 2 canteen items; staff `/settings` → Account card only; owner `/settings` → full 11-section view; owner `/tables` data intact after round-trip.
+- **Found during testing (filed, not fixed):** **#129** — pre-Phase-C rows never backfilled to Supabase; prod `game_tables` = 0 rows for BOTH roles (verified with fresh owner + staff JWTs), so a staff/second device pulls an empty tables grid. Blocks D9 step 2; owner workaround = re-save each table. **#115 comment** — RCA for the DEV-only StrictMode race: racer B's `refreshProfile` cooldown no-op sets `subscriptionLoaded=true` ~1.3s before racer A's fetch lands → transient `no_subscription` → cold-loading `/settings` in dev bounces to `/tables` (re-opens #40's symptom in dev; prod runs initialize once, unaffected).
+- Known-benign dev console warning (pre-existing, unchanged by D4): "Failed to set initial Realtime auth token: Cannot access 'useAuthStore' before initialization" — module-eval TDZ in the authStore→syncRunner→supabaseSync→syncClubId cycle; supabase-js catches it and realtime re-auths on the first auth event.
+
+---
+
 ## 10 Jul 2026 — Phase D D3: role in auth state + staff login + club-subscription gate — commit 5798e92 (refs #128)
 
 - **NEW `src/hooks/useRole.ts`** — pure `deriveRole(session)` from the `user_role` JWT claim (lock-free decode via now-exported `decodeJwtClaims`, Pattern S16); missing claim on a live session = legacy owner → `'owner'`. `useRole()` reads `authStore.role` — zero Supabase queries per screen.
