@@ -1030,6 +1030,17 @@ Branch-specific fields (`updated_at`, `owner_id`, server-defaulted columns) stay
 **Create-only exception:** if EVERY write is a plain create with no read-dependency, `syncedCreateBatch(items[])` (the simpler ops-list form) is still correct — the ops-list weakness only bites read-then-write.
 **Files affected:** `src/db/syncWrappers.ts` (`syncedBatch` + `BatchContext`), `src/db/queries.ts` (createCanteenSale, recordStockPurchase, updateSessionItem, createBackEntry). Relevant for ALL of Group B.
 
+### Pattern S26 — Role-scoped RLS must be written against the WIRE contract and upsert semantics, then proven with a real staff write (#130 #131, Phase D D6, 10 Jul 2026)
+**Symptom signature:** a staff-ALLOWED flow (wallet top-up, QuickSale stock decrement) commits locally and looks done, but its outbox row retries with `new row violates row-level security policy` until it dead-letters — the write silently never reaches other devices. SQL-editor policy review says the policy is correct.
+**Root cause (two facets, one lesson):**
+1. **Enum drift:** the D1 policy whitelisted `wallet_transactions.kind in ('topup','debit','coin_redeem')` — the advisory DDL enum. The wire mapper (`syncPayloadMapper.ts`) sends the Dexie `type` VERBATIM (`'credit'|'debit'|'adjustment'`), so an allowed top-up arrived as the un-whitelisted `kind='credit'`. The owner-only distinction actually lives in `reference_type` (`'adjustment'|'refund'|'reversal'`), not in `kind`.
+2. **Upsert semantics:** `syncRunner.pushOne` sends BOTH `op:'insert'` and `op:'update'` as `.upsert(..., { onConflict: 'id' })`. Postgres evaluates INSERT policies' WITH CHECK on EVERY upsert row — even when the row exists and the conflict-UPDATE path is taken — so "INSERT owner-only + UPDATE both" (D1's canteen_items split) can never let a staff update through.
+**Rule:**
+1. Before writing a role-scoped policy on a synced table, read the table's mapper in `syncPayloadMapper.ts` and constrain on the values it ACTUALLY sends — never on DDL comments or design-doc enums.
+2. Any role allowed to UPDATE a synced table must also pass that table's INSERT WITH CHECK, because the push is an upsert. Either give the role a (club-scoped, `deleted_at is null`) INSERT branch and lean on the Pattern-A12 UI gate for create-restrictions, or don't split INSERT/UPDATE by role at all.
+3. A policy is only proven by the SYNC PATH executing under a freshly-minted JWT of that role (outbox drains to 0) — a hand-crafted REST insert can pass while the runner's upsert fails.
+**Files affected:** `supabase/migrations/20260710_phase_d_staff_login.sql` (the bug), `supabase/migrations/20260710_phase_d6_staff_write_rls_fix.sql` (the fix), `src/db/syncPayloadMapper.ts` + `src/db/syncRunner.ts` (the contracts to read first).
+
 ### Pattern S10 — HMAC / token / secret comparisons MUST use `crypto.timingSafeEqual` (#94, 20 Jun 2026)
 **Symptom signature:** No user-visible symptom. Code review or external security report flags a webhook / signed-token verifier that uses `===` / `!==` to compare a computed HMAC against a header value.
 **Root cause:** JS string and `Buffer` equality short-circuit on first byte mismatch, so the wall-clock duration leaks how many leading bytes matched. With enough samples an attacker can recover the signature byte-by-byte. Practical exploitability is low over the public internet against HMAC-SHA256, but the fix is one line and the cost of getting this wrong on a payments surface is high.

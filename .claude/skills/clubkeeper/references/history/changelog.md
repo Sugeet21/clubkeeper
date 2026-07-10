@@ -4,6 +4,18 @@
 
 ---
 
+## 10 Jul 2026 — Phase D D6: role gates on commerce screens + staff-RLS bug discovery — (refs #128, #130, #131)
+
+- **Canteen.tsx** — `<OwnerOnly>` (Pattern A12, every trigger + mount): per-card Edit/Delete buttons, Restock button, FAB, "Bulk peak prices" pill, peak-onboarding banner, and all four mounts (`CanteenItemFormModal`, `BulkPeakPriceModal`, `RestockSheet`, delete-confirm `Modal`). Staff empty-state drops the "Tap + to add one" hint. Informational "Peak · until X" pill stays for staff (they sell at peak prices). Grep-verified: all gated modals have exactly ONE mount and their state setters no other call sites.
+- **CustomerProfile.tsx** — Adjust button + `ManualAdjustmentModal` mount owner-only; tappable name/phone header in `<OwnerOnly fallback>` (staff see it static, no pencil) + `EditCustomerModal` mount gated; action grid `grid-cols-1` for staff (owner class string byte-identical).
+- **Piggy.tsx** — role split (D4/D5 shape): `StaffPiggyNotice` vs `OwnerPiggy` byte-identical; route guard + nav land D7.
+- **NOT gated (matrix-verified):** `Wallet.tsx`, `WalletNewCustomer` (owner answer 10 Jul — staff create customers), `WalletTopup`, `QuickSale` incl. `PaymentSplitSheet`, `PendingTopupsModal`.
+- **Gates:** build clean; strict tsc = 117 = #118 baseline, zero new; 93-insertion diff (under reviewer threshold). Runtime (localhost session-injection, fresh-JWT law): owner walk zero diff (Canteen CTAs + working restock, full Piggy, CustomerProfile Adjust/Edit + original grid class); staff walk — Canteen sell-only view, CustomerProfile without Adjust/Edit + full-width Add Credit, Piggy notice with no cash figures, staff customer-create + ₹200 top-up + QuickSale ran locally.
+- **GATE FAILURE → 2 new P1s (the D6 gate's purpose — first real staff commerce writes):** **#130** staff wallet top-up dead-letters (D1 RLS whitelists `kind in ('topup','debit','coin_redeem')` but the mapper sends Dexie `type` verbatim → `kind='credit'` 403); **#131** staff stock decrement dead-letters (runner pushes updates as `.upsert()`; Postgres checks INSERT WITH CHECK on every upsert row, and canteen_items INSERT was owner-only). Staff `customers` INSERT synced fine (partial write-path proof). **New Pattern S26** (wire-contract + upsert-semantics RLS law). **Paste-ready fix migration authored: `20260710_phase_d6_staff_write_rls_fix.sql` (UNAPPLIED — owner runs, then staff commerce E2E re-verifies).**
+- Cleanup: D6 test rows soft-deleted server-side with ISO timestamps (customer, restock row, Coke stock reverted to 1), **D5's leftover test sessions + test table re-deleted** (that session's cleanup used epoch-ms against timestamptz columns and failed silently — the ISO rule now lives in the D5→D6 test recipe), throwaway staff user deleted, localhost Dexie DBs wiped, token scratch files removed (this session's + D5's).
+
+---
+
 ## 10 Jul 2026 — Phase D D5: role gates on operations screens — commit 462b7c9 (refs #128)
 
 - **NEW `src/components/auth/RoleGuard.tsx`** — `<OwnerOnly fallback?>` + `<HideForStaff>`, render-time gates on `useRole()`. **New Pattern A12:** a gate must remove the ACTION (every trigger + modal mount), not just one button — a staff-queued owner-only write 403s at RLS and dead-letters the outbox, so the UI gate is the primary defense.

@@ -65,7 +65,7 @@ If you're changing... → Read sections...
 
 ## Roles & Staff Gating (Phase D)
 
-Owns: the client-side enforcement of the §2 permission matrix (`sync_architecture_v2.md`, as amended by owner answers 10 Jul 2026). Started in D5 (operations cluster); D6 (commerce) and D7 (routes/nav/Summary) extend this table. **Pattern A12 is the law: a gate must remove the ACTION (every trigger + the modal/sheet mount), not just one button — a staff-queued owner-only write 403s at RLS and dead-letters the outbox.**
+Owns: the client-side enforcement of the §2 permission matrix (`sync_architecture_v2.md`, as amended by owner answers 10 Jul 2026). D5 (operations cluster) + D6 (commerce cluster) shipped; D7 (routes/nav/Summary) extends this table. **Pattern A12 is the law: a gate must remove the ACTION (every trigger + the modal/sheet mount), not just one button — a staff-queued owner-only write 403s at RLS and dead-letters the outbox.** ⚠ The RLS side must ALSO be written against the wire contract and upsert semantics — see Pattern S26 (#130/#131: two staff-ALLOWED commerce writes dead-lettered because the D1 policies didn't match what the sync push actually sends).
 
 Files in scope:
 - `src/components/auth/RoleGuard.tsx` — `<OwnerOnly fallback?>` (children only when `role==='owner'`) + `<HideForStaff>` (hides only from `'staff'`). Render-time reads of `useRole()`; no loading state (role is in lockstep with the session — see §Auth).
@@ -81,8 +81,18 @@ Matrix-row → gate map (extend this table in D6/D7; every new gate gets a row):
 | Delete session | NO UI exists anywhere (verified D5) — nothing to gate; if a delete UI is ever added it MUST ship inside `<OwnerOnly>` |
 | History list / revenue / CSV export | `History.tsx` role split: default export branches on `useRole()` → `StaffHistoryView` (ONLY the "Log a past session" card + `BackEntryModal`) vs `OwnerHistory` (old body, byte-identical). Staff KEEP back-entry creation (owner amendment 10 Jul). |
 | Settings (entire page) | D4: `Settings.tsx` role split → `StaffAccountView` |
+| Add canteen item (`canteen_items` INSERT) | `Canteen.tsx` FAB + `CanteenItemFormModal` mount in `<OwnerOnly>` (D6); staff empty-state loses the "Tap + to add one" hint |
+| Edit canteen item (name/price) | `Canteen.tsx` `ListArea` per-card Edit button + the same `CanteenItemFormModal` mount (D6) |
+| Delete canteen item (soft-delete) | `Canteen.tsx` per-card Delete button + delete-confirm `Modal` mount in `<OwnerOnly>` (D6) |
+| Restock (`stock_purchases` INSERT) | `Canteen.tsx` per-card Restock button + `RestockSheet` mount in `<OwnerOnly>` (D6 — single mount, verified no other trigger) |
+| Manage peak pricing | `Canteen.tsx` "Bulk peak prices" pill + onboarding banner + `BulkPeakPriceModal` mount in `<OwnerOnly>` (D6). The informational "Peak · until X" header pill stays for staff — they sell at peak prices. |
+| Manual wallet adjustment | `CustomerProfile.tsx` Adjust button + `ManualAdjustmentModal` mount in `<OwnerOnly>`; action grid goes `grid-cols-1` for staff so Add Credit spans full width (D6) |
+| Edit customer (name/phone) | `CustomerProfile.tsx` tappable name/phone header in `<OwnerOnly fallback>` (staff get the same block static, no pencil) + `EditCustomerModal` mount (D6) |
+| Piggy page (cash flow) | `Piggy.tsx` role split (D6): default export branches on `useRole()` → `StaffPiggyNotice` vs `OwnerPiggy` (byte-identical). Route guard + nav land D7. |
 
 Staff-ALLOWED on the operations screens (do not gate; regressions here break the core staff job): table grid, start/stop/pause/resume, add canteen item to session, alarm, frames stepper, the full `PaymentSplitSheet` stop-payment flow INCLUDING the Pattern-P4 auto-payment-capture on completed-without-breakdown sessions, today-strip on Home (§2 "today-only Summary ✅").
+
+Staff-ALLOWED on the commerce screens (D6, do not gate): Canteen view incl. stock pills + peak state, `QuickSale` in full (incl. `PaymentSplitSheet`), `Wallet.tsx` in full (customers list/search, `PendingTopupsModal` approvals, New customer), `WalletNewCustomer` (owner answer 10 Jul — staff CAN create customers, walk-in codes included), `WalletTopup` in full, `CustomerProfile` view + Add Credit + transaction history + WhatsApp receipts. ⚠ Staff commerce WRITES need migration `20260710_phase_d6_staff_write_rls_fix` applied — without it, top-ups and stock decrements dead-letter (#130/#131).
 
 If you change:
 - **`RoleGuard.tsx` semantics** → re-check every consumer; `OwnerOnly` treats `null` role as not-owner (safe: unreachable behind RequireAccess), a claim-less live session derives `'owner'` (legacy owners keep full UI — never break this).
