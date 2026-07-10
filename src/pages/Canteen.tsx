@@ -13,6 +13,7 @@ import { Modal } from '../components/Modal'
 import { CanteenItemFormModal } from '../components/CanteenItemFormModal'
 import { BulkPeakPriceModal } from '../components/BulkPeakPriceModal'
 import { RestockSheet } from '../components/RestockSheet'
+import { OwnerOnly } from '../components/auth/RoleGuard'
 import {
   formatPeakEnd,
   getPeakConfig,
@@ -138,7 +139,10 @@ function ListArea({
           <line x1="3" y1="6" x2="21" y2="6" />
           <path d="M16 10a4 4 0 0 1-8 0" />
         </svg>
-        <p className="text-text-dim text-sm text-center">No canteen items yet.{'\n'}Tap + to add one.</p>
+        <p className="text-text-dim text-sm text-center">
+          No canteen items yet.
+          <OwnerOnly>{'\n'}Tap + to add one.</OwnerOnly>
+        </p>
       </div>
     )
   }
@@ -159,6 +163,10 @@ function ListArea({
 
             <StockPill item={item} threshold={threshold} />
 
+            {/* D6 (Pattern A12): item edit/delete are staff-forbidden writes
+                (canteen_items name/price UPDATE + soft-delete) — gate every
+                trigger, not just the modal mounts below. */}
+            <OwnerOnly>
             <button
               onClick={() => onEdit(item)}
               className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim shrink-0"
@@ -181,9 +189,12 @@ function ListArea({
                 <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
               </svg>
             </button>
+            </OwnerOnly>
           </div>
 
-          {/* Row 2: Restock button (full-width-ish, secondary style) */}
+          {/* Row 2: Restock button (full-width-ish, secondary style).
+              Staff-forbidden (stock_purchases INSERT) — owner-only. */}
+          <OwnerOnly>
           <button
             onClick={() => onRestock(item)}
             className="mt-3 bg-bg border border-border h-9 px-3 rounded-xl text-text-dim text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.98] transition-transform"
@@ -195,6 +206,7 @@ function ListArea({
             </svg>
             Restock
           </button>
+          </OwnerOnly>
         </div>
       ))}
     </div>
@@ -304,7 +316,11 @@ export default function Canteen() {
           {/* Bulk peak prices button — only when peak pricing is enabled
               and there's at least one item to edit. Sits to the right of
               the title row so it stays one tap away after onboarding. */}
+          {/* D6: peak-price MANAGEMENT is owner-only (§2 matrix); the
+              informational "Peak · until" pill above stays for staff —
+              they sell at peak prices and need to see the window state. */}
           {peakCfg.enabled && (items?.length ?? 0) > 0 && (
+            <OwnerOnly>
             <button
               type="button"
               onClick={() => setBulkOpen(true)}
@@ -313,6 +329,7 @@ export default function Canteen() {
             >
               Bulk peak prices
             </button>
+            </OwnerOnly>
           )}
         </div>
 
@@ -322,6 +339,7 @@ export default function Canteen() {
         {peakCfg.enabled &&
           (items?.length ?? 0) > 0 &&
           !peakOnboardingDismissed && (
+            <OwnerOnly>
             <div className="bg-paused/10 border border-paused/30 rounded-2xl px-4 py-3 mb-3 flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-[13px] text-text font-semibold leading-snug">
@@ -362,6 +380,7 @@ export default function Canteen() {
                 </svg>
               </button>
             </div>
+            </OwnerOnly>
           )}
 
         {/* Stats — always rendered, handles undefined inside */}
@@ -378,7 +397,8 @@ export default function Canteen() {
         />
       </div>
 
-      {/* FAB — always rendered */}
+      {/* FAB — owner-only since D6 (canteen_items INSERT is staff-forbidden) */}
+      <OwnerOnly>
       <button
         onClick={openAdd}
         className="fixed bottom-20 right-5 w-14 h-14 bg-accent text-bg rounded-2xl flex items-center justify-center text-2xl font-bold z-50 active:scale-95 transition-transform"
@@ -388,6 +408,9 @@ export default function Canteen() {
         +
       </button>
 
+      {/* D6 (Pattern A12): the modal/sheet MOUNTS are gated too, not just
+          their triggers — a mounted sheet is one stray state-set away from
+          queueing a staff-forbidden write that dead-letters the outbox. */}
       {/* Add / Edit modal */}
       <CanteenItemFormModal
         open={modalOpen}
@@ -448,6 +471,7 @@ export default function Canteen() {
           </button>
         </div>
       </Modal>
+      </OwnerOnly>
     </div>
   )
 }

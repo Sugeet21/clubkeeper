@@ -9,6 +9,8 @@ import { customerDisplayName, formattedPhone } from '../lib/customerDisplay'
 import ManualAdjustmentModal from '../components/wallet/ManualAdjustmentModal'
 import EditCustomerModal from '../components/wallet/EditCustomerModal'
 import TransactionRow from '../components/wallet/TransactionRow'
+import { OwnerOnly } from '../components/auth/RoleGuard'
+import { useRole } from '../hooks/useRole'
 import { useSettings } from '../hooks/useLiveData'
 import { resolveCoinConfig, formatCoins } from '../lib/coins'
 import { applyExpiryForCustomer, daysUntilExpiry } from '../lib/coinExpiry'
@@ -19,6 +21,7 @@ export default function CustomerProfile() {
   const { customerId } = useParams<{ customerId: string }>()
   const navigate = useNavigate()
   const settings = useSettings()
+  const role = useRole()
 
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
@@ -93,7 +96,21 @@ export default function CustomerProfile() {
             </svg>
           </button>
 
-          {/* Tappable name+phone block — entire area opens EditCustomerModal */}
+          {/* Tappable name+phone block — entire area opens EditCustomerModal.
+              D6 (Pattern A12): customer name/phone edit is owner-only; staff
+              get the same header as a static block (no pencil, no trigger). */}
+          <OwnerOnly
+            fallback={
+              <div className="flex-1 min-w-0 min-h-[44px] flex flex-col justify-center text-left">
+                <h1 className="text-[20px] font-bold text-text truncate">{displayName}</h1>
+                {phoneDisplay ? (
+                  <span className="text-[13px] text-text-dim font-mono mt-0.5">{phoneDisplay}</span>
+                ) : customer.walkInCode ? (
+                  <span className="text-[11px] font-mono text-text-faint mt-0.5">{customer.walkInCode}</span>
+                ) : null}
+              </div>
+            }
+          >
           <button
             onClick={() => setEditOpen(true)}
             className="flex-1 min-w-0 min-h-[44px] flex flex-col justify-center text-left"
@@ -112,6 +129,7 @@ export default function CustomerProfile() {
               <span className="text-[11px] font-mono text-text-faint mt-0.5">{customer.walkInCode}</span>
             ) : null}
           </button>
+          </OwnerOnly>
         </div>
 
         {/* Balance card */}
@@ -158,8 +176,10 @@ export default function CustomerProfile() {
           )}
         </div>
 
-        {/* Action buttons */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
+        {/* Action buttons. D6: manual adjustment is owner-only (§2 matrix;
+            RLS also blocks kind='adjustment' server-side) — staff get a
+            full-width Add Credit instead of a half-empty grid. */}
+        <div className={role === 'staff' ? 'grid grid-cols-1 gap-3 mb-6' : 'grid grid-cols-2 gap-3 mb-6'}>
           <button
             onClick={() => navigate(`/wallet/topup/${customer.id}`)}
             className="min-h-[54px] bg-accent text-bg font-bold text-[14px] rounded-2xl flex items-center justify-center gap-2"
@@ -169,6 +189,7 @@ export default function CustomerProfile() {
             </svg>
             Add Credit
           </button>
+          <OwnerOnly>
           <button
             onClick={() => setAdjustOpen(true)}
             className="min-h-[54px] bg-bg-card border border-border text-text font-semibold text-[14px] rounded-2xl flex items-center justify-center gap-2"
@@ -179,6 +200,7 @@ export default function CustomerProfile() {
             </svg>
             Adjust
           </button>
+          </OwnerOnly>
         </div>
 
         {/* Transaction history */}
@@ -235,19 +257,23 @@ export default function CustomerProfile() {
         })()}
       </div>
 
-      {adjustOpen && (
-        <ManualAdjustmentModal
-          customer={customer}
-          onClose={() => setAdjustOpen(false)}
-        />
-      )}
+      {/* D6 (Pattern A12): mounts gated too — a staff-queued adjustment or
+          customer edit would 403 at RLS and dead-letter the outbox. */}
+      <OwnerOnly>
+        {adjustOpen && (
+          <ManualAdjustmentModal
+            customer={customer}
+            onClose={() => setAdjustOpen(false)}
+          />
+        )}
 
-      {editOpen && (
-        <EditCustomerModal
-          customer={customer}
-          onClose={() => setEditOpen(false)}
-        />
-      )}
+        {editOpen && (
+          <EditCustomerModal
+            customer={customer}
+            onClose={() => setEditOpen(false)}
+          />
+        )}
+      </OwnerOnly>
     </div>
   )
 }

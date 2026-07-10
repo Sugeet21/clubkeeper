@@ -10,13 +10,37 @@ import {
 } from '../db/queries'
 import { useToastStore } from '../store/toastStore'
 import { Modal } from '../components/Modal'
+import { useRole } from '../hooks/useRole'
 import type { CanteenItem, StockPurchase } from '../types'
 
 function formatINR(n: number): string {
   return '₹' + n.toLocaleString('en-IN')
 }
 
+// D6 role split (§2 matrix: Piggy page is owner-only; Pattern A12 rule 3 —
+// whole-page restrictions branch to sibling components, owner byte-identical).
+// This is the CONTENT gate; the route guard + nav removal land in D7.
 export default function Piggy() {
+  const role = useRole()
+  if (role === 'staff') return <StaffPiggyNotice />
+  return <OwnerPiggy />
+}
+
+// Staff view: cash-float figures are owner-only. No balances, no restock
+// ledger — just a way back to work.
+function StaffPiggyNotice() {
+  const navigate = useNavigate()
+  return (
+    <div className="bg-bg min-h-screen flex flex-col items-center justify-center gap-3 px-5">
+      <p className="text-text-dim text-sm">Piggy is available to the owner only.</p>
+      <button onClick={() => navigate('/tables')} className="text-accent text-sm font-semibold">
+        Back to Tables
+      </button>
+    </div>
+  )
+}
+
+function OwnerPiggy() {
   const navigate = useNavigate()
   const showToast = useToastStore((s) => s.show)
 
