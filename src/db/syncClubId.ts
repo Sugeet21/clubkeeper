@@ -143,14 +143,17 @@ export function readAccessTokenLockFree(): string | null {
   }
 }
 
-interface JwtClaims {
+export interface JwtClaims {
   user_club_id?: unknown
   user_role?: unknown
   exp?: unknown
   [k: string]: unknown
 }
 
-function decodeJwtClaims(token: string): JwtClaims {
+// Exported for Phase D (D3): deriveRole in src/hooks/useRole.ts reads the
+// user_role claim through this same lock-free decoder. Returns {} on any
+// malformed token — callers must treat missing claims as "not present".
+export function decodeJwtClaims(token: string): JwtClaims {
   const parts = token.split('.')
   if (parts.length !== 3) return {}
   try {

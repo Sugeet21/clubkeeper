@@ -14,6 +14,7 @@ import {
   type ProfileRow,
   type SubscriptionRow,
 } from '../lib/authBootFallback'
+import { deriveRole, type Role } from '../hooks/useRole'
 import { useToastStore } from './toastStore'
 
 interface AuthState {
@@ -21,6 +22,8 @@ interface AuthState {
   user: User | null
   profile: UserProfile | null
   subscription: Subscription | null
+  role: Role                 // D3 — from the user_role JWT claim, set in lockstep
+                             // with `session` at EVERY set-point. Read via useRole().
   loading: boolean
   dbReady: boolean           // true once initDbForUser + seed complete for current user
   subscriptionLoaded: boolean // true once refreshProfile() has resolved at least once
@@ -114,11 +117,45 @@ function mapSubscriptionRow(row: SubscriptionRow): Subscription {
   }
 }
 
+// D3 — row shape returned by the get_club_subscription_status() RPC
+// (SECURITY DEFINER, 20260710 migration). Status fields only — no ids, no
+// razorpay fields (deliberately not leaked to staff).
+interface ClubSubscriptionStatusRow {
+  status: string
+  plan: string
+  trial_ends_at: string | null
+  current_period_start: string | null
+  current_period_end: string | null
+  cancel_at_period_end: boolean
+}
+
+// Synthesize the OWNER's club subscription into the existing Subscription
+// shape so useAccessGuard needs zero changes. id/userId are sentinels — no
+// staff code path ever writes or cancels this object; Subscribe.tsx renders
+// an info card for staff instead of the Razorpay CTA.
+function mapClubSubscriptionRow(row: ClubSubscriptionStatusRow): Subscription {
+  return {
+    id: 'club',
+    userId: '',
+    status: row.status as Subscription['status'],
+    plan: row.plan as Subscription['plan'],
+    trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).getTime() : null,
+    currentPeriodStart: row.current_period_start ? new Date(row.current_period_start).getTime() : null,
+    currentPeriodEnd: row.current_period_end ? new Date(row.current_period_end).getTime() : null,
+    razorpayCustomerId: null,
+    razorpaySubscriptionId: null,
+    cancelAtPeriodEnd: row.cancel_at_period_end,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   session: null,
   user: null,
   profile: null,
   subscription: null,
+  role: null,
   loading: true,
   dbReady: false,
   subscriptionLoaded: false,
@@ -176,13 +213,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           // reads here are lock-free (localStorage + plain fetch); the main
           // client's queued machinery stays the only token writer.
           try {
+            // D3: a staff degraded boot skips the subscriptions REST read —
+            // RLS scopes that table to user_id, so a staff bearer gets zero
+            // rows anyway. Staff degraded boot = usable app with subscription
+            // null; the RPC-backed gate re-checks when the lock recovers.
+            const storedRole = deriveRole(stored)
             const { profileRow, subscriptionRow } = await fetchProfileAndSubscriptionRows(
               stored.user.id,
               stored.access_token,
+              { skipSubscription: storedRole === 'staff' },
             )
             set({
               session: stored,
               user: stored.user,
+              role: storedRole,
               profile: profileRow ? mapProfileRow(profileRow) : null,
               subscription: subscriptionRow ? mapSubscriptionRow(subscriptionRow) : null,
               subscriptionLoaded: true,
@@ -215,7 +259,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         result = raced === GETSESSION_TIMED_OUT ? await sessionPromise : raced
         const { data: { session }, error } = result
         console.log('[authStore] getSession result', { hasSession: !!session, error })
-        set({ session, user: session?.user ?? null, authLockBlocked: false })
+        set({ session, user: session?.user ?? null, role: deriveRole(session), authLockBlocked: false })
 
         if (session?.user) {
           await get().refreshProfile()
@@ -242,7 +286,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     supabase.auth.onAuthStateChange(async (_event, session) => {
       console.log('[authStore] onAuthStateChange', { event: _event, hasSession: !!session })
-      set({ session, user: session?.user ?? null })
+      set({ session, user: session?.user ?? null, role: deriveRole(session) })
 
       if (session?.user) {
         await get().refreshProfile()
@@ -276,17 +320,35 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       .eq('id', user.id)
       .single()
 
-    const { data: subscription } = await supabase
-      .from('subscriptions')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single()
+    // D3 — staff gate on the OWNER's subscription. RLS scopes the
+    // subscriptions table to user_id, so a staff query would return nothing
+    // and read as no_subscription. The SECURITY DEFINER RPC resolves the
+    // club from the JWT claim and returns the owner's latest row (status
+    // fields only). Empty result → subscription null → useAccessGuard
+    // 'no_subscription' → Subscribe.tsx staff info card.
+    let subscription: Subscription | null = null
+    if (get().role === 'staff') {
+      const { data: clubRows, error: rpcError } = await supabase.rpc('get_club_subscription_status')
+      // Fail closed: an RPC error leaves subscription null → 'no_subscription'
+      // → the staff "ask the owner to renew" card. Log so a transient failure
+      // is distinguishable from a genuinely lapsed club subscription.
+      if (rpcError) console.error('[authStore] get_club_subscription_status failed', rpcError)
+      const row = (clubRows as ClubSubscriptionStatusRow[] | null)?.[0] ?? null
+      subscription = row ? mapClubSubscriptionRow(row) : null
+    } else {
+      const { data: subRow } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      subscription = subRow ? mapSubscriptionRow(subRow as SubscriptionRow) : null
+    }
 
     set({
       profile: profile ? mapProfileRow(profile as ProfileRow) : null,
-      subscription: subscription ? mapSubscriptionRow(subscription as SubscriptionRow) : null,
+      subscription,
     })
   },
 
@@ -316,7 +378,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // but calling it here first is safe (idempotent) and ensures the DB is
     // closed before any redirect clears component state.
     await closeDb()
-    set({ session: null, user: null, profile: null, subscription: null, loading: false, dbReady: false, subscriptionLoaded: false, authLockBlocked: false })
+    set({ session: null, user: null, profile: null, subscription: null, role: null, loading: false, dbReady: false, subscriptionLoaded: false, authLockBlocked: false })
     // Hard navigation clears all React + Zustand + Dexie state in one shot.
     // navigate() is intentionally avoided here — stale store state can survive
     // a soft nav and cause the user to remain visually "logged in".

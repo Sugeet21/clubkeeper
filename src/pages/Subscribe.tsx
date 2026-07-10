@@ -52,7 +52,7 @@ export default function Subscribe() {
   const navigate = useNavigate()
   const location = useLocation()
   const locationReason = (location.state as LocationState)?.reason
-  const { session, subscription, loading: authLoading, profile, user } = useAuthStore()
+  const { session, subscription, loading: authLoading, profile, user, role, signOut } = useAuthStore()
 
   // Auth guard — redirect already-active/past_due users to /tables.
   // Trial-expired users (reason='trial_expired') and subscribe-early users
@@ -242,6 +242,56 @@ export default function Subscribe() {
   function handleRetryPayment() {
     setPayError(null)
     void handlePayNow()
+  }
+
+  // D3 — a staff user only lands here when the club's subscription is
+  // blocked (expired/missing); active staff are bounced to /tables by the
+  // guard effect above. Staff must NEVER reach payment actions — render an
+  // info card instead of the Razorpay plan picker.
+  if (role === 'staff') {
+    const clubSubUsable =
+      !!subscription &&
+      (subscription.status === 'active' ||
+        subscription.status === 'past_due' ||
+        (subscription.status === 'trialing' &&
+          !!subscription.trialEndsAt &&
+          subscription.trialEndsAt > Date.now()))
+    // Usable club sub → the guard effect above is about to bounce to /tables;
+    // render nothing so the "renew" card never flashes on a deep link.
+    if (clubSubUsable) return null
+    return (
+      <div
+        className="min-h-screen flex justify-center"
+        style={{
+          background:
+            'radial-gradient(1200px 600px at 50% -200px, rgba(184,255,90,.05), transparent 60%), #05080a',
+        }}
+      >
+        <div className="w-full max-w-[390px] bg-bg min-h-screen flex flex-col items-center justify-center px-6 gap-5">
+          <div className="w-full bg-bg-card border border-border rounded-2xl p-5 flex flex-col gap-3">
+            <h1 className="text-[20px] font-extrabold tracking-tight text-text leading-[1.2]">
+              Ask the owner to renew ClubKeeper
+            </h1>
+            <p className="text-[14px] text-text-dim leading-[1.5]">
+              Your club's ClubKeeper subscription is not active. Only the club owner can renew it —
+              once they do, sign in again and everything will be back.
+            </p>
+            {user?.email && (
+              <p className="text-[12.5px] text-text-faint font-mono break-all">
+                Signed in as {user.email}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => { void signOut() }}
+            className="w-full min-h-[48px] rounded-2xl border border-border font-semibold text-[15px] text-text transition-all duration-200 active:bg-bg-card active:border-text-faint"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    )
   }
 
   if (screen === 'confirmed') {

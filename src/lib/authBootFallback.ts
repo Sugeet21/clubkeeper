@@ -166,18 +166,27 @@ async function restGet<T>(pathAndQuery: string, accessToken: string): Promise<T[
  * Fetch the signed-in owner's profile + latest subscription row over plain
  * fetch() — no supabase-js client involved, so no navigator lock. RLS scopes
  * both tables to the bearer's own rows (same rows refreshProfile reads).
+ *
+ * D3: `skipSubscription` is set for a STAFF degraded boot — the subscriptions
+ * table is user_id-scoped so a staff bearer gets zero rows anyway; the staff
+ * gate uses the get_club_subscription_status RPC, which stays owner-shaped
+ * out of this lock-free path (staff degraded boot runs with subscription
+ * null and re-checks on recovery).
  */
 export async function fetchProfileAndSubscriptionRows(
   userId: string,
   accessToken: string,
+  opts: { skipSubscription?: boolean } = {},
 ): Promise<{ profileRow: ProfileRow | null; subscriptionRow: SubscriptionRow | null }> {
   const uid = encodeURIComponent(userId)
   const [profiles, subscriptions] = await Promise.all([
     restGet<ProfileRow>(`profiles?select=*&id=eq.${uid}&limit=1`, accessToken),
-    restGet<SubscriptionRow>(
-      `subscriptions?select=*&user_id=eq.${uid}&order=created_at.desc&limit=1`,
-      accessToken,
-    ),
+    opts.skipSubscription
+      ? Promise.resolve([] as SubscriptionRow[])
+      : restGet<SubscriptionRow>(
+          `subscriptions?select=*&user_id=eq.${uid}&order=created_at.desc&limit=1`,
+          accessToken,
+        ),
   ])
   return { profileRow: profiles[0] ?? null, subscriptionRow: subscriptions[0] ?? null }
 }

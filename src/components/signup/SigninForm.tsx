@@ -1,5 +1,6 @@
 import { GoogleSigninButton } from '../GoogleSigninButton'
 import { SigninError } from './SigninError'
+import { StaffSigninSection } from './StaffSigninSection'
 
 interface Props {
   loading: boolean
@@ -91,6 +92,9 @@ export function SigninForm({ loading, hasError, onGoogleSignIn, onBack, onRetry 
               .
             </p>
           </section>
+
+          {/* Staff sign-in (D3) — collapsed; owner-issued username + password */}
+          <StaffSigninSection />
 
           {/* Trust rows */}
           <section className="mt-7 flex flex-col gap-2" aria-label="Why ClubKeeper is safe">

@@ -8,7 +8,7 @@ type Screen = 'form' | 'loading' | 'transition' | 'error'
 
 export default function Signup() {
   const navigate = useNavigate()
-  const { session, subscription, loading: authLoading, signInWithGoogle } = useAuthStore()
+  const { session, subscription, subscriptionLoaded, role, loading: authLoading, signInWithGoogle } = useAuthStore()
   const [screen, setScreen] = useState<Screen>('form')
   const isOAuthInFlight = useRef(false)
 
@@ -23,6 +23,18 @@ export default function Signup() {
   useEffect(() => {
     if (authLoading) return
     if (!session) return
+    // Pattern A6 — subscription===null while refreshProfile() is in flight
+    // must not be misread as "no sub" (it flashed the transition screen for
+    // every signed-in visitor, including staff, before D3). Wait it out.
+    if (!subscriptionLoaded) return
+
+    // D3 — staff never see the "add payment" transition; send them into the
+    // app and let RequireAccess route a blocked club subscription to
+    // /subscribe, which renders the staff info card.
+    if (role === 'staff') {
+      navigate('/tables', { replace: true })
+      return
+    }
 
     const sub = subscription
     if (!sub || sub.status === 'none') {
@@ -30,7 +42,7 @@ export default function Signup() {
     } else {
       navigate('/tables', { replace: true })     // has active sub → go straight to app
     }
-  }, [authLoading, session, subscription, navigate])
+  }, [authLoading, session, subscription, subscriptionLoaded, role, navigate])
 
   async function handleGoogleSignIn() {
     if (isOAuthInFlight.current) return
