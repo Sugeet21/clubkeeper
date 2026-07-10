@@ -4,6 +4,14 @@
 
 ---
 
+## 11 Jul 2026 — Phase D D7: route/nav/Summary role gates — commit f0dc189 (refs #128; closed #133)
+
+- **Owner closed #133** (after the 26/26 E2E incl. forge probe); bug_archive pointer + STATE flipped. D6 tail fully closed: #130/#131/#132/#133 all owner-closed.
+- **NEW `src/components/auth/RequireOwner.tsx`** — Outlet-based layout route inside `RequireAccess`; ONLY `role==='staff'` bounces (`<Navigate to="/tables" replace>`, zero content flash — role is synchronous from the JWT claim); claim-less legacy owners fall through. Wraps `/piggy` in `App.tsx` (Piggy's D6 role split stays as defense-in-depth). No wallet adjustment-specific routes exist to guard (adjustment = D6-gated modal in CustomerProfile). Appendix F's route list is superseded by the amended plan — `/summary`/`/history`/`/settings` branch in-page, NOT at the router.
+- **Summary role split** (Pattern A12 rule 3, D5 History shape): `StaffSummaryToday` (one card: today's earnings + session count + canteen-sales count) vs `OwnerSummary` (byte-identical — reviewer mechanically diffed 0 changes). Staff math mirrors the OWNER HEADLINE, not Home's strip (which omits Quick Sale): completed amounts + non-deleted items (#124) + live running sum in render body (Pattern T4, `useTick`) + walk-in Quick Sale (Pattern T9).
+- **BottomNav unchanged** — all 4 tabs stay per the D7 spec; `/piggy` is not a tab.
+- Gates: build clean, strict-tsc at the 117 baseline (#118), reviewer PASS (143 new LOC). Runtime deep-link/today-card proof folds into D9's two-profile run. ripple_effects §Roles gained the D7 route table.
+
 ## 11 Jul 2026 — #133 fix: server-side actor stamping on all 9 synced tables — commit 860e868 (refs #133; closed #132)
 
 - **Owner closed #132** after the E2E proof; bug_archive pointer updated.

@@ -65,11 +65,23 @@ If you're changing... → Read sections...
 
 ## Roles & Staff Gating (Phase D)
 
-Owns: the client-side enforcement of the §2 permission matrix (`sync_architecture_v2.md`, as amended by owner answers 10 Jul 2026). D5 (operations cluster) + D6 (commerce cluster) shipped; D7 (routes/nav/Summary) extends this table. **Pattern A12 is the law: a gate must remove the ACTION (every trigger + the modal/sheet mount), not just one button — a staff-queued owner-only write 403s at RLS and dead-letters the outbox.** ⚠ The RLS side must ALSO be written against the wire contract and upsert semantics — see Pattern S26 (#130/#131: two staff-ALLOWED commerce writes dead-lettered because the D1 policies didn't match what the sync push actually sends).
+Owns: the client-side enforcement of the §2 permission matrix (`sync_architecture_v2.md`, as amended by owner answers 10 Jul 2026). D5 (operations cluster) + D6 (commerce cluster) + D7 (routes/nav/Summary) shipped. **Pattern A12 is the law: a gate must remove the ACTION (every trigger + the modal/sheet mount), not just one button — a staff-queued owner-only write 403s at RLS and dead-letters the outbox.** ⚠ The RLS side must ALSO be written against the wire contract and upsert semantics — see Pattern S26 (#130/#131: two staff-ALLOWED commerce writes dead-lettered because the D1 policies didn't match what the sync push actually sends).
 
 Files in scope:
 - `src/components/auth/RoleGuard.tsx` — `<OwnerOnly fallback?>` (children only when `role==='owner'`) + `<HideForStaff>` (hides only from `'staff'`). Render-time reads of `useRole()`; no loading state (role is in lockstep with the session — see §Auth).
-- `src/hooks/useRole.ts` — the store read both primitives use (D3).
+- `src/components/auth/RequireOwner.tsx` — route-level gate (D7): Outlet layout route inside `RequireAccess`; ONLY `role==='staff'` bounces (`<Navigate to="/tables" replace>`, zero content flash); claim-less legacy owners fall through. Use for pages with NO staff-reduced view; pages with a staff variant branch on role INSIDE the component instead.
+- `src/hooks/useRole.ts` — the store read all three primitives use (D3).
+
+Route table (D7 — extend when adding owner-only ROUTES):
+
+| Route | Staff behaviour | Mechanism |
+|---|---|---|
+| `/piggy` | bounce → `/tables` | `<RequireOwner>` wrapper route in `App.tsx` (Piggy's D6 role split stays as defense-in-depth) |
+| `/summary` | today-card only | `Summary.tsx` role split (D7): `StaffSummaryToday` vs `OwnerSummary` (byte-identical). Staff card mirrors the owner headline math — T4 live running sum, T9 walk-in included, #124 filter. NOT Home's strip (it omits Quick Sale). |
+| `/history` | log-past-session card only | `History.tsx` role split (D5) |
+| `/settings` | Account card only | `Settings.tsx` role split (D4) |
+| BottomNav | all 4 tabs STAY | no code change (D7 spec); `/piggy` is not a tab |
+| all other routes | full access | staff-allowed per §2 matrix; in-page gates per the table below |
 
 Matrix-row → gate map (extend this table in D6/D7; every new gate gets a row):
 
@@ -88,7 +100,8 @@ Matrix-row → gate map (extend this table in D6/D7; every new gate gets a row):
 | Manage peak pricing | `Canteen.tsx` "Bulk peak prices" pill + onboarding banner + `BulkPeakPriceModal` mount in `<OwnerOnly>` (D6). The informational "Peak · until X" header pill stays for staff — they sell at peak prices. |
 | Manual wallet adjustment | `CustomerProfile.tsx` Adjust button + `ManualAdjustmentModal` mount in `<OwnerOnly>`; action grid goes `grid-cols-1` for staff so Add Credit spans full width (D6) |
 | Edit customer (name/phone) | `CustomerProfile.tsx` tappable name/phone header in `<OwnerOnly fallback>` (staff get the same block static, no pencil) + `EditCustomerModal` mount (D6) |
-| Piggy page (cash flow) | `Piggy.tsx` role split (D6): default export branches on `useRole()` → `StaffPiggyNotice` vs `OwnerPiggy` (byte-identical). Route guard + nav land D7. |
+| Piggy page (cash flow) | `Piggy.tsx` role split (D6): default export branches on `useRole()` → `StaffPiggyNotice` vs `OwnerPiggy` (byte-identical) + `/piggy` route bounce via `RequireOwner` (D7). |
+| Summary (full dashboard) | `Summary.tsx` role split (D7): `StaffSummaryToday` (one today-card) vs `OwnerSummary` (byte-identical). See route table above. |
 
 Staff-ALLOWED on the operations screens (do not gate; regressions here break the core staff job): table grid, start/stop/pause/resume, add canteen item to session, alarm, frames stepper, the full `PaymentSplitSheet` stop-payment flow INCLUDING the Pattern-P4 auto-payment-capture on completed-without-breakdown sessions, today-strip on Home (§2 "today-only Summary ✅").
 
