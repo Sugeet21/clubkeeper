@@ -4,6 +4,18 @@
 
 ---
 
+## 12 Jul 2026 — #139: auth actions no longer hang on the stranded GoTrue lock (sign out, staff create/reset/revoke, subscription) — (refs #139, #135, #103)
+
+- **THE BUG (#139, P1 — owner reported during Phase D D9):** Sign out, create staff, remove staff all did nothing on click and needed a **manual hard refresh**; felt slow. Owner correctly intuited a single root cause. (Absorbs the earlier #135 sign-out-needs-refresh.)
+- **ROOT CAUSE — Pattern A11 facet:** the #120 fix guarded only BOOT (`initialize`). Every OTHER `await supabase.auth.getSession()`/`signOut()` in the app has the same infinite-hang exposure when a zombie tab strands the GoTrue navigator lock (Pattern A7/A11/S16). Worse symptom than boot: no spinner, just a **dead button** — the UI-update/redirect code sits AFTER the hung await, so the click appears to do nothing until a hard refresh re-runs boot.
+- **THE FIX (4 sites):**
+  - `authStore.signOut` — race `supabase.auth.signOut()` against a 3s timeout in a try/catch, so the teardown (`syncRunner.stop` → cache resets → `closeDb` → state reset → `window.location.href='/'`) ALWAYS runs even if the server revoke hangs/rejects. Teardown ordering (S15/S16) preserved intact; the raced revoke is only prepended. The stored token dies on its own (≤1h TTL); the hard nav clears all client state.
+  - `StaffSection.callStaffApi`, `Settings.handleCancelSubscription`, `Subscribe` create-subscription — replaced `await supabase.auth.getSession()` (bearer token) with lock-free `readAccessTokenLockFree()` (in-memory authStore session → synchronous localStorage fallback, never touches the lock). Subscribe's `userId: authSession.user.id` → `user?.id ?? ''` (reviewer-verified harmless: `api/create-subscription.ts` derives userId from the Bearer token; the body field is destructured-but-discarded). `supabase` import dropped from Settings.tsx + Subscribe.tsx (orphaned after the swap); StaffSection keeps it (still uses `.from()` for the list).
+- **Scoped OUT (deliberately, not bundled):** `playerHubApi.ts:144` `getUser()` (slug-save freeze) is the same root cause but a different call (`getUser()` needs `user.id`, and network-round-trips too) on the load-bearing slug path — noted on **#103** to fix there.
+- **Rule H (Settings.tsx edit):** pure bearer-token swap in `handleCancelSubscription` — no ClubSettings field, no useState-mirror (T2/R4), no clubs-row mirror (S11), no save-site (U10/F5). Patterns cited in the commit.
+- **Gates:** build clean; strict-tsc 90→90 (zero net-new — the 2 "moved" Subscribe `PlanId` dual-type errors are pre-existing baseline debt shifted by 2 comment lines, stash-diff confirmed). **Reviewer APPROVE, zero blocking** — verified the signOut teardown-always guarantee (race fully try/catch-wrapped, `closeDb` synchronous so it can't strand the redirect) and that `userId:''` is dead data on the wire.
+- Pattern A11 extended with the "lock hangs any user-action auth call" facet + detection grep. Local only — reaches prod on push.
+
 ## 12 Jul 2026 — #134: back-entry table dropdown fixed + full Pattern R5 id-type sweep — (refs #134, #138)
 
 - **THE BUG (#134, P1):** the "Log past session" back-entry form's table dropdown could not be selected — picking a table didn't stick. Found during Phase D D9 two-profile testing (staff → History → back entry), but **NOT staff-specific** — broken for the owner too post-v20.
