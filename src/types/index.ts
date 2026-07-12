@@ -208,6 +208,13 @@ export interface ClubSettings {
   // — never via a sync wrapper, or the cursor write itself would queue an
   // outbox row. Read path is via getPullCursor / getAllPullCursors.
   pullCursors?: Partial<Record<SyncTableName, { ts: string; id: string } | null>>
+  // #129 — one-time backfill sentinel (epoch ms of when the pre-Phase-C
+  // local-rows-to-Supabase upload was enqueued on THIS device). Device-local
+  // sync-machinery flag, same class as pullCursors: never mirrored, never
+  // UI-rendered, written only via raw db.settings.update (a sync wrapper would
+  // queue an outbox row for the act of recording the backfill — nonsense).
+  // Set once → the boot backfill never re-enqueues. Undefined = not yet run.
+  backfillEnqueuedAt?: number
 }
 
 export interface CanteenItem {
@@ -274,6 +281,14 @@ export interface OutboxRow {
   // so a single bad row can't block the rest of the queue. Surfaced to the
   // sync-indicator UI in a later chunk; manual unstick via DEV TestOutbox page.
   stuck?: boolean
+  // #129 — set true ONLY by the one-time backfill enqueue. Makes pushOne use
+  // upsert(ignoreDuplicates:true) = ON CONFLICT DO NOTHING for this insert, so
+  // re-pushing a row already on the server is a no-op rather than an UPDATE.
+  // Required because wallet_transactions is append-only and its UPDATE policy
+  // was dropped in D1 (§4.6) — an ON-CONFLICT-DO-UPDATE there 403s and
+  // dead-letters. Absent/false on every normal wrapper-queued row (unchanged
+  // ON CONFLICT DO UPDATE semantics). Only meaningful on `insert` ops.
+  ignoreDuplicates?: boolean
 }
 
 // ─── Auth & Subscription ──────────────────────────────────────────────────────

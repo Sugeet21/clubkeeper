@@ -243,9 +243,15 @@ class SyncRunner {
       // on any not-yet-wired table — that's intentional, see
       // syncPayloadMapper.ts header.
       const wirePayload = toSupabaseRow(row.table, row.payload, clubId)
+      // #129: the one-time backfill sets ignoreDuplicates so a re-push of a row
+      // ALREADY on the server is ON CONFLICT DO NOTHING (not DO UPDATE). This is
+      // required for append-only wallet_transactions (no UPDATE policy after D1)
+      // and correct for every table (a pre-existing row is authoritative; real
+      // edits ride the normal syncedUpdate path). Normal wrapper rows leave the
+      // flag unset → unchanged DO-UPDATE upsert semantics.
       const { error } = await supabaseSync
         .from(row.table)
-        .upsert(wirePayload, { onConflict: 'id', ignoreDuplicates: false })
+        .upsert(wirePayload, { onConflict: 'id', ignoreDuplicates: row.ignoreDuplicates ?? false })
       if (error) throw new Error(`${row.table}.upsert: ${error.message}`)
       return
     }

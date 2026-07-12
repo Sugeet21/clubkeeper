@@ -34,6 +34,7 @@ import Poster from './pages/Poster'
 import { TopupRealtimeBridge } from './components/TopupRealtimeBridge'
 import { BookingRealtimeBridge } from './components/BookingRealtimeBridge'
 import { SyncReaderBoot } from './components/SyncReaderBoot'
+import { SyncBackfillBoot } from './components/SyncBackfillBoot'
 // Phase C Chunk 3 — sync wrapper smoke-test page, DEV-only route.
 import TestOutbox from './pages/__dev__/TestOutbox'
 // Phase C Chunk 5.2b — SyncReader runtime-proof page, DEV-only route.
@@ -237,6 +238,7 @@ export default function App() {
         <ExpirySweepRunner />
         <SyncRunnerBoot />
         <SyncReaderBoot />
+        <SyncBackfillBoot />
         <TopupRealtimeBridge />
         <BookingRealtimeBridge />
         <AppLayout />
