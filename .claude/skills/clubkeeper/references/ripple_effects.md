@@ -1368,6 +1368,8 @@ Files in scope:
 - `src/hooks/useLiveData.ts` — exports `_resetClubSyncSentinel` for the sign-out cleanup.
 - `src/App.tsx` — `<SyncRunnerBoot />` component owns the lifecycle (start on `dbReady + session + !playerHub`, stop on cleanup).
 - `src/pages/__dev__/TestOutbox.tsx` — DEV-only `/__dev/test-outbox` page with smoke-test buttons.
+- `src/db/backfillToSupabase.ts` (NEW, #129) — `backfillLocalRowsToSupabase()`: the one-time pre-Phase-C upload. Enqueues an `insert` outbox row (`ignoreDuplicates:true`) per local synced row across all 9 tables in FK-safe `SYNC_TABLES_PULL_ORDER`, in ONE Dexie tx (raw `db._outbox.add` — the data row already exists, so NOT a wrapper), stamps `settings.backfillEnqueuedAt` sentinel inside the same tx, `scheduleDrain()` after. Reuses the shipped push path (no custom upsert loop). Guarded to run once per device.
+- `src/components/SyncBackfillBoot.tsx` (NEW, #129) — Pattern-A10 boot bridge that runs the backfill once, gated on `dbReady + userId + jwtHasClubClaim() + !isPlayerHubRoute`. Also an App-shell boot component (see that section).
 
 Invariants:
 - **`supabaseSync` is WRITE-ONLY for the drain — imported ONLY by `src/db/syncRunner.ts`.** Never import it from anywhere else. Never access `.auth` on it (Proxy throws). No realtime, no reads. The `accessToken` getter MUST stay lock-free (in-memory → synchronous localStorage; never `await supabase.auth.*` inside it). Violating any of these re-introduces the Pattern S16 deadlock.
@@ -1386,6 +1388,7 @@ Invariants:
 - Realtime channels live on the MAIN `supabase` client ONLY — never on `supabaseSync` (no `.auth` → no `realtime.setAuth` driving → events silently die after ~1h token expiry). Handlers must generation-guard before enqueueing (Pattern S22).
 - **Direct-apply invariants (Chunk 5.3):** every apply routes through the ONE serialized worker — never write `settings.pullCursors` outside it. Cursor advance from an apply is monotonic-forward only and NEVER from a null cursor (null = epoch pull hasn't recorded history; seeding it would truncate the initial pull = silent data loss). Outbox-guard runs BEFORE the LWW compare (pending local write always wins locally; drain + server lww_% trigger arbitrate). LWW compares NUMBERS (S17). A mapper throw inside an apply is caught per-job (queue continues, error surfaced) — same fail-loud contract as pulls.
 - Idempotency: `upsert({ onConflict: 'id', ignoreDuplicates: false })` for insert/update. Safe to retry forever. Outbox can be replayed from scratch.
+- **`OutboxRow.ignoreDuplicates` (#129) — set ONLY by the one-time backfill (`backfillToSupabase.ts`), NEVER by a normal wrapper.** When true, pushOne upserts `ON CONFLICT DO NOTHING` instead of DO UPDATE. Required because re-pushing a row already on the server would otherwise run an UPDATE — forbidden on append-only `wallet_transactions` (its UPDATE policy was dropped in D1 §4.6 → 403 → dead-letter). DO NOTHING is correct for a backfill (a pre-existing server row is authoritative; real edits ride `syncedUpdate`), but WRONG for a normal write (which must overwrite). `pushOne` reads `row.ignoreDuplicates ?? false` (nullish) so every wrapper-queued row keeps DO-UPDATE semantics. The field is non-indexed → no `_outbox` schema bump; `buildOutboxRow` in syncWrappers.ts leaves it undefined. Accepted limitation: DO NOTHING skips a stale-server-vs-newer-local-offline-edit for an already-synced row (negligible for pre-Phase-C rows, which never queued outbox rows).
 - TestOutbox row ids are real `crypto.randomUUID()` (Chunk 4.2 — Supabase `uuid` columns reject anything else; see Pattern S14 watch-out). Test rows are identified by a `TEST ` prefix on the `name` field (or `items[0].name` for canteen_sales). Cleanup filters by that prefix. With Chunk 4 live the rows DO reach Supabase — manual cleanup there via SQL Editor / Dashboard is the only path back.
 
 Cross-feature ripples:
@@ -1401,13 +1404,13 @@ Cross-feature ripples:
 - → If a new owner-data WRITE path is added outside SyncRunner (e.g. a direct `.from(<synced-table>).upsert(...)` from queries.ts or a new admin tool): use `supabaseSync`, not `supabase`. Using `supabase` for owner writes risks re-introducing the navigator-lock deadlock under StrictMode / sign-out flips (Pattern S16). For non-synced owner reads / admin RPCs, `supabase` is still correct.
 - → If a NEW Supabase client is created anywhere: it MUST have a distinct `storageKey` AND should prefer the `accessToken` escape hatch if it does owner-data REST writes (avoid spawning a new GoTrueClient unless the file genuinely needs `.auth`). See `src/lib/supabaseSync.ts` for the template.
 
-Last updated: 7 Jul 2026 (#122 syncedBatch mixed-op atomic wrapper SHIPPED b1407e3 — 4 multi-table sites converted + runtime-proven; deleteSessionItem/restoreSessionItem deferred to #124; Group B next)
+Last updated: 12 Jul 2026 (#129 one-time boot backfill SHIPPED — enqueues pre-Phase-C rows via the outbox with `ignoreDuplicates:true`; prod now mirrors local across all 9 tables, runtime-proven; D9 step-2 blocker cleared)
 
 ---
 
 ## App-shell boot components (Pattern A10)
 
-Singleton-owning `<XyzBoot />` / `<XyzRunner />` components mounted at the top of `App.tsx` (or `src/components/`) that start a module-level runner or subscription on the authenticated session and tear it down on sign-out. Current members: `AuthInitializer`, `SyncRunnerBoot`, `SyncReaderBoot`, `ExpirySweepRunner`, `TopupRealtimeBridge`, `BookingRealtimeBridge`.
+Singleton-owning `<XyzBoot />` / `<XyzRunner />` components mounted at the top of `App.tsx` (or `src/components/`) that start a module-level runner or subscription on the authenticated session and tear it down on sign-out. Current members: `AuthInitializer`, `SyncRunnerBoot`, `SyncReaderBoot`, `SyncBackfillBoot` (#129 — runs the one-time backfill once; also gates on `jwtHasClubClaim()`, which the others don't need), `ExpirySweepRunner`, `TopupRealtimeBridge`, `BookingRealtimeBridge`.
 
 Files in scope:
 - `src/App.tsx` — `AuthInitializer`, `SyncRunnerBoot`, `ExpirySweepRunner`, `TopupRealtimeBridge`, `BookingRealtimeBridge` mount points.
