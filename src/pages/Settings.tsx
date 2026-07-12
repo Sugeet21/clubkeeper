@@ -17,6 +17,8 @@ import { db } from '../db/database'
 import { supabase } from '../lib/supabase'
 import { playBeepOnce, triggerVibration, unlockAudio } from '../lib/alarm'
 import { PlayerHubSettings } from './PlayerHubSettings'
+import { OwnerOnly } from '../components/auth/RoleGuard'
+import { StaffSection, IconStaff } from '../components/settings/StaffSection'
 import { updateClubNameRemote } from '../lib/playerHubApi'
 import { importEverythingFromFile, type ImportSuccess, type ImportFailureReason } from '../lib/importEverything'
 import type { GameTable } from '../types'
@@ -1112,6 +1114,23 @@ function OwnerSettings() {
         >
           <PlayerHubSettings settings={settings} />
         </SettingsSection>
+
+        {/* ── 7.5: Staff (owner-only; D8) ─────────────────────────────────── */}
+        {/* <OwnerOnly> is defense-in-depth: OwnerSettings already only mounts   */}
+        {/* for owners (D4 role split), but the local gate keeps the A12 intent  */}
+        {/* grep-able and guarantees the section + its modals never render for   */}
+        {/* a staff role no matter how OwnerSettings is reached.                 */}
+        <OwnerOnly>
+          <SettingsSection
+            id="staff"
+            title="Staff"
+            icon={<IconStaff />}
+            isOpen={openSection === 'staff'}
+            onToggle={() => toggleSection('staff')}
+          >
+            <StaffSection />
+          </SettingsSection>
+        </OwnerOnly>
 
         {/* ── 5: Data & Backup ───────────────────────────────────────────── */}
         <SettingsSection
