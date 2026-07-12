@@ -363,7 +363,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signOut: async () => {
-    await supabase.auth.signOut()
+    // #139 — `supabase.auth.signOut()` queues on the GoTrue navigator lock
+    // (Pattern A7/A11/S16). A zombie tab stranding that lock made this await
+    // HANG forever, so the teardown + hard-nav below never ran and the Sign-out
+    // button did nothing until a manual hard refresh. Race it with a short cap:
+    // best-effort server-side revoke, but NEVER let it block the local teardown
+    // + redirect. The stored token dies on its own (≤1h TTL) even if the server
+    // call didn't land, and the hard nav clears all client state regardless.
+    const SIGNOUT_TIMEOUT_MS = 3000
+    try {
+      await Promise.race([
+        supabase.auth.signOut(),
+        new Promise<void>((resolve) => setTimeout(resolve, SIGNOUT_TIMEOUT_MS)),
+      ])
+    } catch {
+      // Swallow — a failed/hung server sign-out must not block local sign-out.
+    }
     // Chunk 4.3 / Pattern S15 + S16 — tear DOWN sync state BEFORE closeDb().
     // Order matters: stop()/generation-bump first guarantees that any
     // in-flight drainOnce bails at its next post-await guard, so no orphan

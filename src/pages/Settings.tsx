@@ -14,7 +14,7 @@ import { useAuthStore } from '../store/authStore'
 import { useRole } from '../hooks/useRole'
 import { validatePlayerName, validateUpiId } from '../lib/validation'
 import { db } from '../db/database'
-import { supabase } from '../lib/supabase'
+import { readAccessTokenLockFree } from '../db/syncClubId'
 import { playBeepOnce, triggerVibration, unlockAudio } from '../lib/alarm'
 import { PlayerHubSettings } from './PlayerHubSettings'
 import { OwnerOnly } from '../components/auth/RoleGuard'
@@ -598,11 +598,13 @@ function OwnerSettings() {
   async function handleCancelSubscription() {
     setBusy(true)
     try {
-      const { data: { session: authSession } } = await supabase.auth.getSession()
-      if (!authSession) throw new Error('Not authenticated')
+      // #139 — lock-free token read (supabase.auth.getSession() can hang on a
+      // stranded GoTrue lock, Pattern A7/S16). Same fix as StaffSection/Subscribe.
+      const accessToken = readAccessTokenLockFree()
+      if (!accessToken) throw new Error('Not authenticated')
       const res = await fetch('/api/cancel-subscription', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${authSession.access_token}` },
+        headers: { 'Authorization': `Bearer ${accessToken}` },
       })
       if (!res.ok) {
         const err = await res.json() as { error?: string }

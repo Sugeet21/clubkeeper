@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { format, addDays } from 'date-fns'
-import { supabase } from '../lib/supabase'
+import { readAccessTokenLockFree } from '../db/syncClubId'
 import { useAuthStore } from '../store/authStore'
 import { PlanSelection } from '../components/subscribe/PlanSelection'
 import { StickyCheckout } from '../components/subscribe/StickyCheckout'
@@ -154,8 +154,10 @@ export default function Subscribe() {
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
     try {
-      const { data: { session: authSession } } = await supabase.auth.getSession()
-      if (!authSession) throw new Error('Not authenticated')
+      // #139 — lock-free token read (supabase.auth.getSession() can hang on a
+      // stranded GoTrue lock, Pattern A7/S16). Same fix as StaffSection/Settings.
+      const accessToken = readAccessTokenLockFree()
+      if (!accessToken) throw new Error('Not authenticated')
 
       let res: Response
       try {
@@ -163,10 +165,10 @@ export default function Subscribe() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authSession.access_token}`,
+            'Authorization': `Bearer ${accessToken}`,
           },
           body: JSON.stringify({
-            userId: authSession.user.id,
+            userId: user?.id ?? '',
             tier: selectedPlan,
             cycle: billing,
           }),

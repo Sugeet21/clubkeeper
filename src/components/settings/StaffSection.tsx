@@ -21,6 +21,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
+import { readAccessTokenLockFree } from '../../db/syncClubId'
 import { Modal } from '../Modal'
 import { useToastStore } from '../../store/toastStore'
 
@@ -66,8 +67,13 @@ function CopyIcon() {
 // ─── Fetch helper (Pattern S1) ──────────────────────────────────────────────
 
 async function callStaffApi<T>(path: string, body: unknown): Promise<T> {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) throw new Error('Not signed in. Please sign in again.')
+  // #139 — read the bearer token LOCK-FREE. `supabase.auth.getSession()` queues
+  // on the GoTrue navigator lock (Pattern A7/A11/S16); a zombie tab stranding
+  // that lock made create/reset/revoke HANG until a hard refresh. This reader
+  // hits the in-memory authStore session first (no lock, no localStorage) and
+  // falls back to a synchronous localStorage read — never hangs.
+  const accessToken = readAccessTokenLockFree()
+  if (!accessToken) throw new Error('Not signed in. Please sign in again.')
 
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), 15000)
@@ -76,7 +82,7 @@ async function callStaffApi<T>(path: string, body: unknown): Promise<T> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify(body),
       signal: ctrl.signal,
