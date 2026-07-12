@@ -64,7 +64,11 @@ export function BackEntryModal({ open, onClose, onSaved }: BackEntryModalProps) 
   const today = format(new Date(), 'yyyy-MM-dd')
 
   // ── Session fields ──────────────────────────────────────────────────────────
-  const [tableId, setTableId] = useState<number | null>(null)
+  // Post-v20 ID law (Pattern R5): game_tables.id is a UUID string. Was typed
+  // `number` + Number(uuid)=NaN, which made the <select> unable to hold a value
+  // (#134). Keep it a string end-to-end (createBackEntry/validateBackEntry both
+  // take string).
+  const [tableId, setTableId] = useState<string | null>(null)
   const [dateStr, setDateStr] = useState(today)
   const [startTimeStr, setStartTimeStr] = useState('')
   const [endTimeStr, setEndTimeStr] = useState('')
@@ -180,7 +184,7 @@ export function BackEntryModal({ open, onClose, onSaved }: BackEntryModalProps) 
     // Treat draftItems as SessionItem shape for calculateItemsTotal
     const asSessionItems = draftItems.map((d) => ({
       id: undefined,
-      sessionId: 0,
+      sessionId: '', // placeholder — calculateItemsTotal only reads price/quantity (Pattern R5: sessionId is a string)
       name: d.name,
       price: d.price,
       quantity: d.quantity,
@@ -362,7 +366,7 @@ export function BackEntryModal({ open, onClose, onSaved }: BackEntryModalProps) 
         <Field label="Table">
           <select
             value={tableId ?? ''}
-            onChange={(e) => { setTableId(e.target.value ? Number(e.target.value) : null); setError(null) }}
+            onChange={(e) => { setTableId(e.target.value || null); setError(null) }}
             className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-[15px] focus:border-accent focus:outline-none [color-scheme:dark]"
           >
             <option value="">Select table…</option>

@@ -41,7 +41,7 @@ function ChevronDownIcon() {
 interface AddItemBottomSheetProps {
   open: boolean
   onClose: () => void
-  sessionId: number
+  sessionId: string // Post-v20 ID law (Pattern R5): session ids are UUID strings (#134 sibling)
   sessionStatus: 'running' | 'paused' | 'completed'
 }
 
@@ -53,7 +53,7 @@ interface AddItemBottomSheetProps {
 
 async function runCanteenAddTransaction(
   ci: CanteenItem,
-  sessionId: number,
+  sessionId: string,
   itemName: string,
   priceNum: number,
   qtyNum: number,
@@ -88,7 +88,7 @@ async function runCanteenAddTransaction(
 }
 
 async function runFreeformAddTransaction(
-  sessionId: number,
+  sessionId: string,
   itemName: string,
   priceNum: number,
   qtyNum: number,
@@ -121,7 +121,10 @@ export function AddItemBottomSheet({
   }, [open, peakCfg.enabled])
   const peakActive = isInPeakWindow(peakNow, peakCfg)
 
-  const [editingId, setEditingId] = useState<number | null>(null)
+  // Post-v20 ID law (Pattern R5): session_item ids are UUID strings; was `number`
+  // so `editingId === item.id` never matched and updateSessionItem got a
+  // mistyped id (#134 sibling).
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState('1')

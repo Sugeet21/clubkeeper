@@ -82,7 +82,7 @@ export function useTodaysSessions(): Session[] {
   )
 }
 
-export function useSession(id: number | undefined): Session | undefined {
+export function useSession(id: string | undefined): Session | undefined {
   return useLiveQuery(
     () => (id !== undefined ? db.sessions.get(id) : undefined),
     [id],
@@ -109,7 +109,7 @@ export function useSessionsForDate(date: Date): Session[] {
   )
 }
 
-export function useTable(id: number | undefined): GameTable | undefined {
+export function useTable(id: string | undefined): GameTable | undefined {
   return useLiveQuery(
     () => (id !== undefined ? db.gameTables.get(id) : undefined),
     [id],
@@ -136,7 +136,7 @@ export function useSessionsInRange(startMs: number, endMs: number): SessionWithI
             .filter((i) => !i.deletedAt) // #124 — soft-deleted excluded
             .toArray()
         : []
-      const itemsBySessionId = new Map<number, SessionItem[]>()
+      const itemsBySessionId = new Map<string, SessionItem[]>() // Pattern R5: sessionId is a UUID string
       for (const item of allItems) {
         const list = itemsBySessionId.get(item.sessionId) ?? []
         list.push(item)
@@ -150,7 +150,7 @@ export function useSessionsInRange(startMs: number, endMs: number): SessionWithI
   )
 }
 
-export function useSessionItems(sessionId: number | undefined): SessionItem[] {
+export function useSessionItems(sessionId: string | undefined): SessionItem[] {
   return (
     useLiveQuery(
       () =>

@@ -38,14 +38,17 @@ export default function Home() {
   const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
   const [addTableOpen, setAddTableOpen] = useState(false)
   const [orphanedOpen, setOrphanedOpen] = useState(false)
-  const [endingId, setEndingId] = useState<number | null>(null)
+  // Post-v20 ID law (Pattern R5): session ids are UUID strings; was `number` so
+  // `endingId === s.id` was always false and the End button never showed its
+  // in-flight state (#134 sibling).
+  const [endingId, setEndingId] = useState<string | null>(null)
   const [showDisabled, setShowDisabled] = useState(false)
 
   // Alarm — checked every useTick() re-render (Pattern T1, Pattern T4)
   const alarmSession = useSessionAlarm(activeSessions)
 
   const sessionMap = useMemo(() => {
-    const map = new Map<number, Session>()
+    const map = new Map<string, Session>() // Pattern R5: table ids are UUID strings (#134 sibling)
     for (const s of activeSessions) map.set(s.tableId, s)
     return map
   }, [activeSessions])
@@ -128,7 +131,7 @@ export default function Home() {
     return activeSessions.filter((s) => s.startedAt < cutoff)
   }, [activeSessions])
 
-  async function handleEndOrphaned(id: number) {
+  async function handleEndOrphaned(id: string) {
     setEndingId(id)
     try {
       await stopSession(id)

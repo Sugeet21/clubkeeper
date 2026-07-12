@@ -150,7 +150,7 @@ export function validateRateCard(
 }
 
 export function validateBackEntry(input: {
-  tableId: number | null
+  tableId: string | null // Post-v20 ID law (Pattern R5): table ids are UUID strings (#134)
   startedAt: number | null
   endedAt: number | null
   playerName: string | null

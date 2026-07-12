@@ -163,7 +163,9 @@ function OwnerHistory() {
   // Store as YYYY-MM-DD strings to match <input type="date"> format
   const [fromStr, setFromStr] = useState(() => format(subDays(new Date(), 6), 'yyyy-MM-dd'))
   const [toStr, setToStr] = useState(() => format(new Date(), 'yyyy-MM-dd'))
-  const [filterTableId, setFilterTableId] = useState<number | 'all'>('all')
+  // Post-v20 ID law (Pattern R5): table ids are UUID strings; was `number` +
+  // Number(uuid)=NaN so the filter dropdown never matched (#134 sibling).
+  const [filterTableId, setFilterTableId] = useState<string | 'all'>('all')
   const [showBackEntry, setShowBackEntry] = useState(false)
 
   useTick()
@@ -192,7 +194,7 @@ function OwnerHistory() {
   const rows = useSessionsInRange(rangeStart, rangeEnd)
 
   const tableMap = useMemo(() => {
-    const m = new Map<number, GameTable>()
+    const m = new Map<string, GameTable>() // Pattern R5: table ids are UUID strings (#134 sibling)
     for (const t of tables) if (t.id !== undefined) m.set(t.id, t)
     return m
   }, [tables])
@@ -328,8 +330,8 @@ function OwnerHistory() {
       {tables.length > 1 && (
         <div className="px-4 mb-4">
           <select
-            value={filterTableId === 'all' ? '' : String(filterTableId)}
-            onChange={(e) => setFilterTableId(e.target.value ? Number(e.target.value) : 'all')}
+            value={filterTableId === 'all' ? '' : filterTableId}
+            onChange={(e) => setFilterTableId(e.target.value || 'all')}
             className="w-full bg-bg-elevated border border-border rounded-xl px-3 py-2.5 text-text text-[14px] focus:outline-none [color-scheme:dark]"
           >
             <option value="">All Tables</option>
