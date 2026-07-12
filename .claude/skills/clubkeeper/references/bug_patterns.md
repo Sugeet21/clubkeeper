@@ -692,6 +692,13 @@ Gate `useLiveQuery` on `tidValid` (return `Promise.resolve(undefined)` when inva
 
 **Step 2 evolution:** once the v20 `.upgrade()` callback rewrites all existing numeric rows to UUIDs, the dual-accept can collapse to "treat everything as a UUID string." Until then, keep the round-trip guard — pre-v20 users still have numeric rows for the lifetime of their DB.
 
+**R5 facet — the landmine isn't only route params (#134, 12 Jul 2026).** The same `Number(uuid)=NaN` bug hides in THREE more shapes, all found together during the #134 sweep:
+1. **`<select>` onChange coercion:** `onChange={(e) => setId(Number(e.target.value))}` where each `<option value={row.id}>` is a UUID. `Number("<uuid>")=NaN` → controlled `<select value={NaN}>` matches no option → **the dropdown silently won't hold a selection** (no crash, no error — just an unusable control). This was #134's back-entry table dropdown AND History's filter-by-table dropdown. Fix: `setId(e.target.value || null)`, and type the id state `string | null`.
+2. **`useState<number | null>` for a row id:** `endingId`/`editingId`/`tableId` typed `number` then compared `id === row.id` (number === string → **always false**) → in-flight button states never fire, edit-highlight never matches. Grep: `useState<number \| null>` then check whether it holds a row id.
+3. **`Map<number, T>` keyed by a UUID id:** `new Map<number, GameTable>()` populated with `row.id` (string). Runtime "works" (Map uses SameValueZero, coerces fine) but the type is a lie and `.get(stringKey)` type-errors the moment a caller is correctly typed.
+
+**Self-masking gotcha:** these mistypes are often mutually consistent (a `number` state feeds a `number` param feeds a `number` Map), so **tsc stays silent until you retype ONE of them** — then the fix cascades outward through callers. Fix to convergence: retype, re-run tsc, fix the newly-surfaced same-class error, repeat. The #134 sweep walked 7 files this way and dropped tsc from 117→90 with zero net-new. Residual same-class debt (Summary/Bookings/summaryMath/BulkPeakPriceModal/SessionDetail, ~27 errors) tracked in **#138** — pairs with #118 (the vacuous `tsc` build gate that lets this class accumulate unseen).
+
 ### Pattern R1 — After renaming a route, grep ALL `navigate('/old')` calls (BUG-009)
 **Symptom signature:** Some flows still go to the old route.
 **Root cause:** `/` → `/tables` migration missed a `navigate('/', ...)` buried in a try/catch.

@@ -4,6 +4,21 @@
 
 ---
 
+## 12 Jul 2026 — #134: back-entry table dropdown fixed + full Pattern R5 id-type sweep — (refs #134, #138)
+
+- **THE BUG (#134, P1):** the "Log past session" back-entry form's table dropdown could not be selected — picking a table didn't stick. Found during Phase D D9 two-profile testing (staff → History → back entry), but **NOT staff-specific** — broken for the owner too post-v20.
+- **ROOT CAUSE — Pattern R5 (post-v20 ID law: ids are UUID strings):** `BackEntryModal.tsx` typed `tableId` as `number` and did `Number(e.target.value)` in the select onChange. `<option value>` is a UUID string → `Number("01f4f02c-…")` = **NaN** → controlled `<select value={NaN}>` matches no option → selection reverts to blank; `eligibleTables.find(t => t.id === tableId)` (string === NaN) also always false. Confirmed against staff Dexie: all 11 pulled `gameTables` had valid string ids + numeric `ratePerHour` — the data was fine, only the id-typing was wrong. Same class as #107/#127.
+- **THE FIX + ripple sweep (owner asked to fix the whole class, not just #134):** swept `src/` for the R5 class and fixed every reachable instance across **7 files**:
+  - `BackEntryModal.tsx` — `tableId: number→string`, drop `Number()` (the #134 fix); synthetic-`SessionItem` preview `sessionId: 0 → ''`.
+  - `lib/validation.ts` — `validateBackEntry({ tableId: number→string })`.
+  - `History.tsx` — `filterTableId: number→string`, drop `Number()`, `Map<number→string, GameTable>` (owner's filter-by-table dropdown was also broken).
+  - `Home.tsx` — `endingId: number→string` + `handleEndOrphaned(id: number→string)`, `Map<number→string, Session>` (End-button in-flight state never fired).
+  - `AddItemBottomSheet.tsx` — `editingId`, prop `sessionId`, and both helper `sessionId` params `number→string`.
+  - `hooks/useLiveData.ts` — `useSession`/`useTable`/`useSessionItems(id: number→string)` + `Map<number→string, SessionItem[]>`. Retyping these hooks rippled to their callers and surfaced the same class further out — the type system walked the fix to convergence.
+- **Gates:** production build clean; strict-tsc **117 → 90** errors — the fix REMOVED 27 and introduced **zero** (verified by git-stash diff of current-vs-baseline error sets — `comm -13` empty). No schema/migration change (the data layer already expected `string` everywhere).
+- **Residual R5 debt → #138 (deferred):** ~27 remaining tsc errors of the same class in Summary.tsx (10) / BulkPeakPriceModal.tsx (7) / summaryMath.ts (6) / SessionDetail.tsx (2) / Bookings.tsx (2) — all PRE-EXISTING in the #118 baseline, non-user-blocking, out of scope for a P1 dropdown fix. Filed #138 to track; pairs naturally with #118 (the vacuous build gate that let them accumulate).
+- Local only — reaches prod on push. Bugs also filed this session: #135 (sign-out needs hard refresh, P2), #136 (owner-chosen staff password, ENH), #137 (configurable/monetizable staff permission tiers, ENH).
+
 ## 12 Jul 2026 — #129: one-time boot backfill of pre-Phase-C rows to Supabase — (refs #129)
 
 - **THE BUG:** Phase C's write path syncs on WRITE only; rows that existed in the owner's Dexie before the Chunk-7 cutover were never uploaded. Prod `game_tables` had 1 row while the owner's device had 6 → a second/staff device pulls an empty tables grid. Blocked Phase D D9 step 2.
