@@ -113,7 +113,7 @@ Brief agents like a colleague who just walked in — goal, file paths, response 
 
 **This overrides any urge to be efficient.** Even a one-line fix gets an issue first. Only exception: a typo/wording change Sugeet asked for in plain English with no symptom.
 
-## Session Rules (A–J)
+## Session Rules (A–K)
 
 - **Rule A — Update the skill after EVERY phase** of multi-phase work, not after the module. Compaction eats details otherwise.
 - **Rule B — Every src/ commit needs a paired skill commit** in the same session: at least one of changelog.md, ripple_effects.md, bug_archive.md, decisions_active.md, bug_patterns.md, or STATE.md. Check with `git log --since="2 hours ago" --name-only` before declaring done. (Machine-checked by `npm run check:skill`.)
@@ -125,6 +125,14 @@ Brief agents like a colleague who just walked in — goal, file paths, response 
 - **Rule H — Settings.tsx pre-flight is mandatory.** Before any edit to `src/pages/Settings.tsx`: read bug_patterns T2, R4 (settings useState-mirror class — NOT "S4", a Razorpay pattern; old revisions had the wrong pointer), F5, U6, U10, S11 + the ripple_effects §Settings entry; STATE which patterns apply BEFORE writing code; cite patterns in the commit message; any new save site uses `useSaveIndicator()` + `<SaveIndicator>`; any new clubs-row mirror goes through `mirrorToSupabaseBySlug()`.
 - **Rule I — Every src/ change follows the 4-phase loop** in `references/session_loop.md` (GROUND → PLAN → EXECUTE → CLOSE), phases stated out loud, gates enforced, build per logical chunk. Abbreviated loop (Phase 1+3) ONLY for typo/comment/skill-markdown/revert work. One-line fixes run the full loop — Pattern R4 came from a one-line fix.
 - **Rule J — Default is main thread; delegation needs stated reasons** (which agent, does-intermediate-work-matter answer, why it's not an anti-pattern). Forbidden: debugging, builds/tests, design, Phase-3 execution, bug RCA. Required: auditor at close, reviewer for >100-LOC chunks.
+- **Rule K — PATTERN SWEEP before close.** Once a bug's root cause is confirmed (not before — a guessed cause sweeps for the wrong thing):
+  1. **Write the sweep query** — the grep/regex that finds this exact anti-pattern anywhere in `src/`.
+  2. **Run it across the whole codebase.** List every other occurrence as `file:line`.
+  3. **Report to Sugeet:** "Root cause = X. Sweep found N more instances: `<list>`." (Say "0 more" explicitly when clean — silence reads as "didn't check".)
+  4. **Sugeet decides:** fix all in the same commit (identical pattern, low risk) OR file a separate `SWEEP-#NN` issue per distinct area. Still NEVER bundle unrelated bugs (Rule F holds).
+  5. **Add the sweep query itself** to that pattern's entry in `bug_patterns.md`, so the next sweep is one command, not a re-derivation. This is the paired-skill artifact for the fix (satisfies Rule B).
+
+  Precedent: #134's one-file symptom was actually a 7-file Pattern R5 id-type class; the sweep caught the other 6. Skipping the sweep is how #114/#121 and the R5 debt (#138) accumulated.
 
 ---
 

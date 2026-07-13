@@ -4,6 +4,11 @@
 
 ---
 
+## 13 Jul 2026 — Rule K (PATTERN SWEEP before close) added; #135/#139/#141 closed by owner — (refs #135, #139, #141)
+
+- **NEW LAW — Rule K (PATTERN SWEEP before close)** in SKILL.md `## Session Rules` (header now `A–K`): once a root cause is confirmed, write a sweep grep/regex, run it across all of `src/`, report `Root cause = X; N more instances: <list>` (explicitly "0 more" when clean), let Sugeet decide fix-all-in-one-commit vs a `SWEEP-#NN` issue per area (never bundle unrelated bugs — Rule F holds), and record the sweep query in that pattern's `bug_patterns.md` entry (that recording is the paired-skill artifact for Rule B). Precedent cited: #134's one-file symptom was a 7-file R5 id-type class; skipping sweeps is how #114/#121 + the #138 R5 debt accumulated.
+- **Owner closed #135, #139, #141.** #141 (/tables Quick-Sale total) fixed in `7c61b65`. #139 (auth actions hang on stranded GoTrue lock) fixed in `7517c55`+`0621c24`. #135 (sign out needs hard refresh) closed as a **duplicate of #139** — same root cause, absorbed by the #139 lock-free/raced-signOut fix. STATE.md snapshot regenerated (P1 14, #139/#141 dropped) + hand-notes overwritten.
+
 ## 13 Jul 2026 — #141: /tables today's total now includes Quick Sale amounts — (refs #141)
 
 - **THE BUG (#141, P1 — owner reported):** on `/tables` (Home strip), today's total did not move when a Quick Sale was made. A ₹X walk-in sale should add exactly ₹X to today's figure; it stayed unchanged.
