@@ -88,7 +88,8 @@ export default function Home() {
   const runningCount = activeSessions.filter((s) => s.status === 'running').length
 
   // Today total — split into two parts so useTick() can drive the running portion:
-  // 1. DB-static: completed session amounts + all today's items (re-fires only on DB write)
+  // 1. DB-static: completed session amounts + all today's items + walk-in Quick
+  //    Sales (re-fires only on DB write)
   // 2. Live: running/paused session amounts computed in render body (recalculates every tick)
   const todayStaticTotals = useLiveQuery(async () => {
     const start = startOfDay(new Date()).getTime()
@@ -107,13 +108,22 @@ export default function Home() {
           .toArray()
       : []
 
+    // #141 — Quick Sales are CanteenSale rows (no session, no sessionItems), so
+    // they were silently missing from today's total. Sum them the same way
+    // Summary.tsx does (createdAt window → reduce sale.total). Pattern T6/#93.
+    const canteenSales = await db.canteenSales
+      .where('createdAt')
+      .between(start, end, true, true)
+      .toArray()
+
     const completedAmount = todaySessions
       .filter((s) => s.status === 'completed')
       .reduce((sum, s) => sum + s.amount, 0)
     const itemsAmount = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
+    const quickSaleAmount = canteenSales.reduce((sum, s) => sum + s.total, 0)
 
-    return { completed: completedAmount, items: itemsAmount }
-  }, [], { completed: 0, items: 0 })
+    return { completed: completedAmount, items: itemsAmount, quickSales: quickSaleAmount }
+  }, [], { completed: 0, items: 0, quickSales: 0 })
 
   // Running/paused sessions recalculate on every useTick() re-render
   const runningAmount = activeSessions.reduce(
@@ -121,7 +131,11 @@ export default function Home() {
     0,
   )
 
-  const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.items ?? 0) + runningAmount
+  const todayTotal =
+    (todayStaticTotals?.completed ?? 0) +
+    (todayStaticTotals?.items ?? 0) +
+    (todayStaticTotals?.quickSales ?? 0) +
+    runningAmount
 
   const currency = settings?.currency ?? '₹'
 

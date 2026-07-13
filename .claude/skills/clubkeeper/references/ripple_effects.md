@@ -78,7 +78,7 @@ Route table (D7 — extend when adding owner-only ROUTES):
 | Route | Staff behaviour | Mechanism |
 |---|---|---|
 | `/piggy` | bounce → `/tables` | `<RequireOwner>` wrapper route in `App.tsx` (Piggy's D6 role split stays as defense-in-depth) |
-| `/summary` | today-card only | `Summary.tsx` role split (D7): `StaffSummaryToday` vs `OwnerSummary` (byte-identical). Staff card mirrors the owner headline math — T4 live running sum, T9 walk-in included, #124 filter. NOT Home's strip (it omits Quick Sale). |
+| `/summary` | today-card only | `Summary.tsx` role split (D7): `StaffSummaryToday` vs `OwnerSummary` (byte-identical). Staff card mirrors the owner headline math — T4 live running sum, T9 walk-in included, #124 filter. Home's strip now ALSO includes Quick Sale (#141) — both surfaces agree on today's total. |
 | `/history` | log-past-session card only | `History.tsx` role split (D5) |
 | `/settings` | Account card only | `Settings.tsx` role split (D4) |
 | BottomNav | all 4 tabs STAY | no code change (D7 spec); `/piggy` is not a tab |
@@ -698,6 +698,7 @@ Invariants:
   2. Render body → sum `calculateAmount(getElapsedMs(s))` for `activeSessions`.
   3. Combine: `total = completedFromQuery + itemsFromQuery + runningFromRender`.
   Current correct consumers: `Home.tsx` (`todayTotal`), `Summary.tsx`.
+  **#141 addendum:** any "today total" that aggregates revenue MUST also add today's `CanteenSale` rows (`db.canteenSales` windowed on `createdAt`, reduce `sale.total`) — Quick Sales have no session/sessionItems row, so T4's session-only sum silently drops them. `Home.tsx` `todayStaticTotals` now returns `{ completed, items, quickSales }`. This is the strip-level twin of the #93 aggregation invariant below.
 - PAYMENT MODE strip EXCLUDES running sessions (no `paymentBreakdown` yet). Headline `totalRevenue` includes them via render-body `runningRevenueToday`.
 - Largest-remainder rounding in `PaymentModeStrip.computePercents` — bar widths and tile percents read same return value.
 - Date picker pattern = Pattern U9 (opacity-0 full-size overlay over a label, NOT clip/sr-only). History.tsx date inputs have `cursor-pointer`.

@@ -4,6 +4,16 @@
 
 ---
 
+## 13 Jul 2026 — #141: /tables today's total now includes Quick Sale amounts — (refs #141)
+
+- **THE BUG (#141, P1 — owner reported):** on `/tables` (Home strip), today's total did not move when a Quick Sale was made. A ₹X walk-in sale should add exactly ₹X to today's figure; it stayed unchanged.
+- **ROOT CAUSE:** `Home.tsx` `todayStaticTotals`/`todayTotal` summed only `db.sessions` (completed) + `db.sessionItems` + live running sessions. Quick Sales are `CanteenSale` rows in `db.canteenSales` — no session, no sessionItems (`createCanteenSale`) — so they were silently dropped. Documented-but-unfixed divergence: Summary already counted walk-ins (Pattern T6/#93); Home's strip did not (old ripple_effects noted "it omits Quick Sale").
+- **THE FIX (1 file, `src/pages/Home.tsx`):** added a today-windowed `db.canteenSales.where('createdAt').between(startOfDay, endOfDay)` sum (reduce `sale.total`) inside the existing `todayStaticTotals` live query — same query shape Summary.tsx uses. `todayStaticTotals` now returns `{ completed, items, quickSales }`; `todayTotal` folds all three plus `runningAmount`. Display-only, no downstream ripple.
+- **Skill:** ripple_effects §Roles `/summary` row + Pattern T4 consumers note updated (Home now agrees with Summary; T4 addendum: any today-total MUST add `canteenSales`).
+- **Build:** clean. `npx tsc --noEmit` = 90 errors (unchanged #118 baseline), 0 in Home.tsx.
+
+---
+
 ## 12 Jul 2026 — #139: auth actions no longer hang on the stranded GoTrue lock (sign out, staff create/reset/revoke, subscription) — (refs #139, #135, #103)
 
 - **THE BUG (#139, P1 — owner reported during Phase D D9):** Sign out, create staff, remove staff all did nothing on click and needed a **manual hard refresh**; felt slow. Owner correctly intuited a single root cause. (Absorbs the earlier #135 sign-out-needs-refresh.)
