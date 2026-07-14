@@ -44,6 +44,7 @@ Phase D (staff login, tracking issue #128) — D0–D8 done (plan `references/ph
 - **Session persistence watch** — `storage` option was linter-removed from `createClient`; monitor for session drops in production.
 - **Razorpay key rotation warning** — any rotation of `VITE_RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` requires re-verifying all 6 plan IDs (Pattern S5 curl check).
 - **GST invoicing + email notifications** — next sprint.
+- **Playwright seed suite (step-8)** — `tests/d9-step8.spec.ts` (prod-auth project, `test:d9`) automates D9 step-8 T1+T2 against the deployed app; T3 (staff2 create/reset) deferred. Env split required before CI/loops: staff creds in `.env.test` (gitignored, template `.env.test.example`), owner via `.auth/user.json`. Run MANUALLY only — no loops/CI yet. A dedicated testing reference is deferred to the full-suite landing (sequencing decision).
 
 ### Supabase migration ledger (verified against prod 7 Jul 2026 via anon-RPC probe)
 

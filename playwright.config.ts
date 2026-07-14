@@ -2,6 +2,12 @@ import { defineConfig } from '@playwright/test'
 
 const AUTH_FILE = '.auth/user.json'
 
+// Prod smoke suite (D9 step-8 seed). Points at the deployed app, NOT the Vite
+// dev server, so it can exercise real staff JWTs + per-user Dexie DBs. Override
+// with PW_BASE_URL to target a preview deploy. Owner storageState is the same
+// .auth/user.json the local-auth projects use (owner Google session).
+const PROD_BASE_URL = process.env.PW_BASE_URL ?? 'https://app.handbookhq.in'
+
 export default defineConfig({
   testDir: './tests',
   reporter: 'list',
@@ -76,6 +82,24 @@ export default defineConfig({
         viewport: { width: 1280, height: 800 },
         storageState: AUTH_FILE,
         acceptDownloads: true,
+      },
+    },
+
+    // ── Prod smoke suite (D9 step-8 seed — run manually only, no CI/loops) ──
+    // Targets the DEPLOYED app so staff JWTs + per-user Dexie DBs are real.
+    // Owner storageState from .auth/user.json; staff creds from .env.test
+    // (PW_STAFF_EMAIL/PW_STAFF_PASSWORD) — the spec soft-skips if unset.
+    // No `dependencies: ['setup']`: setup only asserts the file exists, and
+    // this project fails loudly on a missing owner state instead.
+    {
+      name: 'prod-auth',
+      testMatch: ['**/d9-step8.spec.ts'],
+      use: {
+        baseURL: PROD_BASE_URL,
+        viewport: { width: 360, height: 800 },
+        deviceScaleFactor: 2,
+        storageState: AUTH_FILE,
+        trace: 'on-first-retry',
       },
     },
   ],

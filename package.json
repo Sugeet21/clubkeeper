@@ -10,7 +10,8 @@
     "prebuild": "npm run check:settings",
     "build": "tsc && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:d9": "playwright test --project=prod-auth"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
