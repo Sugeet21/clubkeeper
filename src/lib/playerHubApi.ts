@@ -389,7 +389,7 @@ export async function getBookedSlots(params: {
   tableId: string                      // v20+ (#127): GameTable.id UUID string
   dayStartIso: string
   dayEndIso: string
-}): Promise<{ slotStartIso: string; slotEndIso: string }[]> {
+}): Promise<{ slotStartIso: string; slotEndIso: string; status: 'pending' | 'confirmed' }[]> {
   const { data, error } = await withTimeout(
     supabasePublic.rpc('get_booked_slots', {
       p_slug: params.slug,
@@ -407,9 +407,12 @@ export async function getBookedSlots(params: {
     throw error
   }
   if (!Array.isArray(data)) return []
-  return data.map((row: { slot_start: string; slot_end: string }) => ({
+  return data.map((row: { slot_start: string; slot_end: string; status?: string }) => ({
     slotStartIso: row.slot_start,
     slotEndIso: row.slot_end,
+    // #147: pre-migration deployments return no status column — default to
+    // 'confirmed' (slot still blocks, just no pending messaging). Safe.
+    status: row.status === 'pending' ? ('pending' as const) : ('confirmed' as const),
   }))
 }
 
@@ -473,18 +476,38 @@ export async function getPendingBookings(clubId: string): Promise<PendingBooking
   }))
 }
 
-// Owner-authenticated: flip intent → confirmed (RLS narrows to owner's club).
-// Returns the confirmed_at server timestamp so the caller can use the SAME
-// value when writing the Dexie booking row (avoids clock-skew drift between
-// Supabase and the local machine).
+// Owner-authenticated: confirm via the #147 guarded RPC, which re-validates
+// at confirm time — intent must still be a live pending (10-min hold,
+// D-Booking-2) and its slot must not have been rebooked. Typed failures
+// surface as Error('intent_expired') / Error('slot_taken') / Error('not_found')
+// for the modal row to branch on. Returns the SERVER confirmed_at so the
+// Dexie booking row carries the same timestamp (no clock-skew drift).
+// Pre-migration safe: if the RPC isn't deployed yet, falls back to the
+// legacy unguarded UPDATE so confirms keep working until the owner runs
+// 20260718_booking_pending_expiry.sql.
 export async function confirmBookingIntent(intentId: string): Promise<string> {
-  const confirmedAt = new Date().toISOString()
-  const { error } = await supabase
-    .from('booking_intents')
-    .update({ status: 'confirmed', confirmed_at: confirmedAt })
-    .eq('id', intentId)
-  if (error) throw error
-  return confirmedAt
+  const { data, error } = await supabase.rpc('confirm_booking_intent', {
+    p_intent_id: intentId,
+  })
+  if (!error) {
+    if (typeof data !== 'string') throw new Error('confirm_failed')
+    return data
+  }
+  const msg = (error.message ?? '').toLowerCase()
+  if (msg.includes('intent_expired')) throw new Error('intent_expired')
+  if (msg.includes('slot_taken')) throw new Error('slot_taken')
+  if (msg.includes('not_found')) throw new Error('not_found')
+  if (msg.includes('does not exist') || msg.includes('could not find')) {
+    // Legacy fallback (pre-#147-migration): original unguarded confirm.
+    const confirmedAt = new Date().toISOString()
+    const { error: updErr } = await supabase
+      .from('booking_intents')
+      .update({ status: 'confirmed', confirmed_at: confirmedAt })
+      .eq('id', intentId)
+    if (updErr) throw updErr
+    return confirmedAt
+  }
+  throw error
 }
 
 export async function rejectBookingIntent(intentId: string): Promise<void> {

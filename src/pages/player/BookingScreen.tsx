@@ -186,7 +186,9 @@ export default function BookingScreen() {
   // Unix ms. Fetched once per (table, date) change via the effect below. The
   // initial empty array means "no blockers known" — server-side slot_taken
   // remains the safety net.
-  const [bookedRanges, setBookedRanges] = useState<{ start: number; end: number }[]>([])
+  const [bookedRanges, setBookedRanges] = useState<
+    { start: number; end: number; status: 'pending' | 'confirmed' }[]
+  >([])
 
   // Polling
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -263,6 +265,7 @@ export default function BookingScreen() {
           rows.map((r) => ({
             start: new Date(r.slotStartIso).getTime(),
             end: new Date(r.slotEndIso).getTime(),
+            status: r.status,
           })),
         )
       })
@@ -350,13 +353,19 @@ export default function BookingScreen() {
     )
   }, [selectedDate, clubInfo])
 
-  // #90: A 30-min step is "booked" if any booked range overlaps its [ms, ms+30min) window.
-  function isStepBooked(ms: number): boolean {
+  // #90: A 30-min step is blocked if any booked range overlaps its
+  // [ms, ms+30min) window. #147 (D-Booking-2): pending soft holds block too
+  // but render differently — a confirmed overlap wins when both exist.
+  function stepHoldStatus(ms: number): 'pending' | 'confirmed' | null {
     const stepEnd = ms + SLOT_STEP_MIN * 60 * 1000
+    let hold: 'pending' | 'confirmed' | null = null
     for (const r of bookedRanges) {
-      if (r.start < stepEnd && r.end > ms) return true
+      if (r.start < stepEnd && r.end > ms) {
+        if (r.status === 'confirmed') return 'confirmed'
+        hold = 'pending'
+      }
     }
-    return false
+    return hold
   }
 
   // #90: For the chosen slotStart, the longest selectable duration is capped
@@ -970,34 +979,47 @@ export default function BookingScreen() {
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-2">
-                {timeOptions.map(({ ms, label, lateNight }) => {
-                  const booked = isStepBooked(ms)
-                  return (
-                    <button
-                      key={ms}
-                      onClick={() => !booked && pickTime(ms)}
-                      disabled={booked}
-                      className={`min-h-[44px] rounded-xl text-[13px] font-mono flex flex-col items-center justify-center leading-tight ${
-                        booked
-                          ? 'bg-bg-card/40 border border-border/40 text-text-faint cursor-not-allowed'
-                          : 'bg-bg-card border border-border text-text'
-                      }`}
-                    >
-                      <span>{label}</span>
-                      {booked ? (
-                        <span className="text-[9px] uppercase tracking-widest text-busy mt-0.5">
-                          Booked
-                        </span>
-                      ) : lateNight ? (
-                        <span className="text-[9px] uppercase tracking-widest text-text-faint mt-0.5">
-                          Late-night
-                        </span>
-                      ) : null}
-                    </button>
-                  )
-                })}
-              </div>
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  {timeOptions.map(({ ms, label, lateNight }) => {
+                    const hold = stepHoldStatus(ms)
+                    const booked = hold !== null
+                    return (
+                      <button
+                        key={ms}
+                        onClick={() => !booked && pickTime(ms)}
+                        disabled={booked}
+                        className={`min-h-[44px] rounded-xl text-[13px] font-mono flex flex-col items-center justify-center leading-tight ${
+                          booked
+                            ? 'bg-bg-card/40 border border-border/40 text-text-faint cursor-not-allowed'
+                            : 'bg-bg-card border border-border text-text'
+                        }`}
+                      >
+                        <span>{label}</span>
+                        {hold === 'confirmed' ? (
+                          <span className="text-[9px] uppercase tracking-widest text-busy mt-0.5">
+                            Booked
+                          </span>
+                        ) : hold === 'pending' ? (
+                          <span className="text-[9px] uppercase tracking-widest text-paused mt-0.5">
+                            Pending
+                          </span>
+                        ) : lateNight ? (
+                          <span className="text-[9px] uppercase tracking-widest text-text-faint mt-0.5">
+                            Late-night
+                          </span>
+                        ) : null}
+                      </button>
+                    )
+                  })}
+                </div>
+                {bookedRanges.some((r) => r.status === 'pending') && (
+                  <p className="text-text-faint text-[12px] mt-3">
+                    <span className="text-paused uppercase text-[10px] tracking-widest">Pending</span>{' '}
+                    slots have a request awaiting approval — pick another slot.
+                  </p>
+                )}
+              </>
             )}
           </div>
         )}

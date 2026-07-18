@@ -91,9 +91,17 @@ function ConfirmRow({
       setRowStatus({ state: 'done', error: null })
       onHandled(intent.id)
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Failed to confirm'
+      const raw = e instanceof Error ? e.message : ''
+      // #147 typed confirm failures (D-Booking-2): the 10-min hold lapsed or
+      // the slot was rebooked while this request sat unpaid/unreviewed. Clean
+      // failure state on the row — manual UPI refund is the v1 recovery.
+      // Never double-book. Row stays visible; Reject remains available.
+      const isDeadIntent = raw.includes('intent_expired') || raw.includes('slot_taken')
+      const msg = isDeadIntent
+        ? 'Slot taken — refund manually'
+        : raw || 'Failed to confirm'
       setRowStatus({ state: 'idle', error: msg })
-      showToast(`Failed to confirm: ${msg}`, 4000)
+      if (!isDeadIntent) showToast(`Failed to confirm: ${msg}`, 'error')
     }
   }, [intent, decrementPending, onHandled, showToast])
 
