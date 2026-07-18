@@ -341,7 +341,8 @@ export function PlayerHubSettings({ settings }: Props) {
     }
   }, [settings?.slug, setAcceptsTopupsDexie, showToast])
 
-  // ── Accept-bookings toggle (Supabase-first, mirrors topup pattern, Pattern R2) ──
+  // ── Accept-bookings toggle (PH2 write-order: Supabase first, Dexie only on
+  // success — syncBookingConfigBySlug THROWS on mirror failure, #97) ──
   // Disabled until both hours are set (#106) — see canEnableBookings.
   const bookingsEnabled = canEnableBookings(settings)
   const handleToggleBookings = useCallback((val: boolean) => {

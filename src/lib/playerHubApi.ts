@@ -486,9 +486,14 @@ export async function rejectBookingIntent(intentId: string): Promise<void> {
   if (error) throw error
 }
 
-// Fire-and-forget: mirror booking config to the Supabase clubs row. Targets
-// by slug — Pattern P2 — never via getOwnerClub. Errors are warn-only; Dexie
-// is authoritative for owner-side reads.
+// Mirror booking config to the Supabase clubs row. Targets by slug —
+// Pattern P2 — never via getOwnerClub.
+//
+// THROWS on mirror failure (PH2 write-order, #97): callers await this BEFORE
+// their Dexie write, so a failed mirror aborts the local write and the
+// SaveIndicator surfaces the error (Pattern U10). Never demote this back to
+// warn-only — a swallowed failure here means the player-side /c/:slug page
+// silently disagrees with the owner's toggle.
 //
 // All fields optional — only those defined in the call are forwarded. The
 // helper auto-injects updated_at and verifies with .select('id') (Pattern S11).
@@ -514,5 +519,6 @@ export async function syncBookingConfigBySlug(
   if (patch.bookingAdvancePerSlot !== undefined) cols.booking_advance_per_slot = patch.bookingAdvancePerSlot
   if (patch.bookingAdvanceAmount !== undefined) cols.booking_advance_amount = patch.bookingAdvanceAmount
   if (Object.keys(cols).length === 0) return
-  await mirrorToSupabaseBySlug('syncBookingConfigBySlug', slug, cols)
+  const result = await mirrorToSupabaseBySlug('syncBookingConfigBySlug', slug, cols)
+  if (!result.ok) throw new Error(`Sync failed (${result.reason})`)
 }
