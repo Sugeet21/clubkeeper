@@ -19,7 +19,7 @@ import { playBeepOnce, triggerVibration, unlockAudio } from '../lib/alarm'
 import { PlayerHubSettings } from './PlayerHubSettings'
 import { OwnerOnly } from '../components/auth/RoleGuard'
 import { StaffSection, IconStaff } from '../components/settings/StaffSection'
-import { updateClubNameRemote } from '../lib/playerHubApi'
+import { updateClubNameRemote, updateUpiIdRemote } from '../lib/playerHubApi'
 import { importEverythingFromFile, type ImportSuccess, type ImportFailureReason } from '../lib/importEverything'
 import type { GameTable } from '../types'
 
@@ -456,6 +456,14 @@ function OwnerSettings() {
     const err = validateUpiId(trimmed)
     if (err) { setUpiError(err); return }
     await upiSave.run(async () => {
+      // Strict PH2 (#146): Supabase FIRST — players pay this VPA via /c/:slug,
+      // so a failed mirror must abort the Dexie write (throw → red indicator),
+      // never leave the two stores disagreeing. No slug = no clubs row yet →
+      // Dexie-only is correct (upsertClub seeds upi_id at Player Hub setup).
+      const slug = settings?.slug
+      if (slug) {
+        await updateUpiIdRemote(slug, trimmed || null)
+      }
       await updateSettings({ upiId: trimmed || undefined })
       setUpiError(null)
     })

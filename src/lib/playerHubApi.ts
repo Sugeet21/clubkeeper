@@ -187,6 +187,15 @@ export async function updateAcceptsTopups(slug: string, accepts: boolean): Promi
   if (!result.ok) throw new Error(result.reason)
 }
 
+// Strict PH2 (#146): players pay this VPA on /c/:slug — a stale Supabase value
+// sends real money to the wrong account. THROWS on mirror failure so the
+// caller's Dexie write aborts and the SaveIndicator goes red. Never demote to
+// warn-only. `null` clears the VPA (player payment UI degrades gracefully).
+export async function updateUpiIdRemote(slug: string, upiId: string | null): Promise<void> {
+  const result = await mirrorToSupabaseBySlug('updateUpiIdRemote', slug, { upi_id: upiId })
+  if (!result.ok) throw new Error(`Sync failed (${result.reason})`)
+}
+
 export interface PendingTopupRow {
   id: string
   playerName: string | null
