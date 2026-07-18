@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useTables, useSettings, useSyncClubFromSupabase } from '../hooks/useLiveData'
-import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport, getPiggyBalance, ActiveSessionsPresentError } from '../db/queries'
+import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport, getPiggyBalance, ActiveSessionsPresentError, assertNoActiveSessions } from '../db/queries'
+import { resetClubDataRemote } from '../lib/resetRemote'
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
 import { Toggle } from '../components/Toggle'
@@ -506,6 +507,12 @@ function OwnerSettings() {
     if (resetConfirmText !== 'RESET') return
     setBusy(true)
     try {
+      // #154, Pattern PH2 write order: guard first, then wipe Supabase, and
+      // only clear Dexie once the server wipe succeeded. A local-only clear
+      // resurrects on the next initial pull; a server-only wipe with a local
+      // abort would desync — hence the guard runs BEFORE the RPC.
+      await assertNoActiveSessions()
+      await resetClubDataRemote()
       await resetEverything()
       setResetModal(false)
       setResetConfirmText('')
@@ -514,7 +521,8 @@ function OwnerSettings() {
       if (err instanceof ActiveSessionsPresentError) {
         useToastStore.getState().show('Stop all active sessions before resetting.', 'error')
       } else {
-        useToastStore.getState().show('Reset failed. Please try again.', 'error')
+        const reason = err instanceof Error ? err.message : 'Please try again.'
+        useToastStore.getState().show(`Reset failed. ${reason}`, 'error')
       }
     } finally {
       setBusy(false)
@@ -1422,8 +1430,8 @@ function OwnerSettings() {
         title="Reset everything?"
       >
         <p className="text-text-dim text-[14px] mb-4">
-          All tables, sessions, and settings will be deleted and replaced with demo data.
-          This cannot be undone.
+          All tables, sessions, and settings will be deleted from this device AND the
+          cloud backup, then replaced with demo data. This cannot be undone.
         </p>
         <div className="mb-4">
           <label className="block text-[11px] font-mono uppercase tracking-widest text-text-faint mb-2">

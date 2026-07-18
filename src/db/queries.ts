@@ -520,12 +520,21 @@ export class ActiveSessionsPresentError extends Error {
   }
 }
 
-export async function resetEverything(): Promise<void> {
+/**
+ * Guard shared by the reset flow. Exported so Settings can run it BEFORE the
+ * #154 server-side wipe — checking only inside resetEverything() would wipe
+ * Supabase and then abort locally, leaving the device out of sync.
+ */
+export async function assertNoActiveSessions(): Promise<void> {
   const activeCount = await db.sessions
     .where('status')
     .anyOf(['running', 'paused'])
     .count()
   if (activeCount > 0) throw new ActiveSessionsPresentError()
+}
+
+export async function resetEverything(): Promise<void> {
+  await assertNoActiveSessions()
 
   await db.transaction(
     'rw',
