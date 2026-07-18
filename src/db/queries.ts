@@ -6,6 +6,7 @@ import { seedIfEmpty } from './seed'
 import { normalizeName, findMatchingCanteenItem } from '../lib/canteenMatch'
 import { syncedCreate, syncedUpdate, syncedSoftDelete, syncedBatch } from './syncWrappers'
 import { coinsEarnedForTopup, resolveCoinConfig } from '../lib/coins'
+import { toCustomerPhone, phoneLookupCandidates, preferCanonicalPhone } from '../lib/phone'
 import { getEngagementConfig } from '../lib/streak'
 import type {
   GameTable,
@@ -2059,12 +2060,18 @@ export async function linkBookingToSession(
 
     // Customer lookup-or-create by phone. We do NOT touch walletBalance here;
     // the advance gets applied at payment time via PaymentSplitSheet.
-    const customer = await db.customers.where('phone').equals(booking.playerPhone).first()
+    // #153: booking.playerPhone is bare 10 digits — normalize to the canonical
+    // '+91' Customer.phone format for both lookup and create, and heal legacy
+    // bare-format rows on touch (only when no canonical row already exists).
+    const canonicalPhone = toCustomerPhone(booking.playerPhone)
+    const matches = await db.customers
+      .where('phone').anyOf(phoneLookupCandidates(booking.playerPhone)).toArray()
+    const customer = preferCanonicalPhone(matches, booking.playerPhone)
     if (!customer) {
       const now = Date.now()
       const newCustomer = {
         id: crypto.randomUUID(),
-        phone: booking.playerPhone,
+        phone: canonicalPhone,
         name: booking.playerName?.trim() || null,
         walkInCode: null,
         walletBalance: 0,
@@ -2074,7 +2081,8 @@ export async function linkBookingToSession(
       await b.insert('customers', newCustomer as Customer & { id: string })
       resolvedCustomerId = newCustomer.id
     } else {
-      await b.update('customers', customer.id, { lastVisitAt: Date.now() })
+      const heal = customer.phone !== canonicalPhone ? { phone: canonicalPhone } : {}
+      await b.update('customers', customer.id, { lastVisitAt: Date.now(), ...heal })
       resolvedCustomerId = customer.id
     }
 
@@ -2172,13 +2180,17 @@ export async function reconcileCancelledBooking(bookingId: string): Promise<void
     if (booking.status !== 'cancelled') {
       await b.update('bookings', bookingId, { status: 'cancelled' })
     }
-    // 2. Lookup-or-create customer by phone
-    let customer = await db.customers.where('phone').equals(booking.playerPhone).first()
+    // 2. Lookup-or-create customer by phone (#153: normalize to '+91' canonical
+    // form; legacy bare-format rows stay reachable and get healed on touch)
+    const canonicalPhone = toCustomerPhone(booking.playerPhone)
+    const matches = await db.customers
+      .where('phone').anyOf(phoneLookupCandidates(booking.playerPhone)).toArray()
+    let customer = preferCanonicalPhone(matches, booking.playerPhone)
     if (!customer) {
       const now = Date.now()
       customer = {
         id: crypto.randomUUID(),
-        phone: booking.playerPhone,
+        phone: canonicalPhone,
         name: booking.playerName?.trim() || null,
         walkInCode: null,
         walletBalance: 0,
@@ -2186,6 +2198,10 @@ export async function reconcileCancelledBooking(bookingId: string): Promise<void
         lastVisitAt: now,
       }
       await b.insert('customers', customer as Customer & { id: string })
+    } else if (customer.phone !== canonicalPhone) {
+      // Heal a legacy bare-format row (pre-#153) — safe: preferCanonicalPhone
+      // only returns it when no canonical row exists, so no uniqueness clash.
+      await b.update('customers', customer.id, { phone: canonicalPhone })
     }
     // 3. Credit the advance back as a wallet credit (refund)
     if (booking.advanceAmount > 0) {

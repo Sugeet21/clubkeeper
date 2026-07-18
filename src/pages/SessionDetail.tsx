@@ -34,6 +34,7 @@ import { CoinRedemptionPill } from '../components/CoinRedemptionPill'
 import { redeemCoins, getCoinConfig } from '../db/queries'
 import { resolveCoinConfig } from '../lib/coins'
 import { checkAndAwardStreak } from '../lib/streak'
+import { phoneLookupCandidates, preferCanonicalPhone } from '../lib/phone'
 import { useToastStore } from '../store/toastStore'
 import type { CoinConfig } from '../lib/coins'
 import type { Customer } from '../types/customer'
@@ -447,7 +448,10 @@ export default function SessionDetail() {
   useEffect(() => {
     if (!linkedBooking || linkedCustomer) return
     let cancelled = false
-    db.customers.where('phone').equals(linkedBooking.playerPhone).first().then((c) => {
+    // #153: playerPhone is bare 10 digits — match the canonical '+91' row first,
+    // falling back to legacy bare-format rows so pre-fix customers still link.
+    db.customers.where('phone').anyOf(phoneLookupCandidates(linkedBooking.playerPhone)).toArray().then((matches) => {
+      const c = preferCanonicalPhone(matches, linkedBooking.playerPhone)
       if (!cancelled && c) setLinkedCustomer(c)
     }).catch(() => { /* non-critical */ })
     return () => { cancelled = true }
