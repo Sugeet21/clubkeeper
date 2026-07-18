@@ -23,8 +23,12 @@ Before writing the component:
 [ ] Confirmed updateSettings() in queries.ts already handles this field
     (it should — it's a generic patch). If not, fix it.
 [ ] If mirroring to Supabase: added the mirror call at the SAME call site
-    that invokes setValue from the hook. Mirror is fire-and-forget; never
-    read back into local state.
+    that invokes setValue from the hook. Pick the write order per Pattern
+    PH2: player-visible / money-critical fields = strict Supabase-first
+    (throwing wrapper, local write only on success — like updateUpiIdRemote
+    #146 / syncBookingConfigBySlug #97); offline-tolerant owner-only fields
+    may be Dexie-first ONLY if failure is surfaced (clubName toast). Never
+    a silently swallowed MirrorResult; never read back into local state.
 
 Component code:
 [ ] Read via useDexieSetting('fieldName', defaultValue) — NEVER useState

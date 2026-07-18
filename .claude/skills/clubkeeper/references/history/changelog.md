@@ -4,6 +4,13 @@
 
 ---
 
+## 18 Jul 2026 — #146: UPI ID now mirrors to Supabase, strict PH2 (players were paying a stale VPA) — (refs #146)
+
+- **THE BUG (#146, P0):** `Settings.tsx handleSaveUpiId` wrote Dexie only — NO Supabase mirror existed for `upi_id`; the column was written solely at slug setup (`upsertClub`). Player-side `/c/:slug` booking-advance + topup QRs (`get_club_public_info` → `BookingScreen`/`PlayerScan`) served the setup-time VPA forever. Owner-side QR screens read Dexie, masking it. Found via the Direction-2 (missing-mirror) sweep the #97 Direction-1 query is blind to.
+- **THE FIX (2 files, owner-chosen strict PH2):** new throwing wrapper `updateUpiIdRemote(slug, upiId|null)` in `playerHubApi.ts` (S11-routed via `mirrorToSupabaseBySlug`); `handleSaveUpiId` calls it Supabase-FIRST inside `upiSave.run` — Dexie written only on success, failure = red "Sync failed (<reason>)" (U10), Dexie untouched. No-slug clubs skip the mirror (no clubs row yet; `upsertClub` seeds it at Player Hub setup). Clearing saves Dexie `undefined` / clubs `null`. clubName's deliberate surfaced Dexie-first untouched per owner.
+- **Skill:** PH2 sweep now records BOTH directions as one block (Direction 1 = #97 swallowed-result greps incl. `updateUpiIdRemote`; Direction 2 = upsertClub-columns-vs-update-wrappers grep + ledger). `new_settings_field.md` checklist's stale "mirror is fire-and-forget" line replaced with the PH2 write-order decision. ripple_effects §Settings UPI invariant + §Player Hub cross-ripple added.
+- **Gates:** build clean; strict-tsc diff = zero net-new (same #138-baseline errors shifted 9 lines by the new function). #146 left OPEN — owner verifies + closes.
+
 ## 18 Jul 2026 — #97: booking mirror failures now abort the Dexie write + surface error (PH2 write-order) — (refs #97, #142, #143, #144, #145)
 
 - **RCA (P0, long-runner):** the original #97 read-side flip (useState mirror + `getOwnerClub` clobber) was fixed in 238001f (Pattern R4) and owner-verified; the remaining live defect was WRITE-side: `syncBookingConfigBySlug` discarded the `MirrorResult` (`mirrorToSupabaseBySlug` never throws), so on any mirror failure (offline / RLS / zero-rows / stranded lock) Dexie was written anyway and SaveIndicator showed "Saved" — silent owner-vs-player desync on `/c/:slug`. Same failing mirror also explains the thread's acceptsTopups stuck-ON regression: `updateAcceptsTopups` throws on `!ok` (blocks Dexie → stuck), bookings swallowed it (looked fine locally). Note: the issue title's "Pattern S4" is a pre-7-Jul wrong pointer — the write-order law is **PH2**; bug_patterns S4 is Razorpay trial.

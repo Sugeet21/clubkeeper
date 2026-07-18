@@ -1134,14 +1134,21 @@ The original watch-note ("channel opened in TopBar on mount") predates the app-s
 
 **#97 recurrence (18 Jul 2026) — "Supabase-first" is cosmetic if the wrapper swallows failure.** `mirrorToSupabaseBySlug` returns a `MirrorResult` and NEVER throws. A wrapper that discards that result is fire-and-forget in disguise: the caller's `await` succeeds, Dexie is written anyway, SaveIndicator shows "Saved", and only the Supabase row is stale — a silent owner/player desync. Corollary: two wrappers over the same failing mirror produce OPPOSITE symptoms (`updateAcceptsTopups` throws → toggle stuck; `syncBookingConfigBySlug` swallowed → toggle "worked" locally, players saw the old value). Fix shape: wrapper throws on `!result.ok` (`syncBookingConfigBySlug` now matches `updateAcceptsTopups`/`updateClubNameRemote`), caller's Dexie write sits AFTER the await inside a `useSaveIndicator().run` so failure aborts it and surfaces red (U10).
 
-**Sweep query (Rule K — run after touching any mirror wrapper or adding a mirrored field):**
+**Sweep queries (Rule K — BOTH directions, run together after touching any mirror wrapper, `upsertClub`, or a mirrored clubs-row field):**
 ```
-rg -n "await mirrorToSupabaseBySlug\(" src/lib -g '!mirrorToSupabase.ts'   # every wrapper must branch on result.ok (throw or return it)
-rg -n "syncBookingConfigBySlug\(|syncCoinConfig\(|syncTablesJsonBySlug\(|updateAcceptsTopups\(|updateClubNameRemote\(" src/   # callers: local write only after a throwing wrapper succeeds?
+# Direction 1 — existing mirrors misbehaving (#97 class): every wrapper must branch on result.ok (throw or return it);
+# callers may write local state only AFTER a throwing wrapper succeeds.
+rg -n "await mirrorToSupabaseBySlug\(" src/lib -g '!mirrorToSupabase.ts'
+rg -n "syncBookingConfigBySlug\(|syncCoinConfig\(|syncTablesJsonBySlug\(|updateAcceptsTopups\(|updateClubNameRemote\(|updateUpiIdRemote\(" src/
+
+# Direction 2 — MISSING mirrors (#146 class): every clubs-row column upsertClub writes must ALSO appear in an
+# update-path wrapper. Eyeball the two groups in this output — a column only under upsertClub = orphan.
+rg -n "slug:|club_name:|upi_id:|accepts_topups:" src/lib/playerHubApi.ts
 ```
+Direction-2 ledger (18 Jul 2026): `slug` → re-upsert (#104) · `club_name` → `updateClubNameRemote` · `accepts_topups` → `updateAcceptsTopups` · `upi_id` → `updateUpiIdRemote` (#146). Any new column added to `upsertClub` or the clubs row MUST ship with its update-path mirror in the same PR.
 Accepted deviations (each tracked, do NOT "fix" casually): coins Dexie-first atomic save (#142 — R4 exception, offline-tolerant by design), tables_json after table CRUD (#143 — offline table CRUD must not block), v17 self-heal one-way re-mirror (#144 — no Dexie write after it), Settings clubName (Dexie-first but failure IS surfaced via "Saved locally" toast — the compliant offline-first variant).
 
-**Blind spot found 18 Jul 2026 (#146): the sweep above only catches EXISTING mirror calls — a MISSING mirror has no call site to grep.** `Settings.tsx handleSaveUpiId` wrote Dexie only; `clubs.upi_id` was written solely at slug setup (`upsertClub`), so players paid a stale VPA forever. Complementary sweep — run whenever `upsertClub`'s column list changes: for every column `upsertClub` writes (`slug`, `club_name`, `upi_id`, `accepts_topups`), verify an update-path mirror exists (`slug`→re-upsert #104, `club_name`→`updateClubNameRemote`, `accepts_topups`→`updateAcceptsTopups`, `upi_id`→was NOTHING = #146). Any new column added to `upsertClub` or the clubs row MUST ship with its update-path mirror in the same PR.
+**Blind-spot history (#146, 18 Jul 2026):** Direction 1 alone missed `upi_id` — a MISSING mirror has no call site to grep. `Settings.tsx handleSaveUpiId` wrote Dexie only; `clubs.upi_id` was written solely at slug setup (`upsertClub`), so players paid a stale VPA forever. Fixed strict-PH2: `updateUpiIdRemote` (throws) called Supabase-first in `handleSaveUpiId`; no-slug clubs stay Dexie-only (no clubs row exists yet). Direction 2 above exists because of this bug.
 
 ### Pattern P2 — Fire-and-forget mirrors must target by slug, not by indirected id (#84, 16 Jun 2026)
 

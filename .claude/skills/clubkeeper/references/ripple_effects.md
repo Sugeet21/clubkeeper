@@ -775,13 +775,14 @@ Invariants:
 - When adding a new setting: (1) add to `ClubSettings`; (2) add default to `seed.ts`; (3) **consume it via `useDexieSetting('field', fallback)` — never `useState(settings?.field ??)` + sync effect** (Pattern R4, #97); (4) add UI toggle/input; (5) **plumb into the action that reads it** — most bugs land here (e.g. Prompt 7 rounding); (6) if the field has a public/player-side counterpart, mirror to Supabase in the caller before/after the hook's `setValue`; (7) add test in `test_status.md`.
 - Section IDs: if you rename one, `sessionStorage` becomes stale (harmless — no section auto-opens that session).
 - Adding a new section: add an `id` here and a `<SettingsSection>` block.
-- UPI ID save: saves `undefined` (not empty string) when cleared.
+- UPI ID save (#146, strict PH2): `handleSaveUpiId` mirrors Supabase FIRST via `updateUpiIdRemote(slug, trimmed || null)` (throws on failure) — Dexie is written only on success; failure = red `upiSave` indicator, Dexie untouched. Clubs without a slug skip the mirror (no clubs row until Player Hub setup; `upsertClub` seeds `upi_id` then). Dexie saves `undefined` (not empty string) when cleared; the clubs row gets `null`. Never demote `updateUpiIdRemote` to warn-only — players pay this VPA on `/c/:slug`.
 - Rounding control: warns on active sessions via modal (change only affects future stops). Shows dim hint when any table has a rate card.
 - Account section shows logged-in email.
 
 Cross-feature ripples:
 - → [Sessions](#sessions) (rounding setting consumed in `stopSession`).
 - → [UPI QR & Payment Screen](#upi-qr--payment-screen) (`upiId` in Club Info).
+- → [Player Hub](#player-hub) (`upi_id` on the clubs row feeds `/c/:slug` topup + booking payment QRs via `get_club_public_info` — the #146 mirror keeps it fresh).
 - → [Tables](#tables) (Tables section list + Add button).
 - → [Auth & Access Guard](#auth--access-guard) (Subscription, Account sections).
 - → [Player Hub](#player-hub) (`PlayerHubSettings` slug, Accept topups toggle).
