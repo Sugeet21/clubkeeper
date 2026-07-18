@@ -311,6 +311,14 @@ Deferred. Surface when first customer asks for cloud sync or multi-device.
 **Rationale:** 10 min covers pay-and-notice latency without letting ghost requests hold prime slots. Lazy expiry avoids cron/Pro-plan. Manual refund is acceptable at v1 volume.
 **Revisit:** double-payment refunds more than ~1/week → automated refund flow.
 
+## D-PlayerIdentity-1 — Player identity v1 = device-token; wallet/coins views deferred behind verification (18 Jul 2026, owner-decided)
+
+**Context:** The my-bookings / receipt / player-wallet / player-coins views need a stable cross-visit "who is this player" on `/c/:slug`. The owner side already keys customers by phone (`linkBookingToSession` lookup-or-create, `cancel_booking_intent` phone-match, topup confirm) — but an UNVERIFIED phone lookup would let anyone who knows a regular's number read their bookings/balance, breaking the #90 timing-only privacy posture. Phone+OTP costs per-SMS + India DLT registration, and Supabase phone-auth would put players into `auth.users`, colliding with the Phase D role-claim model.
+**Decision:** v1 identity = **device-token**: a `crypto.randomUUID()` player secret minted on first booking/topup, stored in player-side localStorage, stamped on intents; read-back RPCs filter by the secret. Phone stays what it already is — the owner-side Customer key + contact info, **never an auth credential**. My-bookings + receipt build on the token NOW. **Wallet/coins views are DEFERRED until a verification step exists: owner-mediated pairing is the leading candidate** (staff links the player's device at the counter — consistent with D-Booking-1's staff-as-verifier model, zero SMS cost); **WhatsApp OTP is the fallback.**
+**Failure modes (accepted for v1):** token lost on cleared browser, on a new phone, **and via iOS Safari's ~7-day ITP storage eviction — the token silently disappears on iPhones that don't revisit the page within a week.** No recovery in v1; players re-book/re-top-up under a fresh token and the owner-side phone-keyed Customer record stays intact.
+**Rationale:** Zero friction, zero SMS/DLT cost, unguessable secret = no enumeration, no new auth surface, and it unblocks the low-risk half of the quartet immediately while keeping money-adjacent views safe.
+**Revisit:** first real "lost my bookings / new phone / iPhone forgot me" complaint → phone-based recovery WITH verification (owner-mediated pairing or WhatsApp OTP). Never fall back to unverified phone lookup.
+
 ## D-Engagement-2 — ExpirySweepRunner runs every 4h, not on every launch
 
 **Context:** Coin expiry sweep is a read-heavy operation (scans all customer walletTransactions for FIFO lots).
