@@ -4,6 +4,12 @@
 
 ---
 
+## 19 Jul 2026 — #147 CLOSED by owner; both booking migrations verified LIVE in prod — (refs #147, #127)
+
+- Owner said "close #147" → closed with verification comment (SHA 3f9fcc0). bug_archive pointer added.
+- **Prod schema probe (Supabase MCP `execute_sql`):** `booking_intents.table_id` = `text` AND `confirm_booking_intent` exists → BOTH `20260708_booking_table_id_uuid` (#127) and `20260718_booking_pending_expiry` (#147) are live. Owner ran them via SQL-editor paste, so `supabase_migrations.schema_migrations` has NO record of either — ledger annotated schema-verified instead.
+- #127 stays OPEN: its migration is now applied and the client fix shipped earlier, but owner E2E of P1c–P2 remains the close gate. #148 (code-match polish) unchanged, code not started.
+
 ## 18 Jul 2026 — #147: booking pending-hold v2 — 10-min lazy expiry, status-exposed slots, guarded confirm (D-Booking-2) — (refs #147, #127)
 
 - **DESIGN SESSION FIRST (same day):** audited the owner approval flow (already existed: PendingBookingsModal + BookingRealtimeBridge + badge — no auto-confirm); recorded D-Booking-1 (code-match approval), D-Booking-2 (10-min soft holds), D-PlayerIdentity-1 (device-token v1, wallet/coins deferred behind owner-mediated pairing); filed #147/#148 + quartet #149–#152 per owner-approved breakdown.
