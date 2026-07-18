@@ -1169,6 +1169,13 @@ Accepted deviations (each tracked, do NOT "fix" casually): coins Dexie-first ato
 **Root cause:** `_clubSyncDone` in `src/hooks/useLiveData.ts` is module-level. Sign-out + sign-in as a different user does NOT reset it because the module is never re-evaluated.
 **Fix (SHIPPED — per-user key #53/f9e3e62, then Chunk 4.3 27 Jun 2026):** flag is per-user-keyed (`_clubSyncDoneForUser`) AND `authStore.signOut()` calls `_resetClubSyncSentinel()` (with `syncRunner.stop()` + `_resetClubIdCache()`, in that order — Pattern S15). Rule that generalizes: any NEW per-user module-level cache MUST be reset in the same sign-out sequence.
 
+### PH4 — Player-supplied phone stored RAW at the customer boundary (#153, 19 Jul 2026)
+**Symptom signature:** The number a player typed while booking/paying an advance "varies" from the number shown on the wallet customer the money lands in; or the same person mysteriously has two wallet customers (one from the owner-side wallet flow, one auto-created by a player flow).
+**Root cause:** Canonical `Customer.phone` is `'+91' + 10 digits` (`src/types/customer.ts`), but player-side payloads carry BARE 10 digits (`booking.playerPhone`, `topupIntent.playerMobile`). `linkBookingToSession` + `reconcileCancelledBooking` (queries.ts) looked up AND created customers with the raw value → lookup never matched an existing `+91…` row → duplicate customer with a 10-char phone; `formattedPhone` (customerDisplay.ts) assumes 13 chars and renders the 10-digit row as garbage like `+91 19674 74` (while `phoneTail`'s last-4 stays right — so it reads as a "random different number", not a format bug).
+**Fix (SHIPPED #153):** `src/lib/phone.ts` — `toCustomerPhone()` (normalize), `phoneLookupCandidates()` (canonical + legacy bare form), `preferCanonicalPhone()` (canonical row wins when both exist). All customer lookup/create sites fed by player payloads go through these; write paths heal a legacy bare-format row to `+91` on touch, only when no canonical row exists (no uniqueness clash — uniqueness lives in customerStore, not a Dexie index).
+**Rule that generalizes:** ANY new code that looks up or creates a `customers` row from a player-supplied number MUST normalize via `toCustomerPhone` — never store or `.equals()` the raw payload value.
+**Sweep query (Rule K):** `rg -n "where\('phone'\)" src/` — every hit must pass a canonical `+91` value or use `phoneLookupCandidates`; plus grep `phone:` in customer-object literals — every `phone:` written to `customers` must be `+91`-prefixed or come from `toCustomerPhone`. Swept 19 Jul 2026: 3 raw sites (all fixed same commit), PendingTopupsModal/customerStore callers already canonical — 0 more.
+
 ---
 
 ## Workflow / Deploy

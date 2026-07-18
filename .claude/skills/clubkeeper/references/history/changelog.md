@@ -4,6 +4,13 @@
 
 ---
 
+## 19 Jul 2026 — #153: booking advance→wallet phone normalized to canonical +91 (duplicate customer + mangled number) — (refs #153)
+
+- **THE BUG (P1, owner report):** advance-paid booking → session → leftover advance credited to wallet, but the wallet customer's number "varies" from what the player entered. RCA: `linkBookingToSession` + `reconcileCancelledBooking` looked up AND created customers with the bare 10-digit `booking.playerPhone` while every wallet flow stores `'+91XXXXXXXXXX'` — lookup never matched → duplicate customer; `formattedPhone` slices a 13-char shape so the 10-digit row displays mangled (e.g. `+91 19674 74`). SessionDetail's linked-customer effect had the same miss.
+- **THE FIX (4 files):** new `src/lib/phone.ts` (`toCustomerPhone` / `phoneLookupCandidates` / `preferCanonicalPhone`); all 3 sites match canonical-first with legacy bare-format fallback; write paths heal legacy rows to `+91` on touch (only when no canonical row exists). New **Pattern PH4** + ripple invariant §Advance Booking.
+- **Rule K sweep:** `where('phone')` across src — PendingTopupsModal + customerStore callers already canonical; **0 more raw sites** beyond the 3 fixed. Known residual: a player who ALREADY has both a legacy bare row and a canonical row keeps two wallets (canonical wins for new credits); merge is manual — flagged to owner.
+- **Gates:** build clean; strict-tsc diff vs stash-baseline = zero net-new (pure line shifts). #153 left OPEN — owner verifies on device + closes.
+
 ## 19 Jul 2026 — #147 CLOSED by owner; both booking migrations verified LIVE in prod — (refs #147, #127)
 
 - Owner said "close #147" → closed with verification comment (SHA 3f9fcc0). bug_archive pointer added.
