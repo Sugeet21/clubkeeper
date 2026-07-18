@@ -4,6 +4,14 @@
 
 ---
 
+## 19 Jul 2026 — #154: 'Type RESET' now wipes Supabase too (owner-gated reset_club_data RPC); local-only reset resurrected on refresh — (refs #154, #155)
+
+- **THE BUG (P0, owner report):** reset cleared everything, hard refresh brought it all back. `resetEverything()` predates Phase C — Dexie + outbox only; clearing `db.settings` also destroys the pull cursors, so the next boot pulls from epoch and re-hydrates every row from Supabase. Compounding: prod has ZERO DELETE policies (verified `pg_policies`) — a client-side `.delete()` fix would silently remove 0 rows.
+- **MIGRATION `20260719_reset_club_data_rpc` (Claude-run via Supabase MCP, function + grants verified in `pg_proc`):** `reset_club_data()` — SECURITY DEFINER, owner-only via `user_role='owner'` + `user_club_id` claims (staff → 42501), deletes the club's rows from the 9 synced tables + `booking_intents`/`topup_intents` children-first, returns per-table counts; `clubs` row + `subscriptions` preserved; anon has no execute grant.
+- **CLIENT (3 files):** new `src/lib/resetRemote.ts` (`resetClubDataRemote`, 15s timeout, builder cast); `assertNoActiveSessions()` hoisted out of `resetEverything()` so the guard fires BEFORE the server wipe; `Settings.handleReset` = guard → RPC → local reset (PH2 order — server failure aborts, red toast, nothing cleared); reset-modal copy now says cloud backup is wiped too. Rule H pre-flight: T2/R4/F5/U6/U10/S11 none apply.
+- **Skill:** new **Pattern S27** (local destructive op ignores server mirror, with sweep query) + ripple §Import/Export/Reset rewritten (server-first invariant; stale "Supabase never touched" line replaced). **Rule K sweep: 1 more instance → SWEEP #155 filed** (`clearAllSessions` — same resurrection + orphaned session_items).
+- **Gates:** build clean; strict-tsc diff = zero net-new. Known v1 limit: staff devices keep local copies until their own re-pull. #154 left OPEN — owner verifies (reset → hard refresh → still empty) + closes.
+
 ## 19 Jul 2026 — #153: booking advance→wallet phone normalized to canonical +91 (duplicate customer + mangled number) — (refs #153)
 
 - **THE BUG (P1, owner report):** advance-paid booking → session → leftover advance credited to wallet, but the wallet customer's number "varies" from what the player entered. RCA: `linkBookingToSession` + `reconcileCancelledBooking` looked up AND created customers with the bare 10-digit `booking.playerPhone` while every wallet flow stores `'+91XXXXXXXXXX'` — lookup never matched → duplicate customer; `formattedPhone` slices a 13-char shape so the 10-digit row displays mangled (e.g. `+91 19674 74`). SessionDetail's linked-customer effect had the same miss.

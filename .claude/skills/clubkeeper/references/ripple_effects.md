@@ -1206,7 +1206,7 @@ Last updated: 9 Jun 2026
 Owns: backup file format, atomic import, atomic reset.
 
 Files in scope:
-- `src/db/queries.ts` — `getAllDataForExport()`, `ClubKeeperBackupV16` interface (single source of truth — exported), `CURRENT_SCHEMA_VERSION` constant, `resetEverything()`, `ActiveSessionsPresentError`
+- `src/db/queries.ts` — `getAllDataForExport()`, `ClubKeeperBackupV16` interface (single source of truth — exported), `CURRENT_SCHEMA_VERSION` constant, `resetEverything()`, `assertNoActiveSessions()`, `ActiveSessionsPresentError`; `src/lib/resetRemote.ts` — `resetClubDataRemote()` → owner-gated `reset_club_data()` RPC (#154, Pattern S27)
 - `src/lib/importEverything.ts` — `importEverythingFromFile(file)`, `ImportResult` discriminated union, `ImportFailureReason` (`parse_error | not_clubkeeper_file | legacy_incomplete_format | schema_too_new | active_sessions_present | empty_file | transaction_failed`), `BackupShape` validator + `requiredArrayKeys`
 - `src/pages/Settings.tsx` — Data & Backup section: export + import action rows; `importErrorMessage()` switch (must cover every reason); destructive confirm Modal; full-viewport success overlay; `<ImportCountRow>` sub-component
 - `src/lib/__devTools__/importExportRoundTrip.ts` (DEV-only, tree-shaken) — `runImportExportRoundTrip()` exposed on `window`; 11 measures (9 store counts + walletBalanceTotal + piggyCurrent)
@@ -1221,7 +1221,8 @@ Invariants:
 - Import is atomic: single `db.transaction('rw', [all 9 stores], ...)` — `.clear()` then `.bulkAdd()`. Any throw = full rollback.
 - Reset is atomic: same single flat tx. `seedIfEmpty()` runs AFTER the tx commits so its inserts aren't rolled back by tx-internal throws.
 - Active-session pre-check (`status !== 'completed'`) blocks both import AND reset (`ActiveSessionsPresentError`). Importing/resetting on top of a running session would corrupt timer math (Pattern T1).
-- Subscription / auth / Supabase state NEVER touched — Dexie-only.
+- **Reset is server-first (#154, Patterns S27/PH2):** `Settings.handleReset` = `assertNoActiveSessions()` → `resetClubDataRemote()` (RPC wipes the 9 synced tables + booking/topup intents for the club; `clubs` row + `subscriptions` preserved) → local `resetEverything()`. Server failure aborts — NEVER ship a local-only destructive path on synced data; prod has no DELETE policies, so client `.delete()` is a silent noop. Import/export remain Dexie-only (import-over-synced-data semantics = open question, see #155 discussion).
+- Auth session / subscription / clubs-row config NEVER touched by reset — account survives, data doesn't.
 - After import success: `window.location.assign('/tables')` — intentional hard nav. Resets module-level flags like `_clubSyncDone`. Do NOT change to SPA `navigate()`.
 - File input uses `className="hidden"` — programmatic `.click()` works for `type="file"`. Do NOT migrate to Pattern U9 (date-picker quirk only).
 - Adding a new `ImportFailureReason` → update `importErrorMessage()` switch in `Settings.tsx`.
