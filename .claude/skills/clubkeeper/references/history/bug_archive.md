@@ -16,7 +16,12 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
-## 11 Jul 2026 — Phase D D6 staff-commerce RLS close
+## 18 Jul 2026 — #97 close + PH2 mirror sweep fallout
+
+- **#97** (closed by owner 18 Jul 2026, fixed 7867565) — Accept-bookings toggle: original read-side flip fixed via Pattern R4/238001f (owner-verified 20 Jun); remaining write-side defect = `syncBookingConfigBySlug` swallowed the `MirrorResult` → Dexie written + "Saved" shown on mirror failure (silent owner/player desync; also explained the acceptsTopups stuck-ON asymmetry). Now throws; Dexie write aborts; SaveIndicator red. See Pattern PH2. — see GitHub
+- **#142 / #143 / #144** (open, P2, SWEEP-#97) — remaining swallowed-MirrorResult sites: coins Dexie-first save / tables_json after table CRUD / v17 self-heal re-mirror. Accepted deviations pending contract decision; ledger on Pattern PH2. — see GitHub
+- **#145** (open, P1) — fresh-device hydration gap: `useSyncClubFromSupabase` never backfills acceptsBookings/hours/per-slot. — see GitHub
+- **#146** (open, P0) — player booking/topup pays STALE UPI ID: `Settings.tsx handleSaveUpiId` writes Dexie only — no Supabase mirror exists for `upi_id` (only slug-setup `upsertClub` ever writes it). Missing-mirror variant of PH2; found by the complementary "upsertClub columns without an update-path mirror" sweep. — see GitHub
 
 - **#130** (closed by owner 11 Jul 2026, fixed e3a0507, migration `20260710_phase_d6_staff_write_rls_fix`) — staff wallet top-up dead-lettered: D1 RLS whitelisted the advisory DDL enum (`kind in ('topup',…)`) but the mapper sends Dexie `type` verbatim → `kind='credit'` 403. See Pattern S26. — see GitHub
 - **#131** (closed by owner 11 Jul 2026, fixed e3a0507, same migration) — staff stock decrement dead-lettered: runner pushes updates as `.upsert()`, Postgres checks INSERT WITH CHECK on every upsert row, canteen_items INSERT was owner-only. See Pattern S26. — see GitHub

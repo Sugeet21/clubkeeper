@@ -1141,6 +1141,8 @@ rg -n "syncBookingConfigBySlug\(|syncCoinConfig\(|syncTablesJsonBySlug\(|updateA
 ```
 Accepted deviations (each tracked, do NOT "fix" casually): coins Dexie-first atomic save (#142 — R4 exception, offline-tolerant by design), tables_json after table CRUD (#143 — offline table CRUD must not block), v17 self-heal one-way re-mirror (#144 — no Dexie write after it), Settings clubName (Dexie-first but failure IS surfaced via "Saved locally" toast — the compliant offline-first variant).
 
+**Blind spot found 18 Jul 2026 (#146): the sweep above only catches EXISTING mirror calls — a MISSING mirror has no call site to grep.** `Settings.tsx handleSaveUpiId` wrote Dexie only; `clubs.upi_id` was written solely at slug setup (`upsertClub`), so players paid a stale VPA forever. Complementary sweep — run whenever `upsertClub`'s column list changes: for every column `upsertClub` writes (`slug`, `club_name`, `upi_id`, `accepts_topups`), verify an update-path mirror exists (`slug`→re-upsert #104, `club_name`→`updateClubNameRemote`, `accepts_topups`→`updateAcceptsTopups`, `upi_id`→was NOTHING = #146). Any new column added to `upsertClub` or the clubs row MUST ship with its update-path mirror in the same PR.
+
 ### Pattern P2 — Fire-and-forget mirrors must target by slug, not by indirected id (#84, 16 Jun 2026)
 
 **Symptom signature:** Owner-side write to Supabase via a fire-and-forget mirror silently never lands. Column stays at default. No console error. RLS + columns + schema are all correct. The sibling mirror (e.g. `syncCoinConfig`) works.
