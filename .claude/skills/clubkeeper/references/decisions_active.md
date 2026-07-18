@@ -297,6 +297,20 @@ Deferred. Surface when first customer asks for cloud sync or multi-device.
 **Decision:** `welcomeBonusEnabled`, `streakEnabled`, `dormancyEnabled` all default to `false`/`undefined` in ClubSettings. Owner must explicitly enable each in PlayerHubSettings.
 **Rationale:** Prevents surprise coin grants before owner has configured tiers and coin values. Avoids support calls for "where did these coins come from."
 
+## D-Booking-1 — Advance validation = code-match approval, no screenshot/WhatsApp (18 Jul 2026, owner-decided)
+
+**Context:** Players pay the booking advance by UPI straight to the club's VPA — the app never touches the money rails. Staff needs a way to verify "this pending request actually paid" before confirming.
+**Decision:** Code-match approval. The player's UPI payment note carries `BOOK-<last-6-of-intent-UUID>` (`BookingScreen.tsx` upiNote); the SAME code renders on the owner's pending row (`PendingBookingsModal.tsx` shortCode). Staff matches the code against the received payment in their own UPI app, then taps Approve. **NO screenshot upload. NO WhatsApp validation.**
+**Rationale:** Zero new infrastructure, works with every UPI app, keeps ClubKeeper out of payment custody/disputes. Screenshots are fakeable and add storage + review UX; WhatsApp is an out-of-band mess.
+**Revisit:** if fake-payment disputes become a real support burden → payment-gateway collect flow for advances.
+
+## D-Booking-2 — Pending booking intent = soft hold on the slot, 10-min expiry (18 Jul 2026, owner-decided)
+
+**Context:** What blocks a slot while a request awaits payment + owner review? Pending + confirmed already both block (`submit_booking_intent` conflict check + `get_booked_slots` status filter), but nothing expires a pending row — an abandoned unpaid request squats on the slot until someone rejects it.
+**Decision:** Pending = soft hold. `get_booked_slots` keeps returning pending holds; other players see the slot unavailable ("request pending — pick another slot"). The hold expires **10 minutes** after creation if unpaid/unreviewed (lazy flip to `'expired'` — no cron, free-tier pattern like the existing lazy cleanup). Reject frees the slot immediately. Race policy: first insert wins (the server-side conflict check stays the arbiter); the rare double-payment is recovered by **manual UPI refund in v1**.
+**Rationale:** 10 min covers pay-and-notice latency without letting ghost requests hold prime slots. Lazy expiry avoids cron/Pro-plan. Manual refund is acceptable at v1 volume.
+**Revisit:** double-payment refunds more than ~1/week → automated refund flow.
+
 ## D-Engagement-2 — ExpirySweepRunner runs every 4h, not on every launch
 
 **Context:** Coin expiry sweep is a read-heavy operation (scans all customer walletTransactions for FIFO lots).
