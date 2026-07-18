@@ -1132,6 +1132,15 @@ The original watch-note ("channel opened in TopBar on mount") predates the app-s
 ### PH2 — Cross-store write order (Supabase ↔ Dexie mirrors)
 **Rule (from the 13 Jun toggle-desync fix):** for fields that must be consistent across both stores, write Supabase FIRST; only write Dexie if Supabase succeeds. Never fire-and-forget a Supabase write when the local Dexie write already happened. (For clubs-row mirrors, route through `mirrorToSupabaseBySlug` — Pattern S11.)
 
+**#97 recurrence (18 Jul 2026) — "Supabase-first" is cosmetic if the wrapper swallows failure.** `mirrorToSupabaseBySlug` returns a `MirrorResult` and NEVER throws. A wrapper that discards that result is fire-and-forget in disguise: the caller's `await` succeeds, Dexie is written anyway, SaveIndicator shows "Saved", and only the Supabase row is stale — a silent owner/player desync. Corollary: two wrappers over the same failing mirror produce OPPOSITE symptoms (`updateAcceptsTopups` throws → toggle stuck; `syncBookingConfigBySlug` swallowed → toggle "worked" locally, players saw the old value). Fix shape: wrapper throws on `!result.ok` (`syncBookingConfigBySlug` now matches `updateAcceptsTopups`/`updateClubNameRemote`), caller's Dexie write sits AFTER the await inside a `useSaveIndicator().run` so failure aborts it and surfaces red (U10).
+
+**Sweep query (Rule K — run after touching any mirror wrapper or adding a mirrored field):**
+```
+rg -n "await mirrorToSupabaseBySlug\(" src/lib -g '!mirrorToSupabase.ts'   # every wrapper must branch on result.ok (throw or return it)
+rg -n "syncBookingConfigBySlug\(|syncCoinConfig\(|syncTablesJsonBySlug\(|updateAcceptsTopups\(|updateClubNameRemote\(" src/   # callers: local write only after a throwing wrapper succeeds?
+```
+Accepted deviations (each tracked, do NOT "fix" casually): coins Dexie-first atomic save (#142 — R4 exception, offline-tolerant by design), tables_json after table CRUD (#143 — offline table CRUD must not block), v17 self-heal one-way re-mirror (#144 — no Dexie write after it), Settings clubName (Dexie-first but failure IS surfaced via "Saved locally" toast — the compliant offline-first variant).
+
 ### Pattern P2 — Fire-and-forget mirrors must target by slug, not by indirected id (#84, 16 Jun 2026)
 
 **Symptom signature:** Owner-side write to Supabase via a fire-and-forget mirror silently never lands. Column stays at default. No console error. RLS + columns + schema are all correct. The sibling mirror (e.g. `syncCoinConfig`) works.
