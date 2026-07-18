@@ -1,6 +1,6 @@
 # STATE — what is true right now
 
-**Last verified: 18 Jul 2026 (CLI session — #97 P0 fixed: PH2 write-order enforced on booking mirrors (`syncBookingConfigBySlug` throws → Dexie write aborts + SaveIndicator red), Rule K sweep filed #142/#143/#144 + hydration gap #145; pending owner verification. D9 status unchanged: steps 1–7 green on prod, only step-8 data-bleed spot-check + owner "close #128" remain.).**
+**Last verified: 18 Jul 2026 (CLI session — #97 P0 fixed + CLOSED by owner (PH2 write-order enforced on booking mirrors: `syncBookingConfigBySlug` throws → Dexie write aborts + SaveIndicator red); Rule K sweep filed #142/#143/#144 + hydration gap #145; NEW P0 #146 filed + diagnosed (player pays stale UPI ID — `handleSaveUpiId` has no Supabase mirror), fix awaiting owner go-ahead. D9 status unchanged: steps 1–7 green on prod, only step-8 data-bleed spot-check + owner "close #128" remain.).**
 Rules for this file: OVERWRITE in place, never append (Rule G lives here). One line per module. No commit SHAs, no build sizes, no dates inside status lines — history belongs in `references/history/changelog.md` + `git log`. Pending entries are deleted the moment they resolve. **claude.ai sessions:** if the stamp above is more than ~7 days old, say so to Sugeet and trust GitHub/his answers over this file.
 
 ## Current focus
