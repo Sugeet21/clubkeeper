@@ -180,6 +180,26 @@ export async function upsertClub(payload: {
       .from('clubs')
       .insert({ ...clubFields, owner_id: userId })
     if (error) throw error
+
+    // #159 — creating the clubs row fires the server-side
+    // `on_club_created_provision_owner_meta` trigger, which inserts the
+    // owner's users_meta row. But the JWT the client is currently holding was
+    // minted BEFORE that row existed, so it carries NO user_club_id claim —
+    // SyncReader would keep deferring and SyncRunner would keep dead-lettering
+    // until the ~1h auto-refresh. Force a refresh NOW so the fresh token picks
+    // up the claim (add_user_meta_to_jwt reads the just-created users_meta row)
+    // and sync activates on THIS device immediately. authStore.onAuthStateChange
+    // handles the resulting TOKEN_REFRESHED; SyncReader's deferForRefresh path
+    // also retries initialPull on that same event. Best-effort: a failed
+    // refresh is non-fatal (the club row IS created) — the next background
+    // refresh still lands the claim — so we swallow the error to keep the
+    // slug-Save success path green (Pattern A11 lock-free discipline: this is
+    // the ONE getSession-family call we accept here, and only on first create).
+    try {
+      await supabase.auth.refreshSession()
+    } catch (refreshErr) {
+      console.warn('[upsertClub] post-create session refresh failed; claim will land on next auto-refresh', refreshErr)
+    }
   }
 }
 

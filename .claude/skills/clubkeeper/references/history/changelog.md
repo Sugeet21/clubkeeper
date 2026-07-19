@@ -4,6 +4,15 @@
 
 ---
 
+## 19 Jul 2026 — #159/#160: cross-device sync was DEAD for every real customer — owner users_meta never provisioned — (refs #159 #160)
+
+- **The big one.** 4 partners sharing one login (Ball bended) couldn't see each other's data. Root cause: cross-device sync partitions on the `user_club_id` JWT claim, which comes from `public.users_meta`, and NOTHING ever provisioned an OWNER's users_meta row (`handle_new_user` writes profiles+subscriptions; `upsertClub` writes the clubs row). Prod proof: ZERO rows in every synced table across ALL clubs — no customer data had ever reached Supabase. Every device was local-only.
+- Only Sugeet's own account had a users_meta row (hand-inserted #109) — and it pointed at the WRONG club (sugeet21/the "7" account, not clubkeeper) → #160. That's why "Phase C sync proven" never actually exercised a real cross-device path.
+- Trial mode ruled out as a cause (sync path never reads subscription status).
+- Fix: migration `20260719_provision_owner_users_meta` — `AFTER INSERT ON clubs` trigger auto-provisions the owner row; backfilled all existing owners (incl. the new ball-bended club); repointed sugeetjadhav@gmail.com to his own club. `users_meta.name` NOT NULL caught on first apply (23502), v2 sourced it from profiles.display_name. Rule-M proven live (pg_trigger + all-clubs `maps_to_own_club=true`).
+- Client half: `upsertClub` (INSERT branch) forces `supabase.auth.refreshSession()` so the fresh JWT picks up the claim immediately instead of waiting ~1h. Committed; **pending deploy + owner verification** that partner data actually uploads.
+- New Pattern S28. Sequence customers must follow: Player-Hub slug setup creates the club row (NOT signup, NOT adding inventory) → trigger fires → refresh → sync live.
+
 ## 19 Jul 2026 — #103 CLOSED by owner — ZERO open P0s for the first time since the P0 label existed — (refs #103)
 
 - Owner re-verified slug save post-deploy → closed with 7b28451. The A11 stranded-lock family (#120 boot, #139 auth actions, #103 slug save) is fully extinct — detection grep documented on Pattern A11 must stay at 0.
