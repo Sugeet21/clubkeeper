@@ -4,6 +4,11 @@
 
 ---
 
+## 19 Jul 2026 — #128 CLOSED by owner: Phase D (staff login + roles) COMPLETE — (refs #128)
+
+- Owner ran the D9 step-8 account-switch data-bleed spot-check → green → "close #128". Phase D D0–D9 fully verified on prod. Deferred staff ENHs continue as #136/#137; player-identity quartet #149–#152 stays on the deferred track.
+- STATE Current-focus overwritten: Phase D paragraph retired (history = changelog 10–19 Jul entries); new focus = Phase C sync-tail verification (#110/#120/#125/#126 fixes shipped awaiting owner verification; #112 SyncReader tracker closes with them), then the code queue (#100/#103 P0s → #145 → #155 → #142–#144 → #64/#123).
+
 ## 19 Jul 2026 — quintet CLOSED by owner: #153, #154, #156, #157, #158 all verified on device — (refs #153, #154, #156, #157, #158)
 
 - Owner replied "all verified" → all five closed with verification comments (b126943 / 3661905 / a4eb9aa + the three 20260719 migrations). bug_archive got a 19 Jul pointer section; STATE hand-notes + snapshot regenerated.
