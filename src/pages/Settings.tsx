@@ -1431,7 +1431,12 @@ function OwnerSettings() {
       >
         <p className="text-text-dim text-[14px] mb-4">
           All tables, sessions, and settings will be deleted from this device AND the
-          cloud backup, then replaced with demo data. This cannot be undone.
+          cloud backup, then replaced with demo data. Removed staff logins are deleted
+          permanently too. This cannot be undone.
+        </p>
+        <p className="text-text-faint text-[12px] mb-4">
+          Kept: your account, club slug, UPI ID, booking hours, subscription, and
+          ACTIVE staff logins. Remove staff first if you want them gone as well.
         </p>
         <div className="mb-4">
           <label className="block text-[11px] font-mono uppercase tracking-widest text-text-faint mb-2">

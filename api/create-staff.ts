@@ -117,6 +117,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // users_meta has no client INSERT policy — service role writes it by design.
+  // username denormalized here (#157, 20260719 migration) so the owner-read
+  // list can show it — auth.users.email is unreachable via RLS.
   const { error: metaError } = await supabase.from('users_meta').insert({
     user_id: staffUserId,
     role: 'staff',
@@ -124,6 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     name,
     active: true,
     created_by: user.id,
+    username: email,
   })
 
   if (metaError) {

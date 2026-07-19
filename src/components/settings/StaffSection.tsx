@@ -12,12 +12,13 @@
 // owner (wrapped in <OwnerOnly> at the call site + the D4 role split already
 // keeps staff out of the owner Settings body).
 //
-// Username gap (known): the owner-read policy on users_meta exposes name /
-// active / created_at but NOT the generated <slug>.ck.local username — that
-// lives in auth.users, unreachable via RLS. So the list is name-only; the
-// username is shown ONLY on the show-once screen at create/reset (matching how
-// api/create-staff returns it once). A permanent-username list would need a
-// new list-staff endpoint (deferred D8b).
+// Username (#157): denormalized onto users_meta.username (20260719 migration,
+// written by api/create-staff, backfilled for older rows) — the owner-read
+// policy exposes it, so the list shows it permanently with a copy button.
+// The PASSWORD is never retrievable (hash only): forgot-password recovery is
+// the Reset-password action, whose new password is show-once. Removed staff
+// render as compact record lines (#158); reset_club_data() purges them for
+// good on 'Type RESET' (#156).
 
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
@@ -32,12 +33,16 @@ interface StaffRow {
   name: string
   active: boolean
   createdAt: string
+  username: string | null
 }
 
 interface Credentials {
   name: string
   username: string
   password: string
+  // #157 — username no longer distinguishes create from reset (both can have
+  // it now), so the show-once screen branches on an explicit mode.
+  mode: 'create' | 'reset'
 }
 
 type ListState = 'loading' | 'loaded' | 'error'
@@ -129,6 +134,9 @@ export function StaffSection() {
   // Reset-password in flight (per row)
   const [resetBusyId, setResetBusyId] = useState<string | null>(null)
 
+  // #157 — per-row copy-login feedback
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
   // Remove-confirm modal
   const [removeTarget, setRemoveTarget] = useState<StaffRow | null>(null)
   const [removeBusy, setRemoveBusy] = useState(false)
@@ -143,10 +151,10 @@ export function StaffSection() {
     // #120 / Pattern A7-S16), a bare await would skeleton forever. Race a
     // 12s timeout so it falls into the recoverable error-state (Retry button)
     // instead of an infinite spinner.
-    type MetaRow = { user_id: string; name: string; active: boolean; created_at: string }
+    type MetaRow = { user_id: string; name: string; active: boolean; created_at: string; username: string | null }
     const query = supabase
       .from('users_meta')
-      .select('user_id, name, active, created_at')
+      .select('user_id, name, active, created_at, username')
       .eq('role', 'staff')
       .order('created_at', { ascending: false })
     const timeout = new Promise<never>((_, reject) =>
@@ -167,7 +175,7 @@ export function StaffSection() {
       setListState('error')
       return
     }
-    setRows(list.map((r) => ({ userId: r.user_id, name: r.name, active: r.active, createdAt: r.created_at })))
+    setRows(list.map((r) => ({ userId: r.user_id, name: r.name, active: r.active, createdAt: r.created_at, username: r.username })))
     setListState('loaded')
   }, [])
 
@@ -189,7 +197,7 @@ export function StaffSection() {
       setCreateOpen(false)
       setNewName('')
       setCopied(false)
-      setCredentials({ name: result.name, username: result.email, password: result.password })
+      setCredentials({ name: result.name, username: result.email, password: result.password, mode: 'create' })
       await loadStaff()
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Failed to create staff.')
@@ -207,9 +215,9 @@ export function StaffSection() {
         { action: 'reset_password', staffUserId: row.userId },
       )
       setCopied(false)
-      // Username isn't in the reset response (auth.users, not returned). Show
-      // the name + new password; the username is unchanged from creation.
-      setCredentials({ name: row.name, username: '', password: result.password })
+      // #157 — username now comes from the list row (users_meta.username);
+      // it is unchanged by a password reset.
+      setCredentials({ name: row.name, username: row.username ?? '', password: result.password, mode: 'reset' })
     } catch (e) {
       useToastStore.getState().show(e instanceof Error ? e.message : 'Failed to reset password.', 'error')
     } finally {
@@ -235,6 +243,20 @@ export function StaffSection() {
     }
   }
 
+  // #157 — copy a staff member's login from the list. Only the USERNAME is
+  // recoverable (passwords exist as hashes only); the copied text says so.
+  function copyLogin(row: StaffRow) {
+    if (!row.username) return
+    const text = `ClubKeeper staff login\nName: ${row.name}\nUsername: ${row.username}\nPassword: shown once at creation — use Reset password to issue a new one`
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopiedId(row.userId)
+        setTimeout(() => setCopiedId(null), 2000)
+      },
+      () => useToastStore.getState().show('Copy failed — note it down manually.', 'error'),
+    )
+  }
+
   function copyCredentials() {
     if (!credentials) return
     const text = credentials.username
@@ -245,6 +267,11 @@ export function StaffSection() {
       () => useToastStore.getState().show('Copy failed — write it down manually.', 'error'),
     )
   }
+
+  // #158 — active staff keep the full card; removed staff render as compact
+  // record lines so the owner's focus stays on active members.
+  const activeRows = rows.filter((r) => r.active)
+  const removedRows = rows.filter((r) => !r.active)
 
   return (
     <div className="mt-3 space-y-2">
@@ -269,25 +296,30 @@ export function StaffSection() {
           No staff yet. Add one to let a helper run sessions without seeing your revenue or settings.
         </p>
       ) : (
-        rows.map((r) => (
-          <div key={r.userId} className="p-3 rounded-xl bg-bg border border-border">
-            <div className="flex items-center gap-2">
-              <p className="flex-1 min-w-0 truncate text-[14px] font-semibold text-text">{r.name}</p>
-              {r.active ? (
+        <>
+          {activeRows.map((r) => (
+            <div key={r.userId} className="p-3 rounded-xl bg-bg border border-border">
+              <div className="flex items-center gap-2">
+                <p className="flex-1 min-w-0 truncate text-[14px] font-semibold text-text">{r.name}</p>
                 <span className="text-[9px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-free/15 text-free shrink-0">
                   Active
                 </span>
-              ) : (
-                <span className="text-[9px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-busy/15 text-busy shrink-0">
-                  Removed
-                </span>
+              </div>
+              <p className="text-[11px] font-mono text-text-faint mt-0.5">
+                Added {new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+              </p>
+              {r.username && (
+                <button
+                  onClick={() => copyLogin(r)}
+                  className="w-full min-h-[44px] mt-2.5 px-3 rounded-lg bg-bg-card border border-border text-text-dim active:bg-bg transition-colors flex items-center gap-2"
+                >
+                  <span className="shrink-0"><CopyIcon /></span>
+                  <span className="flex-1 min-w-0 truncate text-left text-[12px] font-mono">
+                    {copiedId === r.userId ? 'Login details copied' : r.username}
+                  </span>
+                </button>
               )}
-            </div>
-            <p className="text-[11px] font-mono text-text-faint mt-0.5">
-              Added {new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-            </p>
-            {r.active && (
-              <div className="grid grid-cols-2 gap-2 mt-2.5">
+              <div className="grid grid-cols-2 gap-2 mt-2">
                 <button
                   onClick={() => void handleReset(r)}
                   disabled={resetBusyId !== null}
@@ -303,9 +335,27 @@ export function StaffSection() {
                   Remove
                 </button>
               </div>
-            )}
-          </div>
-        ))
+            </div>
+          ))}
+
+          {/* #158 — removed staff: compact record lines, no actions */}
+          {removedRows.length > 0 && (
+            <div className="pt-1">
+              <p className="text-[9px] font-mono uppercase tracking-widest text-text-faint mb-1">Removed</p>
+              {removedRows.map((r) => (
+                <div key={r.userId} className="flex items-center gap-2 py-1 min-w-0">
+                  <p className="flex-1 min-w-0 truncate text-[12px] text-text-faint">{r.name}</p>
+                  <p className="text-[10px] font-mono text-text-faint shrink-0">
+                    {new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </p>
+                </div>
+              ))}
+              <p className="text-[10px] text-text-faint mt-1">
+                Kept as a record. Deleted permanently when you reset all data.
+              </p>
+            </div>
+          )}
+        </>
       )}
 
       {/* Add staff CTA */}
@@ -364,26 +414,26 @@ export function StaffSection() {
       <Modal
         open={credentials !== null}
         onClose={() => {}}
-        title={credentials?.username ? 'Staff created' : 'New password'}
+        title={credentials?.mode === 'reset' ? 'New password' : 'Staff created'}
       >
         <div className="p-3 rounded-xl bg-paused/10 border border-paused/25 mb-4">
           <p className="text-[13px] text-paused font-semibold">
-            Save this now — {credentials?.username ? 'the password is' : 'this password is'} shown only once.
+            Save this now — the password is shown only once.
           </p>
         </div>
 
-        {credentials?.username ? (
-          <div className="p-3 bg-bg rounded-xl mb-2 border border-border">
-            <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Username</p>
-            <p className="text-text text-[14px] font-mono mt-0.5 break-all">{credentials.username}</p>
-          </div>
-        ) : (
-          // Reset variant: no username to show (it lives in auth.users, not
-          // returned) — surface the staff NAME so the owner knows who this
-          // password is for (reviewer Concern 2).
+        {/* Reset variant: surface the staff NAME so the owner knows who this
+            password is for (reviewer Concern 2). */}
+        {credentials?.mode === 'reset' && (
           <div className="p-3 bg-bg rounded-xl mb-2 border border-border">
             <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Staff</p>
             <p className="text-text text-[14px] mt-0.5 truncate">{credentials?.name}</p>
+          </div>
+        )}
+        {credentials?.username && (
+          <div className="p-3 bg-bg rounded-xl mb-2 border border-border">
+            <p className="text-[10px] font-mono uppercase tracking-widest text-text-faint">Username</p>
+            <p className="text-text text-[14px] font-mono mt-0.5 break-all">{credentials.username}</p>
           </div>
         )}
         <div className="p-3 bg-bg rounded-xl mb-4 border border-border">
