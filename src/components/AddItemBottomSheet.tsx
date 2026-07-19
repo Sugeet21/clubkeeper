@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useSessionItems, useRecentItems, useSettings } from '../hooks/useLiveData'
-import { addSessionItem, addOrIncrementSessionItem, updateSessionItem, deleteSessionItem, restoreSessionItem, getCanteenItems, getLowStockThreshold, InsufficientStockError } from '../db/queries'
+import { useSessionItems, useSettings } from '../hooks/useLiveData'
+import { addOrIncrementSessionItem, updateSessionItem, deleteSessionItem, restoreSessionItem, getCanteenItems, getLowStockThreshold, InsufficientStockError } from '../db/queries'
 import { db } from '../db/database'
 import { syncedBatch } from '../db/syncWrappers'
 import { useToastStore } from '../store/toastStore'
@@ -105,7 +105,6 @@ export function AddItemBottomSheet({
   sessionStatus,
 }: AddItemBottomSheetProps) {
   const items = useSessionItems(sessionId)
-  const recentItems = useRecentItems(8)
   const canteenItems = useLiveQuery(() => getCanteenItems(false), [], [] as CanteenItem[])
   const settings = useSettings()
   const { show: showToast } = useToastStore()
@@ -136,13 +135,33 @@ export function AddItemBottomSheet({
 
   const isReadOnly = sessionStatus === 'completed'
 
-  // Quick Add shows ONLY canteen-matched recent items
-  const quickAddItems = useMemo(() => {
-    if (!canteenItems || canteenItems.length === 0) return []
-    return recentItems.filter(item =>
-      findMatchingCanteenItem(item.name, item.lastPrice, canteenItems) !== null
-    )
-  }, [recentItems, canteenItems])
+  // ─── Canteen picker: search + grid (redesign 20 Jul) ──────────────────────
+  // Replaces the horizontal-scroll chip row + the recently-sold "Quick add"
+  // section. Staff scroll a grid and can filter by name when the list is long.
+  const [search, setSearch] = useState('')
+  const filteredCanteenItems = useMemo(() => {
+    const list = canteenItems ?? []
+    const q = normalizeName(search)
+    if (!q) return list
+    return list.filter((ci) => normalizeName(ci.name).includes(q))
+  }, [canteenItems, search])
+
+  // How many of each canteen item are already in THIS session, keyed by
+  // normalized NAME only. Drives the "×N" added badge for instant-add feedback.
+  // NB: intentionally name-only, NOT the atomic merge key (which is name+price,
+  // see runCanteenAddTransaction) — the same drink added at peak vs non-peak
+  // price lives in two session rows but should read as one combined count on
+  // its tile ("how many of this item are in the session"), which is the more
+  // useful staff signal. Display-only; the add path is unaffected.
+  const addedCountByName = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const it of items ?? []) {
+      if (it.deletedAt) continue
+      const key = normalizeName(it.name)
+      map.set(key, (map.get(key) ?? 0) + it.quantity)
+    }
+    return map
+  }, [items])
 
   // ESC key handler (Pattern M2)
   useEffect(() => {
@@ -165,6 +184,7 @@ export function AddItemBottomSheet({
       setError(null)
       setManualOpen(false)
       setPriceWarning(null)
+      setSearch('')
     }
   }, [open])
 
@@ -241,29 +261,6 @@ export function AddItemBottomSheet({
       setPrice('')
       setQuantity('1')
       setSelectedCanteenItem(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  // Quick Add chip tap — match to canteen item and decrement stock
-  async function handleQuickAddChipTap(itemName: string, itemPrice: number) {
-    if (isReadOnly || submitting) return
-    setSubmitting(true)
-    setError(null)
-    try {
-      const priceNum = itemPrice
-      const qtyNum = 1
-      const ci = findMatchingCanteenItem(itemName, priceNum, canteenItems ?? [])
-      if (ci && ci.stockEnabled && ci.id !== undefined) {
-        const crossing = await runCanteenAddTransaction(ci, sessionId, itemName, priceNum, qtyNum)
-        await fireStockToastIfNeeded(ci, crossing)
-      } else {
-        // Defensive fallback — chip should only appear for canteen-matched items
-        await runFreeformAddTransaction(sessionId, itemName, priceNum, qtyNum)
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -461,74 +458,81 @@ export function AddItemBottomSheet({
           {!isReadOnly && (
             <div className="mb-5">
 
-              {/* 1. Canteen master-list chips — tap directly adds + decrements stock */}
+              {/* 1. Canteen picker — search + grid (redesign 20 Jul). Tap adds
+                     instantly + decrements stock (unchanged behavior). Grid
+                     (2 cols narrow / 3 wider) replaces the horizontal scroll;
+                     search filters when the list is long. */}
               {(canteenItems ?? []).length > 0 && (
                 <div className="mb-4">
                   <p className="text-[10px] uppercase tracking-widest font-mono text-text-faint mb-2">
                     Canteen items
                   </p>
-                  <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-                    {(canteenItems ?? []).map((ci) => {
-                      const outOfStock = ci.stockEnabled && ci.currentStock === 0
-                      const effectivePrice = getEffectivePrice(ci, peakNow, peakCfg)
-                      const showPeakTag = peakActive && typeof ci.peakPrice === 'number' && ci.peakPrice > 0
-                      return (
-                        <button
-                          key={ci.id}
-                          type="button"
-                          disabled={outOfStock || submitting}
-                          onClick={() => handleCanteenChipTap(ci)}
-                          className={`min-h-[44px] px-4 border rounded-full text-sm flex flex-col items-center justify-center shrink-0 transition-colors ${
-                            outOfStock
-                              ? 'bg-bg-card border-border text-text-faint opacity-50 cursor-not-allowed'
-                              : 'bg-bg-card border-border text-text active:scale-95 transition-transform'
-                          }`}
-                        >
-                          <span className="font-medium whitespace-nowrap inline-flex items-center gap-1.5">
-                            {ci.name}{' '}
-                            <span className={`font-mono text-xs ${showPeakTag ? 'text-paused font-bold' : 'text-text-dim'}`}>
-                              ₹{effectivePrice.toLocaleString('en-IN')}
-                            </span>
-                            {showPeakTag && (
-                              <span className="text-[9px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-paused/15 text-paused leading-none">
-                                Peak
+
+                  {/* Search box — only worth showing once the list is long enough
+                      to scroll. Below that, the grid alone is faster. */}
+                  {(canteenItems ?? []).length > 6 && (
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search items…"
+                      aria-label="Search canteen items"
+                      className="w-full bg-bg border border-border rounded-xl px-4 py-2.5 mb-3 text-text text-[15px] focus:border-accent focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint"
+                    />
+                  )}
+
+                  {filteredCanteenItems.length === 0 ? (
+                    <p className="text-[13px] text-text-dim py-3 text-center">
+                      No items match “{search.trim()}”.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {filteredCanteenItems.map((ci) => {
+                        const outOfStock = ci.stockEnabled && ci.currentStock === 0
+                        const effectivePrice = getEffectivePrice(ci, peakNow, peakCfg)
+                        const showPeakTag = peakActive && typeof ci.peakPrice === 'number' && ci.peakPrice > 0
+                        const addedCount = addedCountByName.get(normalizeName(ci.name)) ?? 0
+                        return (
+                          <button
+                            key={ci.id}
+                            type="button"
+                            disabled={outOfStock || submitting}
+                            onClick={() => handleCanteenChipTap(ci)}
+                            className={`relative min-h-[60px] px-3 py-2 border rounded-2xl text-sm flex flex-col items-center justify-center text-center transition-colors ${
+                              outOfStock
+                                ? 'bg-bg-card border-border text-text-faint opacity-50 cursor-not-allowed'
+                                : addedCount > 0
+                                  ? 'bg-accent/10 border-accent/50 text-text active:scale-95 transition-transform'
+                                  : 'bg-bg-card border-border text-text active:scale-95 transition-transform'
+                            }`}
+                          >
+                            {/* ×N added badge — visible feedback for instant-add */}
+                            {addedCount > 0 && (
+                              <span className="absolute top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-bg text-[10px] font-mono font-bold flex items-center justify-center leading-none">
+                                ×{addedCount}
                               </span>
                             )}
-                          </span>
-                          {outOfStock && (
-                            <span className="text-[10px] font-mono text-busy leading-none mt-0.5">
-                              Out of stock
+                            <span className="font-medium leading-tight line-clamp-2">{ci.name}</span>
+                            <span className="mt-0.5 inline-flex items-center gap-1">
+                              <span className={`font-mono text-xs ${showPeakTag ? 'text-paused font-bold' : 'text-text-dim'}`}>
+                                ₹{effectivePrice.toLocaleString('en-IN')}
+                              </span>
+                              {showPeakTag && (
+                                <span className="text-[9px] font-mono font-bold uppercase tracking-widest px-1 py-0.5 rounded-full bg-paused/15 text-paused leading-none">
+                                  Peak
+                                </span>
+                              )}
                             </span>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* 2. Quick Add — ONLY canteen-matched recent items */}
-              {quickAddItems.length > 0 && (
-                <div className="mb-4">
-                  <p className="text-[10px] uppercase tracking-widest font-mono text-text-faint mb-2">
-                    Quick add
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {quickAddItems.map((item) => (
-                      <button
-                        key={item.name}
-                        type="button"
-                        disabled={submitting}
-                        onClick={() => handleQuickAddChipTap(item.name, item.lastPrice)}
-                        className="min-h-[44px] px-4 bg-bg-card border border-border rounded-full text-text text-sm flex items-center gap-2 active:scale-95 transition-transform disabled:opacity-40"
-                      >
-                        <span className="truncate max-w-[140px]">{item.name}</span>
-                        <span className="text-text-dim font-mono text-xs shrink-0">
-                          ₹{item.lastPrice.toLocaleString('en-IN')}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+                            {outOfStock && (
+                              <span className="text-[10px] font-mono text-busy leading-none mt-0.5">
+                                Out of stock
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 

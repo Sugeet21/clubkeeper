@@ -333,7 +333,7 @@ Files in scope:
 - `src/hooks/useLiveData.ts` — `useSessionItems`
 - `src/lib/money.ts` — `calculateItemsTotal`
 - `src/lib/canteenMatch.ts` — `normalizeName`, `findMatchingCanteenItem`, `findMatchingCanteenItemForRow`
-- `src/components/AddItemBottomSheet.tsx` — all add/edit/delete UI (4 add paths: canteen chip, quick-add chip, manual matched, manual freeform)
+- `src/components/AddItemBottomSheet.tsx` — all add/edit/delete UI. Since the 20 Jul redesign there are 3 add paths: **canteen grid tap** (search + `grid-cols-2 sm:grid-cols-3`, `×N added` badge; replaced the horizontal-scroll chip row), manual matched, manual freeform. The **quick-add/recently-sold path was REMOVED** (`useRecentItems`/`quickAddItems`/`handleQuickAddChipTap` deleted) — canteen items are now searchable in the grid so the recent shortcut is redundant.
 - `src/pages/SessionDetail.tsx` — bill split section, grandTotal, sheet mount
 - `src/pages/Home.tsx`, `src/pages/Summary.tsx`, `src/pages/History.tsx` — `todayTotals`, `itemsTotalForDate`, `itemsBySessionId`, CSV columns
 
@@ -382,8 +382,8 @@ Invariants:
 - **Pattern D7 (nested-tx rule):** `decrementCanteenItemStock` has its own internal `db.transaction`. Calling it inside an outer tx causes the inner to commit early; outer throws "Transaction has already completed or failed." → silent partial write (stock decrements, session item not added).
   - In `AddItemBottomSheet.handleSubmit`, stock logic is INLINED inside a single flat outer tx.
   - `decrementCanteenItemStock` remains safe to call standalone.
-- All three add paths (canteen chip, quick-add chip, manual matched) run through `findMatchingCanteenItem` and use the SAME inline atomic tx (`runCanteenAddTransaction`).
-- Quick Add chips filtered to canteen-matched recent items ONLY.
+- The canteen-grid tap path uses the SAME inline atomic tx (`runCanteenAddTransaction`); manual matched still routes via `findMatchingCanteenItem`. (Quick-add chip path removed 20 Jul.)
+- Canteen grid: searchable (`normalizeName` both sides, box shown when >6 items), responsive `grid-cols-2 sm:grid-cols-3`, per-item `×N added` badge derived from live session items by `normalizeName` (same merge key as `runCanteenAddTransaction`). Tap = instant atomic add (no Done button — owner decision 20 Jul).
 - Manual form collapsed behind `+ Add other item` button.
 - Price mismatch on manual submit shows inline warning (Pattern F7), not toast. "Use ₹X" auto-confirms.
 - Locked decision: no auto-save freeform to canteen master list (would let staff typos pollute).
@@ -421,7 +421,7 @@ Files added by later phases (ALL EXIST — shipped 19 Jun 2026):
 - `src/lib/peakPricing.ts` (P2) — `PeakConfig`, `getPeakConfig(settings)`, `isInPeakWindow(now, cfg)` (cross-midnight; equals-start inside, equals-end outside), `getEffectivePrice(item, now, cfg)`, `formatPeakWindow/formatPeakEnd`. Returns false immediately when disabled — callers pass unconditionally.
 - `src/pages/Canteen.tsx` (P2+P4) — `PriceBlock` stacked two-price card, `Peak · until N` header pill (60s tick gated on `peakCfg.enabled`), permanent "Bulk peak prices" pill, one-time amber onboarding banner (`localStorage('ck_peak_onboarding_seen')` — per-browser; does NOT revive on toggle-off/on).
 - `src/components/CanteenItemFormModal.tsx` (P2) — Peak price field, rendered only when `peakPricingEnabled`; empty = no peak price; toggling peak OFF does NOT clear stored `peakPrice` values.
-- `src/components/AddItemBottomSheet.tsx` + `src/pages/QuickSale.tsx` (P3) — chips show `getEffectivePrice` + amber `PEAK` pill during the window; QuickSale cart CAPTURES price at first tap (window edge mid-checkout keeps captured price). Quick Add chips + manual freeform intentionally NOT peak-aware.
+- `src/components/AddItemBottomSheet.tsx` + `src/pages/QuickSale.tsx` (P3) — the canteen grid shows `getEffectivePrice` + amber `PEAK` pill during the window; QuickSale cart CAPTURES price at first tap (window edge mid-checkout keeps captured price). Manual freeform intentionally NOT peak-aware. (The quick-add chip path that was also non-peak-aware was removed 20 Jul.)
 - `src/components/BulkPeakPriceModal.tsx` (P4) — shared `<Modal>`; diff-only save via `bulkSetCanteenItemPeakPrices` (`put()` with key-drop to clear — `.update(id, {peakPrice: undefined})` would no-op). Partial-failure toast UX tracked as #123; per-row `syncedUpdate` conversion (Chunk 7 Group A) means bulk save is no longer cross-row atomic.
 
 Cross-midnight semantics (must be preserved across all phases):

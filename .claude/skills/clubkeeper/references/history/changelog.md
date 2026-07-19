@@ -4,6 +4,17 @@
 
 ---
 
+## 20 Jul 2026 — In-session Add-Item sheet redesign — searchable grid, dropped recently-sold (owner-approved)
+
+- Owner pain: 30+ canteen items in a single horizontal-scroll row = staff scroll a lot to find one. Owner-approved redesign of `AddItemBottomSheet`:
+  - REMOVED the "Quick add / recently sold" section (owner: redundant) → more space. Deleted `useRecentItems`, `quickAddItems` memo, `handleQuickAddChipTap`.
+  - REPLACED the `flex overflow-x-auto` chip row with a responsive grid `grid-cols-2 sm:grid-cols-3` (owner picked auto-fit: 2 narrow / 3 wider).
+  - ADDED a search box (shown when >6 items; `normalizeName` filter both sides) + a per-item `×N added` badge so instant-add gives visible feedback.
+  - KEPT tap = instant atomic add (owner decision: no Done button — fewer taps, no forget-to-save risk). `runCanteenAddTransaction` / `handleCanteenChipTap` untouched (Pattern D7/S24 intact).
+- Sheet already capped at 88vh with a scrolling body — the taller grid scrolls inside it.
+- Also removed a pre-existing dead `addSessionItem` import (#118 vacuous-tsc never caught it).
+- Build clean, strict tsc clean on the file. ripple_effects §Session Items / §Peak updated.
+
 ## 20 Jul 2026 — Staff can now Restock too (owner-approved) — needed a real RLS migration
 
 - Follow-up to the add/edit/delete change: owner also wants staff to Restock, but NOT bulk-peak-pricing.
