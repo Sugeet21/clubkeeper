@@ -7,7 +7,7 @@
 ## 19 Jul 2026 — #103 CLOSED by owner — ZERO open P0s for the first time since the P0 label existed — (refs #103)
 
 - Owner re-verified slug save post-deploy → closed with 7b28451. The A11 stranded-lock family (#120 boot, #139 auth actions, #103 slug save) is fully extinct — detection grep documented on Pattern A11 must stay at 0.
-- Board after today's 13 closures: 0 P0 · 8 P1 (#127 needs only owner E2E; #145 is the next real code item; #56–#67 are older polish) · P2 queue unchanged.
+- Board after today's 13 closures: 0 P0 · 9 P1 (#127 needs only owner E2E; #145 is the next real code item; #56/#59/#61/#62/#63/#65/#67 are older polish) · P2 queue unchanged.
 
 ## 19 Jul 2026 — #103: slug-save freeze fixed — upsertClub goes lock-free (last A11 site, last open P0) — (refs #103)
 
