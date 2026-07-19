@@ -4,6 +4,13 @@
 
 ---
 
+## 19 Jul 2026 — #156/#157/#158: reset purges removed staff, permanent usernames + copy-login, compact removed rows — (refs #156, #157, #158)
+
+- **Owner picked the #156 scope:** reset deletes REMOVED staff only; active staff stay ("remove staff first, then reset" is the clean-slate flow). **Migration `20260719_reset_purge_removed_staff`** (Claude-run via MCP, Rule M probe: live `pg_get_functiondef` contains the scoped purge): `reset_club_data()` deletes removed-staff `auth.users` rows LAST in the tx, triple-gated (`club_id` = caller claim, `role='staff'`, `active=false`); cascade cleans `users_meta`/`profiles`; no-cascade actor-stamp FKs are safe because every staff-stamped row is deleted earlier in the same tx (residual violation = atomic abort, never half-reset).
+- **#157 (usernames):** **migration `20260719_users_meta_username`** (Rule M probe: column exists, backfill 7/7) denormalizes `auth.users.email` → `users_meta.username`; existing owner-read RLS exposes it (D8b endpoint idea superseded). `api/create-staff.ts` writes it. StaffSection: active rows show a tap-to-copy login button (name + username + "password shown once — use Reset password"); show-once modal now branches on explicit `mode: 'create'|'reset'`; reset variant finally shows the username. PASSWORD stays unrecoverable by design.
+- **#158 (UI):** removed staff = compact single record lines (name + date, no actions) under a "Removed" label + note that Type RESET deletes them permanently; active staff keep the full card. Reset dialog copy lists what's kept vs purged.
+- **Gates:** build clean; strict tsc 0 errors in touched files (89 pre-existing baseline vs ~27 recorded — drift noted on #138); reviewer APPROVE 0 violations; Rule L declared (reused CopyIcon/clipboard idiom, no new helper). All three issues pending owner verification.
+
 ## 19 Jul 2026 — Rules L + M added; #156 filed (staff accounts survive reset); #154 migration reconciled — (refs #154, #156)
 
 - **Owner's #154 verification round produced two findings:** (1) staff login IDs survive reset — confirmed: the six `*.ck.local` staff identities live in `auth.users`, outside all 11 tables `reset_club_data()` wipes; scope decision (keep vs revoke-on-reset) filed as **#156**, no code until owner picks A/B. (2) Owner could not find the `20260719` RPC in prod and re-ran the SQL by hand — MCP record `20260718202259` + live `pg_get_functiondef` both confirm it applied and matching the file; double-apply harmless (`create or replace`), but the claim gave the owner no way to self-verify → **Rule M**.
