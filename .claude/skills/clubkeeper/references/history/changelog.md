@@ -4,6 +4,12 @@
 
 ---
 
+## 19 Jul 2026 — #103: slug-save freeze fixed — upsertClub goes lock-free (last A11 site, last open P0) — (refs #103)
+
+- Owner initially said "close #103 verified" — but the code showed NO fix existed (`playerHubApi.ts:144` still called `auth.getUser()`; the freeze only reproduces on a stranded GoTrue lock, so a normal-day test passes). Surfaced instead of closing; owner picked "fix now".
+- **THE FIX (1 file):** `upsertClub` derives `owner_id` lock-free — `readAccessTokenLockFree()` + `decodeJwtClaims().sub` (Rule L: reused existing `syncClubId` helpers) — replacing the lock-contending, network-round-tripping `getUser()`. RLS scoping unchanged. Pattern A11 facet updated: ALL known lock-exposed auth-call sites now fixed; sweep `auth\.getUser(` = 0 remaining.
+- **Gates:** build clean; tsc 0 net-new (20 playerHubApi errors = pre-existing #138 baseline, stash-verified). #103 OPEN pending owner re-verify (slug save after deploy).
+
 ## 19 Jul 2026 — #100 CLOSED by owner: rounding verified working (not a bug) — (refs #100)
 
 - Owner asked whether rounding is redundant next to rate-card tolerance+minimum|prorated. Answer: NO — rounding is the ONLY block-billing for plain per-hour (non-rate-card) tables; rate-card tables ignore it by design. Setting stays visible; zero code changed.
