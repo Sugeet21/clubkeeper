@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { supabasePublic } from './supabasePublic'
 import { mirrorToSupabaseBySlug } from './mirrorToSupabase'
+import { readAccessTokenLockFree, decodeJwtClaims } from '../db/syncClubId'
 import type { ClubPublicInfo, PublicTableInfo } from '../types/playerHub'
 import type { CoinTier, GameTable } from '../types'
 
@@ -141,8 +142,16 @@ export async function upsertClub(payload: {
   upiId?: string | null
   acceptsTopups?: boolean
 }): Promise<void> {
-  const { data: { user }, error: userError } = await supabase.auth.getUser()
-  if (userError || !user) throw new Error('Session expired, please sign in again')
+  // #103 — getUser() both contends for the GoTrue navigator lock (Pattern
+  // A11, same family as #120/#139) AND round-trips the auth server, so a
+  // zombie tab stranding the lock froze the slug Save button indefinitely.
+  // All this call ever needed is the user id for owner_id on INSERT — decode
+  // it lock-free from the JWT instead. The clubs queries below are RLS-scoped
+  // by the same token, so authorization is unchanged.
+  const token = readAccessTokenLockFree()
+  const sub = token ? decodeJwtClaims(token).sub : undefined
+  const userId = typeof sub === 'string' && sub.length > 0 ? sub : undefined
+  if (!userId) throw new Error('Session expired, please sign in again')
 
   const { data: existing } = await supabase
     .from('clubs')
@@ -169,7 +178,7 @@ export async function upsertClub(payload: {
   } else {
     const { error } = await supabase
       .from('clubs')
-      .insert({ ...clubFields, owner_id: user.id })
+      .insert({ ...clubFields, owner_id: userId })
     if (error) throw error
   }
 }
