@@ -16,6 +16,14 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 19 Jul 2026 — Phase C sync tail closed by owner (#110/#112/#120/#125/#126)
+
+- **#110** (closed by owner 19 Jul 2026) — outbox dead-letters on camelCase column names; Pattern S14 mappers across Phase C chunks. — see GitHub
+- **#112** (closed by owner 19 Jul 2026) — SyncReader tracker (initial pull + realtime + LWW + polling fallback, Chunk 5 series 6a8d2f9/14d4b3e); runtime-proven in D9. — see GitHub
+- **#120** (closed by owner 19 Jul 2026, fixed 7b69c11) — boot hang on stranded GoTrue navigator lock; 8s race + lock-free degraded boot, Pattern A11. — see GitHub
+- **#125** (closed by owner 19 Jul 2026, fixed 9693fe9) — lastVisitAt dropped by sync mappers → Wallet RECENT empty on pulled devices; Pattern S14 read gap. — see GitHub
+- **#126** (closed by owner 19 Jul 2026, cutover series ending 11a616c) — ~20 write sites outside queries.ts wrote raw; write-site cutover now 100%. — see GitHub
+
 ## 19 Jul 2026 — reset/staff/phone quintet closed by owner
 
 - **#153** (closed by owner 19 Jul 2026, fixed b126943) — advance→wallet stored bare 10-digit playerPhone → duplicate customer + mangled display; canonical +91 via `src/lib/phone.ts`. Pattern PH4. Residual: pre-fix players with BOTH a legacy bare row and a canonical row need manual merge. — see GitHub

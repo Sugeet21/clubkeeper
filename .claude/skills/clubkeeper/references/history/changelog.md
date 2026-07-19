@@ -4,6 +4,11 @@
 
 ---
 
+## 19 Jul 2026 — Phase C sync tail CLOSED by owner: #110/#112/#120/#125/#126 — sync architecture complete — (refs #110, #112, #120, #125, #126)
+
+- Owner verified the shipped fixes via the D9 two-profile runs + daily use → all five closed with verification comments (7b69c11, 9693fe9, cutover series ending 11a616c, Chunk 5 series). #112 (SyncReader tracker) closed with them.
+- **Milestone: the sync architecture is complete end-to-end** — write path, read path, backfill, RLS, actor stamping, staff roles (Phase D) — with zero open build work. Remaining sync-adjacent items are ordinary bugs/polish on the code queue: #145 (fresh-device club-config hydration, P1), #155, #142/#143/#144 (contract decision), #64/#123, PWA update banner (infra), player-identity quartet #149–#152 (deferred).
+
 ## 19 Jul 2026 — #128 CLOSED by owner: Phase D (staff login + roles) COMPLETE — (refs #128)
 
 - Owner ran the D9 step-8 account-switch data-bleed spot-check → green → "close #128". Phase D D0–D9 fully verified on prod. Deferred staff ENHs continue as #136/#137; player-identity quartet #149–#152 stays on the deferred track.
