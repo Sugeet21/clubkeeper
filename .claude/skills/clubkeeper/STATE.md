@@ -1,6 +1,6 @@
 # STATE — what is true right now
 
-**Last verified: 19 Jul 2026 (CLI session — #147 (booking pending-hold v2) verified + CLOSED by owner; prod schema probe confirms BOTH booking migrations `20260708` + `20260718` LIVE (owner-run via SQL editor, absent from `supabase_migrations` — ledger annotated); #127 code+migration live, owner E2E of P1c–P2 still its close gate. D9 status unchanged: steps 1–7 green on prod, only step-8 data-bleed spot-check + owner "close #128" remain.).**
+**Last verified: 19 Jul 2026 (CLI session — Rules L (search-before-create) + M (DB changes proven, not claimed) added after owner's #154 verification round; #156 filed (staff `auth.users` accounts survive reset — scope decision, no code); `20260719` RPC ledger reconciled (owner hand re-apply, live def probe-matched). #127 owner E2E of P1c–P2 still its close gate; D9: step-8 spot-check + owner "close #128" remain.).**
 Rules for this file: OVERWRITE in place, never append (Rule G lives here). One line per module. No commit SHAs, no build sizes, no dates inside status lines — history belongs in `references/history/changelog.md` + `git log`. Pending entries are deleted the moment they resolve. **claude.ai sessions:** if the stamp above is more than ~7 days old, say so to Sugeet and trust GitHub/his answers over this file.
 
 ## Current focus
