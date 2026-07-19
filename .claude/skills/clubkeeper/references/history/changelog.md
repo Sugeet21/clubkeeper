@@ -4,6 +4,14 @@
 
 ---
 
+## 20 Jul 2026 — Staff can now Restock too (owner-approved) — needed a real RLS migration
+
+- Follow-up to the add/edit/delete change: owner also wants staff to Restock, but NOT bulk-peak-pricing.
+- Unlike add/edit/delete (which the RLS already allowed), restock writes `stock_purchases` which was strictly owner-only — so this needed migration `20260720_staff_restock_rls`: staff INSERT+UPDATE branch on stock_purchases (club-scoped, Pattern S26). Rule-M proven live. The `canteen_items` currentStock bump in the same `syncedBatch` already passed the staff policy.
+- `recordStockPurchase` writes only stock_purchases + canteen_items; the 'piggy' source is a text field (no wallet_transactions write), so no other policy was in play.
+- UI: `Canteen.tsx` — per-card Restock button + RestockSheet mount pulled out of `<OwnerOnly>`. BulkPeakPriceModal + its trigger pill STAY owner-only.
+- Pending: real staff sign-in → restock → outbox drains to 0 (Pattern S26 rule 3).
+
 ## 20 Jul 2026 — Staff can now add/edit/delete canteen items (owner-approved) — UI-only, no RLS change
 
 - Owner asked: staff should be able to manage canteen items. Investigated: the block was almost entirely the `<OwnerOnly>` UI gate, not the DB — live RLS already allowed staff canteen_items INSERT + UPDATE (D6 #131, `deleted_at IS NULL`), and `softDeleteCanteenItem` sets `isActive:false` NOT the deletedAt tombstone, so staff delete passes too.

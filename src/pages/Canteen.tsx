@@ -193,9 +193,9 @@ function ListArea({
             </button>
           </div>
 
-          {/* Row 2: Restock button (full-width-ish, secondary style).
-              Staff-forbidden (stock_purchases INSERT) — owner-only. */}
-          <OwnerOnly>
+          {/* Row 2: Restock button. STAFF-ALLOWED (owner-approved 20 Jul) —
+              stock_purchases now has a staff INSERT+UPDATE RLS branch
+              (20260720_staff_restock_rls). */}
           <button
             onClick={() => onRestock(item)}
             className="mt-3 bg-bg border border-border h-9 px-3 rounded-xl text-text-dim text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.98] transition-transform"
@@ -207,7 +207,6 @@ function ListArea({
             </svg>
             Restock
           </button>
-          </OwnerOnly>
         </div>
       ))}
     </div>
@@ -451,20 +450,9 @@ export default function Canteen() {
         </div>
       </Modal>
 
-      {/* Restock + Bulk-peak STAY owner-only (Pattern A12): stock_purchases has
-          NO staff RLS branch, so a staff restock would dead-letter the outbox;
-          bulk-peak is owner-only by product decision. Mounts gated, not just
-          triggers — a mounted sheet is one stray state-set from queueing a
-          staff-forbidden write. */}
-      <OwnerOnly>
-      {/* Bulk peak-price editor (#68 Phase 4) */}
-      <BulkPeakPriceModal
-        open={bulkOpen}
-        onClose={() => setBulkOpen(false)}
-        items={items ?? []}
-      />
-
-      {/* Restock bottom sheet */}
+      {/* Restock sheet — STAFF-ALLOWED (owner-approved 20 Jul). staff INSERT+
+          UPDATE branch on stock_purchases lives in 20260720_staff_restock_rls;
+          canteen_items currentStock UPDATE already passed the staff policy. */}
       <RestockSheet
         open={restockItem !== null}
         item={restockItem}
@@ -479,6 +467,16 @@ export default function Canteen() {
           showToast(`Restocked: ${name} +${quantityAdded}${piggyTail}`, 'success')
           setRestockItem(null)
         }}
+      />
+
+      {/* Bulk-peak STAYS owner-only (Pattern A12) — owner-only by product
+          decision. Mount gated, not just its trigger pill. */}
+      <OwnerOnly>
+      {/* Bulk peak-price editor (#68 Phase 4) */}
+      <BulkPeakPriceModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        items={items ?? []}
       />
       </OwnerOnly>
     </div>
