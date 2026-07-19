@@ -4,6 +4,11 @@
 
 ---
 
+## 19 Jul 2026 — quintet CLOSED by owner: #153, #154, #156, #157, #158 all verified on device — (refs #153, #154, #156, #157, #158)
+
+- Owner replied "all verified" → all five closed with verification comments (b126943 / 3661905 / a4eb9aa + the three 20260719 migrations). bug_archive got a 19 Jul pointer section; STATE hand-notes + snapshot regenerated.
+- Surviving residuals: **#155** (`clearAllSessions` local-only wipe, SWEEP-#154 class — still open, code not started) and the #153 legacy dual-phone rows (manual merge when noticed).
+
 ## 19 Jul 2026 — #156/#157/#158: reset purges removed staff, permanent usernames + copy-login, compact removed rows — (refs #156, #157, #158)
 
 - **Owner picked the #156 scope:** reset deletes REMOVED staff only; active staff stay ("remove staff first, then reset" is the clean-slate flow). **Migration `20260719_reset_purge_removed_staff`** (Claude-run via MCP, Rule M probe: live `pg_get_functiondef` contains the scoped purge): `reset_club_data()` deletes removed-staff `auth.users` rows LAST in the tx, triple-gated (`club_id` = caller claim, `role='staff'`, `active=false`); cascade cleans `users_meta`/`profiles`; no-cascade actor-stamp FKs are safe because every staff-stamped row is deleted earlier in the same tx (residual violation = atomic abort, never half-reset).

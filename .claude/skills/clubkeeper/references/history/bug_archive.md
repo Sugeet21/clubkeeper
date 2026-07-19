@@ -16,12 +16,20 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 19 Jul 2026 — reset/staff/phone quintet closed by owner
+
+- **#153** (closed by owner 19 Jul 2026, fixed b126943) — advance→wallet stored bare 10-digit playerPhone → duplicate customer + mangled display; canonical +91 via `src/lib/phone.ts`. Pattern PH4. Residual: pre-fix players with BOTH a legacy bare row and a canonical row need manual merge. — see GitHub
+- **#154** (closed by owner 19 Jul 2026, fixed 3661905 + migration `20260719_reset_club_data_rpc`) — 'Type RESET' resurrected after refresh (local-only wipe); server-first reset via owner-gated `reset_club_data()` RPC. Pattern S27. Sweep child #155 still open. — see GitHub
+- **#156** (closed by owner 19 Jul 2026, fixed a4eb9aa + migration `20260719_reset_purge_removed_staff`) — reset left staff auth accounts; owner scope: purge REMOVED staff only, active stay. — see GitHub
+- **#157** (closed by owner 19 Jul 2026, fixed a4eb9aa + migration `20260719_users_meta_username`) — ENH: permanent usernames in staff list + copy-login button (D8b resolved). — see GitHub
+- **#158** (closed by owner 19 Jul 2026, fixed a4eb9aa) — ENH: removed staff as compact record lines. — see GitHub
+
 ## 18 Jul 2026 — #97 close + PH2 mirror sweep fallout
 
 - **#97** (closed by owner 18 Jul 2026, fixed 7867565) — Accept-bookings toggle: original read-side flip fixed via Pattern R4/238001f (owner-verified 20 Jun); remaining write-side defect = `syncBookingConfigBySlug` swallowed the `MirrorResult` → Dexie written + "Saved" shown on mirror failure (silent owner/player desync; also explained the acceptsTopups stuck-ON asymmetry). Now throws; Dexie write aborts; SaveIndicator red. See Pattern PH2. — see GitHub
 - **#142 / #143 / #144** (open, P2, SWEEP-#97) — remaining swallowed-MirrorResult sites: coins Dexie-first save / tables_json after table CRUD / v17 self-heal re-mirror. Accepted deviations pending contract decision; ledger on Pattern PH2. — see GitHub
 - **#145** (open, P1) — fresh-device hydration gap: `useSyncClubFromSupabase` never backfills acceptsBookings/hours/per-slot. — see GitHub
-- **#154** (open, P0, fix committed 3661905 + migration `20260719_reset_club_data_rpc` APPLIED — pending owner verification) — 'Type RESET' resurrected after hard refresh: local-only wipe, SyncReader re-pulled from epoch. Server-first reset via owner-gated `reset_club_data()` RPC. Pattern S27. — see GitHub
+- **#154** — CLOSED 19 Jul; see the 19 Jul section above. — see GitHub
 - **#155** (open, P2, SWEEP-#154, code not started) — `clearAllSessions` same local-only wipe class + orphans session_items. — see GitHub
 - **#153** (open, P1, fix committed b126943 — pending owner verification) — booking advance→wallet saved customer under bare 10-digit phone instead of canonical `+91` → duplicate customer + `formattedPhone` mangling ("varying number"). Pattern PH4. — see GitHub
 - **#147** (closed by owner 19 Jul 2026, fixed 3f9fcc0, migration `20260718_booking_pending_expiry`) — ENH, booking pending-hold v2 (D-Booking-2): 10-min lazy expiry of pending holds, per-slot `status` from `get_booked_slots` (amber Pending chips), guarded `confirm_booking_intent` RPC with typed `intent_expired`/`slot_taken`. In-scope bonus fix: lazy cleanup deleted future-slot confirmed rows 24h after CREATION → silent double-book vector; cleanup now keeps rows until the slot passes. — see GitHub
