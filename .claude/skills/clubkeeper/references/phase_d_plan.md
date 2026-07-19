@@ -46,7 +46,7 @@ These override any older assumption in prompts or docs:
 | D5 | Role gates — operations cluster (Home/Session/History) | pages + components | build + staff sees no owner-only CTAs |
 | D6 | Role gates — commerce cluster (Canteen/QuickSale/Wallet/Piggy) | pages + components | build + staff wallet top-up works, adjustment absent |
 | D7 | Role gates — routes/nav/Summary/Settings + staff today-card | App.tsx, BottomNav, Summary | build + staff deep-link to owner route bounces |
-| D8 | Staff management screen (Settings, owner-only) | Settings.tsx (Rule H!) | ✅ DONE 12 Jul — build + reviewer PASS; owner list SELECT runtime-proven (empty-state); create/reset/revoke round-trip → D9 (needs vercel dev). Name-only list; permanent-username = deferred D8b. |
+| D8 | Staff management screen (Settings, owner-only) | Settings.tsx (Rule H!) | ✅ DONE 12 Jul — build + reviewer PASS; owner list SELECT runtime-proven (empty-state); create/reset/revoke round-trip → D9 (needs vercel dev). Name-only list; permanent-username = deferred D8b (RESOLVED 19 Jul via #157 — `users_meta.username`, no endpoint). |
 | D9 | End-to-end runtime proof (two browser profiles) | none (proof session) | full checklist below; owner closes issues |
 
 Sequencing: D1 → D2 → D3 → D4 are strictly ordered. D5/D6/D7 can go in any order after D4 (but do all three before D9). D8 needs D2 + D3. Every chunk: full 4-phase loop (Rule I), build per chunk, reviewer on >100-LOC diffs, skill commit paired with every src commit (Rule B), issues via the Rule F flow.
