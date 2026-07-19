@@ -62,6 +62,7 @@ const DEFAULT_SETTINGS: ClubSettings = {
   currency: '₹',
   rounding: 'none',
   lowStockThreshold: 5,
+  runawaySessionMinutes: 150, // #161: warn if a running session exceeds 2.5h; 0 = off
   // v19: per-slot advance default. Operating hours stay undefined so the owner
   // must explicitly set Opens/Closes before Accept Bookings can be enabled (#106).
   bookingAdvancePerSlot: 50,

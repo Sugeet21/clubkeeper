@@ -4,6 +4,15 @@
 
 ---
 
+## 20 Jul 2026 — #161: runaway-session prevention gate (Layer 1 of the session-correction feature)
+
+- Owner's biggest trust problem: staff forgets a running session, realises 2-3h later, the bill + day's Summary are ruined → owners keep the paper notebook running in parallel. This is the PREVENT half; delete+reversal correction is #162 (not started), edit-in-place is #163.
+- New ClubSettings field `runawaySessionMinutes` (default 150 / 2.5h, 0=off; owner-only, not mirrored). Filled new_settings_field.md checklist. Rule H patterns cited: R4 (typing-buffer variant), T2 (plumbed into Home), U10 (n/a — blur+toast, not a SaveIndicator save site by the lowStock precedent).
+- Home shows a red "N sessions running a long time — still playing?" banner listing each over-threshold RUNNING table (paused excluded — not inflating the bill); tap a row → /session/:id to stop/fix. Computed in render body (Pattern T4, useTick-driven). Distinct from the existing >24h orphan banner (fires hours earlier).
+- Settings → Alerts: numeric input (clamps 0 or 30–1440), typing-buffer variant + handleRunawayBlur.
+- Build + strict tsc clean on touched files (pre-existing PlayerHubSettings unused-navigate #138 baseline error untouched). ripple_effects §Settings + seed default + STATE updated.
+- Plan doc: references/session_correction_plan.md.
+
 ## 20 Jul 2026 — In-session Add-Item sheet redesign — searchable grid, dropped recently-sold (owner-approved)
 
 - Owner pain: 30+ canteen items in a single horizontal-scroll row = staff scroll a lot to find one. Owner-approved redesign of `AddItemBottomSheet`:

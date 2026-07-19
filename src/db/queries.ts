@@ -1056,6 +1056,15 @@ export async function getLowStockThreshold(): Promise<number> {
   return settings?.lowStockThreshold ?? 5
 }
 
+// #161 — runaway-session warning threshold in MINUTES. Default 150 (2.5h).
+// 0 = feature off (no banner, no auto-alarm). Owner-only, not mirrored.
+export const RUNAWAY_MINUTES_DEFAULT = 150
+export async function getRunawaySessionMinutes(): Promise<number> {
+  const settings = await db.settings.get(1)
+  const v = settings?.runawaySessionMinutes
+  return typeof v === 'number' && v >= 0 ? v : RUNAWAY_MINUTES_DEFAULT
+}
+
 // ─── Table Move ───────────────────────────────────────────────────────────────
 
 export class IncompatibleTableError extends Error {

@@ -8,7 +8,8 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt'
 import { useSessionAlarm } from '../hooks/useSessionAlarm'
 import { getElapsedMs } from '../lib/time'
 import { calculateAmount } from '../lib/money'
-import { stopSession, acknowledgeNotify, snoozeNotify } from '../db/queries'
+import { stopSession, acknowledgeNotify, snoozeNotify, RUNAWAY_MINUTES_DEFAULT } from '../db/queries'
+import { useDexieSetting } from '../hooks/useDexieSetting'
 import { db } from '../db/database'
 import TopBar from '../components/TopBar'
 import SummaryStrip from '../components/SummaryStrip'
@@ -145,6 +146,22 @@ export default function Home() {
     return activeSessions.filter((s) => s.startedAt < cutoff)
   }, [activeSessions])
 
+  // #161 — runaway sessions: running past the owner's threshold but NOT yet
+  // orphaned (>24h has its own banner). Computed in the RENDER BODY (not
+  // useMemo) so useTick() re-evaluates elapsed every second — Pattern T4:
+  // getElapsedMs is Date.now()-derived and must run on every render, never be
+  // cached in a memo/live-query. 0 = feature off.
+  const [runawayMinutes] = useDexieSetting('runawaySessionMinutes', RUNAWAY_MINUTES_DEFAULT)
+  const runawaySessions =
+    runawayMinutes > 0
+      ? activeSessions.filter(
+          (s) =>
+            s.status === 'running' && // paused sessions aren't inflating the bill; getElapsedMs freezes on pause anyway
+            s.startedAt >= Date.now() - ORPHAN_THRESHOLD_MS && // not already orphaned (>24h has its own banner)
+            getElapsedMs(s) > runawayMinutes * 60_000,
+        )
+      : []
+
   async function handleEndOrphaned(id: string) {
     setEndingId(id)
     try {
@@ -217,7 +234,44 @@ export default function Home() {
         </div>
       )}
 
-      <div className={showInstall || orphanedSessions.length > 0 ? 'px-4 mt-0' : 'pt-safe px-4'}>
+      {/* #161 — runaway-session warning: a running session past the owner's
+          threshold. Distinct from the >24h orphan banner (this fires hours
+          earlier). Tapping a row opens that session so the owner can stop/fix
+          it before the bill inflates further. */}
+      {runawaySessions.length > 0 && (
+        <div className={showInstall || orphanedSessions.length > 0 ? 'mx-4 mt-2' : 'pt-safe mx-4 mt-3'}>
+          <div className="bg-busy/10 border border-busy/40 rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-[15px]" aria-hidden="true">⏱️</span>
+              <p className="text-[13px] font-bold text-busy leading-tight">
+                {runawaySessions.length} session{runawaySessions.length !== 1 ? 's' : ''} running a long time — still playing?
+              </p>
+            </div>
+            <div className="space-y-1">
+              {runawaySessions.map((s) => {
+                const mins = Math.floor(getElapsedMs(s) / 60_000)
+                const h = Math.floor(mins / 60)
+                const m = mins % 60
+                const tableName = tables?.find((t) => t.id === s.tableId)?.name ?? 'Table'
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => navigate(`/session/${s.id}`)}
+                    className="w-full min-h-[44px] flex items-center justify-between text-left active:bg-busy/10 rounded-lg px-1 transition-colors"
+                  >
+                    <span className="text-[13px] text-text font-medium truncate min-w-0 flex-1">{tableName}</span>
+                    <span className="text-[13px] font-mono text-busy shrink-0 ml-2">
+                      {h > 0 ? `${h}h ` : ''}{m}m →
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={showInstall || orphanedSessions.length > 0 || runawaySessions.length > 0 ? 'px-4 mt-0' : 'pt-safe px-4'}>
         <TopBar onQuickSalePress={() => navigate('/quick-sale')} />
         <SummaryStrip totalTables={totalTables} runningCount={runningCount} todayTotal={todayTotal} currency={currency} />
         <FilterPills pills={pills} active={activeFilter} onChange={setActiveFilter} />

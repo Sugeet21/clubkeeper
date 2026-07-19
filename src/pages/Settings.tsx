@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useTables, useSettings, useSyncClubFromSupabase } from '../hooks/useLiveData'
-import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport, getPiggyBalance, ActiveSessionsPresentError, assertNoActiveSessions } from '../db/queries'
+import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport, getPiggyBalance, ActiveSessionsPresentError, assertNoActiveSessions, RUNAWAY_MINUTES_DEFAULT } from '../db/queries'
 import { resetClubDataRemote } from '../lib/resetRemote'
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
@@ -381,6 +381,14 @@ function OwnerSettings() {
     setLowStockDraft(String(settings?.lowStockThreshold ?? 5))
   }, [settings?.lowStockThreshold])
 
+  // #161 — runaway-session warning threshold (minutes). Typing-buffer variant
+  // (Pattern R4 §typing-buffer): draft string for UX, authoritative value from
+  // Dexie `settings`, parsed + clamped on blur. 0 = feature off.
+  const [runawayDraft, setRunawayDraft] = useState(String(RUNAWAY_MINUTES_DEFAULT))
+  useEffect(() => {
+    setRunawayDraft(String(settings?.runawaySessionMinutes ?? RUNAWAY_MINUTES_DEFAULT))
+  }, [settings?.runawaySessionMinutes])
+
   // Table form modal
   const [tableModal, setTableModal] = useState<{ open: boolean; table?: GameTable }>({ open: false })
 
@@ -450,6 +458,24 @@ function OwnerSettings() {
     if (clamped === current) return
     await updateSettings({ lowStockThreshold: clamped })
     useToastStore.getState().show(`Low-stock alert at ${clamped} unit${clamped === 1 ? '' : 's'}`, 'success')
+  }
+
+  // #161 — runaway-session threshold. 0 = off; otherwise clamp 30–1440 min.
+  async function handleRunawayBlur() {
+    const current = settings?.runawaySessionMinutes ?? RUNAWAY_MINUTES_DEFAULT
+    const parsed = parseInt(runawayDraft, 10)
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setRunawayDraft(String(current))
+      return
+    }
+    const clamped = parsed === 0 ? 0 : Math.min(1440, Math.max(30, parsed))
+    setRunawayDraft(String(clamped))
+    if (clamped === current) return
+    await updateSettings({ runawaySessionMinutes: clamped })
+    useToastStore.getState().show(
+      clamped === 0 ? 'Long-session warning off' : `Warn after ${clamped} min`,
+      'success',
+    )
   }
 
   async function handleSaveUpiId() {
@@ -976,6 +1002,33 @@ function OwnerSettings() {
               <span className="text-[14px] text-text font-semibold">Test alert</span>
               <span className="text-[14px]">🔔</span>
             </button>
+
+            {/* #161 — runaway-session warning threshold */}
+            <div className="pt-2 border-t border-border/60">
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor="runawaySessionMinutes" className="text-[11px] font-mono uppercase tracking-widest text-text-faint">
+                  Warn if session runs over
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="runawaySessionMinutes"
+                    type="number"
+                    min={0}
+                    max={1440}
+                    step={15}
+                    inputMode="numeric"
+                    value={runawayDraft}
+                    onChange={(e) => setRunawayDraft(e.target.value)}
+                    onBlur={handleRunawayBlur}
+                    className="w-20 px-3 py-2 bg-bg border border-border rounded-xl text-text text-[15px] text-right tabular-nums focus:border-accent outline-none min-h-[44px]"
+                  />
+                  <span className="text-[12px] text-text-muted">min</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-text-faint mt-1.5">
+                A running session past this time shows a red "still playing?" warning on the Tables screen — so staff don't forget to stop the timer. Set 0 to turn off. (30–1440 min)
+              </p>
+            </div>
           </div>
         </SettingsSection>
 

@@ -155,6 +155,7 @@ export interface ClubSettings {
   legacyAdjustmentsBackfilled?: boolean // set true by v6 migration; never write false
   alarmSoundEnabled?: boolean    // default true; stored in Dexie, NOT localStorage
   alarmVibrationEnabled?: boolean // default true; stored in Dexie, NOT localStorage
+  runawaySessionMinutes?: number // #161: warn when a running session exceeds this many minutes; default 150 (2.5h); 0 = off. Owner-only, NOT mirrored to Supabase.
   lowStockThreshold?: number     // default 5; treat missing as 5
   piggyOpeningBalance?: number   // v13: owner-settable opening cash float; treat missing as 0
   piggyStartedAt?: number        // v13: Unix ms; piggy aggregation window start. Set at v13 upgrade if absent.
