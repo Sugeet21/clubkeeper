@@ -16,6 +16,10 @@ Format: **ID** (#issue, commit if fixed, else "open") — symptom — see GitHub
 
 ---
 
+## 19 Jul 2026 — #100 closed: not a bug (rate-card carve-out)
+
+- **#100** (closed by owner 19 Jul 2026, no code change) — "rounding not applied on stop" could not reproduce: plumbed end-to-end since the 19 Jun RCA; original repro was on a rate-card table where rounding is the documented carve-out (tier+tolerance IS the rounding). Owner re-verified on a non-rate-card per-hour table → works. Rounding setting stays visible: it is the ONLY block-billing for plain per-hour tables. — see GitHub
+
 ## 19 Jul 2026 — Phase C sync tail closed by owner (#110/#112/#120/#125/#126)
 
 - **#110** (closed by owner 19 Jul 2026) — outbox dead-letters on camelCase column names; Pattern S14 mappers across Phase C chunks. — see GitHub

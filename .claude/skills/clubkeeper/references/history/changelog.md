@@ -4,6 +4,11 @@
 
 ---
 
+## 19 Jul 2026 — #100 CLOSED by owner: rounding verified working (not a bug) — (refs #100)
+
+- Owner asked whether rounding is redundant next to rate-card tolerance+minimum|prorated. Answer: NO — rounding is the ONLY block-billing for plain per-hour (non-rate-card) tables; rate-card tables ignore it by design. Setting stays visible; zero code changed.
+- Owner re-tested on a non-rate-card table → rounding applies on stop → closed. Original repro had used a rate-card table (documented carve-out; 19 Jun RCA comment stood).
+
 ## 19 Jul 2026 — Phase C sync tail CLOSED by owner: #110/#112/#120/#125/#126 — sync architecture complete — (refs #110, #112, #120, #125, #126)
 
 - Owner verified the shipped fixes via the D9 two-profile runs + daily use → all five closed with verification comments (7b69c11, 9693fe9, cutover series ending 11a616c, Chunk 5 series). #112 (SyncReader tracker) closed with them.
