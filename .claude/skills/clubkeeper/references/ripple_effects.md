@@ -94,10 +94,10 @@ Matrix-row → gate map (extend this table in D6/D7; every new gate gets a row):
 | Delete session | NO UI exists anywhere (verified D5) — nothing to gate; if a delete UI is ever added it MUST ship inside `<OwnerOnly>` |
 | History list / revenue / CSV export | `History.tsx` role split: default export branches on `useRole()` → `StaffHistoryView` (ONLY the "Log a past session" card + `BackEntryModal`) vs `OwnerHistory` (old body, byte-identical). Staff KEEP back-entry creation (owner amendment 10 Jul). |
 | Settings (entire page) | D4: `Settings.tsx` role split → `StaffAccountView` |
-| Add canteen item (`canteen_items` INSERT) | `Canteen.tsx` FAB + `CanteenItemFormModal` mount in `<OwnerOnly>` (D6); staff empty-state loses the "Tap + to add one" hint |
-| Edit canteen item (name/price) | `Canteen.tsx` `ListArea` per-card Edit button + the same `CanteenItemFormModal` mount (D6) |
-| Delete canteen item (soft-delete) | `Canteen.tsx` per-card Delete button + delete-confirm `Modal` mount in `<OwnerOnly>` (D6) |
-| Restock (`stock_purchases` INSERT) | `Canteen.tsx` per-card Restock button + `RestockSheet` mount in `<OwnerOnly>` (D6 — single mount, verified no other trigger) |
+| Add canteen item (`canteen_items` INSERT) | **STAFF-ALLOWED (owner-approved 20 Jul)** — `Canteen.tsx` FAB + `CanteenItemFormModal` mount NO LONGER gated; empty-state "Tap + to add one" hint shows for both roles. RLS already permits (D6 #131, `deleted_at IS NULL`). |
+| Edit canteen item (name/price) | **STAFF-ALLOWED** — per-card Edit button + `CanteenItemFormModal` ungated. `canteen_items` UPDATE with `deleted_at NULL` passes staff RLS. |
+| Delete canteen item (soft-delete) | **STAFF-ALLOWED** — per-card Delete button + delete-confirm `Modal` ungated. `softDeleteCanteenItem` sets `isActive:false` (NOT the `deletedAt` tombstone), so it rides the staff UPDATE policy. |
+| Restock (`stock_purchases` INSERT) | **OWNER-ONLY (unchanged)** — `Canteen.tsx` per-card Restock button + `RestockSheet` mount STAY in `<OwnerOnly>`. `stock_purchases` has NO staff RLS branch → a staff restock would 403/dead-letter. Staff set initial/edited stock via the add/edit form instead (that's a `canteen_items` write, allowed). |
 | Manage peak pricing | `Canteen.tsx` "Bulk peak prices" pill + onboarding banner + `BulkPeakPriceModal` mount in `<OwnerOnly>` (D6). The informational "Peak · until X" header pill stays for staff — they sell at peak prices. |
 | Manual wallet adjustment | `CustomerProfile.tsx` Adjust button + `ManualAdjustmentModal` mount in `<OwnerOnly>`; action grid goes `grid-cols-1` for staff so Add Credit spans full width (D6) |
 | Edit customer (name/phone) | `CustomerProfile.tsx` tappable name/phone header in `<OwnerOnly fallback>` (staff get the same block static, no pencil) + `EditCustomerModal` mount (D6) |

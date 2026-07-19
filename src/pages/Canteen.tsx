@@ -141,7 +141,7 @@ function ListArea({
         </svg>
         <p className="text-text-dim text-sm text-center">
           No canteen items yet.
-          <OwnerOnly>{'\n'}Tap + to add one.</OwnerOnly>
+          {'\n'}Tap + to add one.
         </p>
       </div>
     )
@@ -163,10 +163,12 @@ function ListArea({
 
             <StockPill item={item} threshold={threshold} />
 
-            {/* D6 (Pattern A12): item edit/delete are staff-forbidden writes
-                (canteen_items name/price UPDATE + soft-delete) — gate every
-                trigger, not just the modal mounts below. */}
-            <OwnerOnly>
+            {/* Staff CAN edit/delete canteen items (owner-approved 20 Jul).
+                RLS already allows it: name/price = canteen_items UPDATE with
+                deleted_at NULL (D6 #131); delete = softDeleteCanteenItem which
+                sets isActive:false, NOT the deletedAt tombstone, so it also
+                passes the staff UPDATE policy. No gate here. Restock (row 2
+                below) STAYS owner-only — stock_purchases has no staff branch. */}
             <button
               onClick={() => onEdit(item)}
               className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim shrink-0"
@@ -189,7 +191,6 @@ function ListArea({
                 <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
               </svg>
             </button>
-            </OwnerOnly>
           </div>
 
           {/* Row 2: Restock button (full-width-ish, secondary style).
@@ -397,8 +398,9 @@ export default function Canteen() {
         />
       </div>
 
-      {/* FAB — owner-only since D6 (canteen_items INSERT is staff-forbidden) */}
-      <OwnerOnly>
+      {/* FAB — staff CAN add canteen items (owner-approved 20 Jul). RLS allows
+          the INSERT (D6 #131, deleted_at NULL). Restock + bulk-peak stay
+          owner-only (kept gated below). */}
       <button
         onClick={openAdd}
         className="fixed bottom-20 right-5 w-14 h-14 bg-accent text-bg rounded-2xl flex items-center justify-center text-2xl font-bold z-50 active:scale-95 transition-transform"
@@ -408,10 +410,9 @@ export default function Canteen() {
         +
       </button>
 
-      {/* D6 (Pattern A12): the modal/sheet MOUNTS are gated too, not just
-          their triggers — a mounted sheet is one stray state-set away from
-          queueing a staff-forbidden write that dead-letters the outbox. */}
-      {/* Add / Edit modal */}
+      {/* Add / Edit modal — staff-allowed (INSERT + name/price UPDATE both pass
+          the live RLS with deleted_at NULL). Pattern A12 mount-gating no longer
+          applies because the writes are no longer staff-forbidden. */}
       <CanteenItemFormModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
@@ -419,31 +420,9 @@ export default function Canteen() {
         existingItems={allItems ?? []}
       />
 
-      {/* Bulk peak-price editor (#68 Phase 4) */}
-      <BulkPeakPriceModal
-        open={bulkOpen}
-        onClose={() => setBulkOpen(false)}
-        items={items ?? []}
-      />
-
-      {/* Restock bottom sheet */}
-      <RestockSheet
-        open={restockItem !== null}
-        item={restockItem}
-        piggyBalance={piggyCurrent}
-        onCancel={() => setRestockItem(null)}
-        onSaved={({ quantityAdded, cost, source }) => {
-          const name = restockItem?.name ?? 'Item'
-          const piggyTail =
-            source === 'piggy'
-              ? ` · piggy ₹${Math.max(0, piggyCurrent - cost).toLocaleString('en-IN')}`
-              : ''
-          showToast(`Restocked: ${name} +${quantityAdded}${piggyTail}`, 'success')
-          setRestockItem(null)
-        }}
-      />
-
-      {/* Delete confirm modal */}
+      {/* Delete confirm modal — staff-allowed. softDeleteCanteenItem sets
+          isActive:false (NOT the deletedAt tombstone), so it rides the staff
+          UPDATE policy (deleted_at IS NULL). */}
       <Modal
         open={deletingItem !== null}
         onClose={() => !deleting && setDeletingItem(null)}
@@ -471,6 +450,36 @@ export default function Canteen() {
           </button>
         </div>
       </Modal>
+
+      {/* Restock + Bulk-peak STAY owner-only (Pattern A12): stock_purchases has
+          NO staff RLS branch, so a staff restock would dead-letter the outbox;
+          bulk-peak is owner-only by product decision. Mounts gated, not just
+          triggers — a mounted sheet is one stray state-set from queueing a
+          staff-forbidden write. */}
+      <OwnerOnly>
+      {/* Bulk peak-price editor (#68 Phase 4) */}
+      <BulkPeakPriceModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        items={items ?? []}
+      />
+
+      {/* Restock bottom sheet */}
+      <RestockSheet
+        open={restockItem !== null}
+        item={restockItem}
+        piggyBalance={piggyCurrent}
+        onCancel={() => setRestockItem(null)}
+        onSaved={({ quantityAdded, cost, source }) => {
+          const name = restockItem?.name ?? 'Item'
+          const piggyTail =
+            source === 'piggy'
+              ? ` · piggy ₹${Math.max(0, piggyCurrent - cost).toLocaleString('en-IN')}`
+              : ''
+          showToast(`Restocked: ${name} +${quantityAdded}${piggyTail}`, 'success')
+          setRestockItem(null)
+        }}
+      />
       </OwnerOnly>
     </div>
   )

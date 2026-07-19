@@ -4,6 +4,14 @@
 
 ---
 
+## 20 Jul 2026 — Staff can now add/edit/delete canteen items (owner-approved) — UI-only, no RLS change
+
+- Owner asked: staff should be able to manage canteen items. Investigated: the block was almost entirely the `<OwnerOnly>` UI gate, not the DB — live RLS already allowed staff canteen_items INSERT + UPDATE (D6 #131, `deleted_at IS NULL`), and `softDeleteCanteenItem` sets `isActive:false` NOT the deletedAt tombstone, so staff delete passes too.
+- Scope (owner-confirmed): staff get **Add + Edit + Delete**. **Restock stays owner-only** (`stock_purchases` has no staff RLS branch — a staff restock would dead-letter the outbox) and **Bulk-peak-pricing stays owner-only** (product decision). Staff set initial/edited stock via the add/edit form (a canteen_items write, allowed).
+- Change: `Canteen.tsx` — removed the `<OwnerOnly>` around the FAB, Add/Edit modal, per-card Edit/Delete triggers, delete-confirm modal, and the empty-state hint; kept RestockSheet + BulkPeakPriceModal mounts inside `<OwnerOnly>`. Zero migration. Build clean, no new tsc errors.
+- Pending: deploy + a real staff sign-in proving add/edit/delete drain the outbox to 0 (Pattern S26 rule 3 — SQL-editor proves nothing).
+- ripple_effects §Roles gate map + STATE updated.
+
 ## 19 Jul 2026 — #159/#160: cross-device sync was DEAD for every real customer — owner users_meta never provisioned — (refs #159 #160)
 
 - **The big one.** 4 partners sharing one login (Ball bended) couldn't see each other's data. Root cause: cross-device sync partitions on the `user_club_id` JWT claim, which comes from `public.users_meta`, and NOTHING ever provisioned an OWNER's users_meta row (`handle_new_user` writes profiles+subscriptions; `upsertClub` writes the clubs row). Prod proof: ZERO rows in every synced table across ALL clubs — no customer data had ever reached Supabase. Every device was local-only.
