@@ -113,7 +113,7 @@ Brief agents like a colleague who just walked in — goal, file paths, response 
 
 **This overrides any urge to be efficient.** Even a one-line fix gets an issue first. Only exception: a typo/wording change Sugeet asked for in plain English with no symptom.
 
-## Session Rules (A–K)
+## Session Rules (A–M)
 
 - **Rule A — Update the skill after EVERY phase** of multi-phase work, not after the module. Compaction eats details otherwise.
 - **Rule B — Every src/ commit needs a paired skill commit** in the same session: at least one of changelog.md, ripple_effects.md, bug_archive.md, decisions_active.md, bug_patterns.md, or STATE.md. Check with `git log --since="2 hours ago" --name-only` before declaring done. (Machine-checked by `npm run check:skill`.)
@@ -133,6 +133,10 @@ Brief agents like a colleague who just walked in — goal, file paths, response 
   5. **Add the sweep query itself** to that pattern's entry in `bug_patterns.md`, so the next sweep is one command, not a re-derivation. This is the paired-skill artifact for the fix (satisfies Rule B).
 
   Precedent: #134's one-file symptom was actually a 7-file Pattern R5 id-type class; the sweep caught the other 6. Skipping the sweep is how #114/#121 and the R5 debt (#138) accumulated.
+
+- **Rule L — SEARCH BEFORE CREATE.** Before writing any new helper, hook, component, util, or type: grep `src/` for an existing one by name AND by behaviour (e.g. `grep -rn "formatINR\|toLocaleString" src/`). State the search and its result in Phase 2 PLAN: "Reusing X from `file:line`" or "No existing match — creating new". Reuse only on EXACT fit; if it needs a new param or a mode flag to fit, that's a deliberate extension (name it in the plan) — never copy-paste-modify a near-duplicate. The explorer agent is allowed for the lookup (it's a discrete "where is X" search, Rule J compliant). Precedent for why: as of Jul 2026 the repo carries `formatINR` ×9, `formatRupees` ×4, `withTimeout` ×2, 117 raw `toLocaleString('en-IN')` call sites, and inline phone-digit stripping in ~8 components despite `src/lib/phone.ts` — all written without searching first. That existing debt is a separate owner-approved refactor; this rule stops new debt.
+
+- **Rule M — DATABASE CHANGES ARE PROVEN, NOT CLAIMED.** *Trigger: this rule activates ONLY when the session creates/edits a file under `supabase/migrations/`, runs `apply_migration`/DDL/RPC-or-policy changes against Supabase, or makes ANY statement about whether a migration is applied. Sessions that never touch the database skip it entirely.* When triggered: (1) an apply success response is NOT proof — same session, probe the object itself via `execute_sql` (`pg_proc`/`pg_get_functiondef` for functions, `pg_policies` for policies, `pg_trigger` for triggers, `information_schema.columns` for column/type changes) and record the probe + its result in the STATE.md ledger line; (2) any "it's live in prod" message to Sugeet MUST include a 10-second self-check he can run himself (Dashboard path, e.g. Database → Functions → search the name, or a one-line SQL-Editor snippet) — owner verification is the close gate, not our probe; (3) if Sugeet reports the object missing, his observation outranks the ledger: re-probe live prod and reconcile before repeating any claim. Why it exists: #154's RPC was declared applied, the owner couldn't find it and re-ran the SQL by hand — `create or replace` made that harmless, but a data-moving migration run twice would not be.
 
 ---
 

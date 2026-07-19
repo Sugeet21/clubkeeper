@@ -4,6 +4,13 @@
 
 ---
 
+## 19 Jul 2026 — Rules L + M added; #156 filed (staff accounts survive reset); #154 migration reconciled — (refs #154, #156)
+
+- **Owner's #154 verification round produced two findings:** (1) staff login IDs survive reset — confirmed: the six `*.ck.local` staff identities live in `auth.users`, outside all 11 tables `reset_club_data()` wipes; scope decision (keep vs revoke-on-reset) filed as **#156**, no code until owner picks A/B. (2) Owner could not find the `20260719` RPC in prod and re-ran the SQL by hand — MCP record `20260718202259` + live `pg_get_functiondef` both confirm it applied and matching the file; double-apply harmless (`create or replace`), but the claim gave the owner no way to self-verify → **Rule M**.
+- **Rule L — SEARCH BEFORE CREATE** (owner-requested): grep for an existing helper before writing a new one; declare "Reusing X / creating new" in Phase 2 PLAN. Duplicate audit that justified it: `formatINR` ×9, `formatRupees` ×4, `withTimeout` ×2 (`playerHubApi.ts` + `resetRemote.ts`), 117 raw `toLocaleString('en-IN')` sites in 43 files, inline phone-digit stripping in ~8 components despite `src/lib/phone.ts`. Debt payback = separate owner-approved refactor, not yet filed.
+- **Rule M — DATABASE CHANGES ARE PROVEN, NOT CLAIMED** (trigger-scoped: only fires in sessions touching migrations/DDL/apply-status claims): independent `execute_sql` probe recorded in the ledger + a 10-second owner self-check in every "it's live" message + owner's "it's missing" outranks the ledger.
+- Docs-only session (abbreviated loop): SKILL.md header now A–M; STATE ledger + hand-notes updated.
+
 ## 19 Jul 2026 — #154: 'Type RESET' now wipes Supabase too (owner-gated reset_club_data RPC); local-only reset resurrected on refresh — (refs #154, #155)
 
 - **THE BUG (P0, owner report):** reset cleared everything, hard refresh brought it all back. `resetEverything()` predates Phase C — Dexie + outbox only; clearing `db.settings` also destroys the pull cursors, so the next boot pulls from epoch and re-hydrates every row from Supabase. Compounding: prod has ZERO DELETE policies (verified `pg_policies`) — a client-side `.delete()` fix would silently remove 0 rows.
