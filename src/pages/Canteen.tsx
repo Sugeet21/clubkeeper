@@ -157,7 +157,21 @@ function ListArea({
           {/* Row 1: Name + price + Stock pill + Edit + Delete */}
           <div className="flex items-center gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-[17px] font-bold text-text truncate">{item.name}</p>
+              <div className="flex items-center gap-2 min-w-0">
+                <p className="text-[17px] font-bold text-text truncate">{item.name}</p>
+                {/* #162 — badge items whose stock was returned by a session
+                    reversal AND that had been removed from the menu. Lets the
+                    owner recognise it ("oh, from that deleted entry") and delete
+                    again if unwanted. */}
+                {item.revertedStockAt != null && (
+                  <span
+                    title="Stock returned from a deleted session"
+                    className="shrink-0 text-[9px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-paused/15 text-paused leading-none"
+                  >
+                    ↩ reverted
+                  </span>
+                )}
+              </div>
               <PriceBlock item={item} peakActive={peakActive} />
             </div>
 

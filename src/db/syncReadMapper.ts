@@ -326,6 +326,13 @@ const READ_MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
       ...(row.deleted_at !== undefined && row.deleted_at !== null
         ? { deletedAt: isoToMs(row.deleted_at, 'sessions.deleted_at') }
         : {}),
+      // #162 — reversal audit trail (nullable; only present on reversed rows).
+      ...(row.deleted_by !== undefined && row.deleted_by !== null
+        ? { deletedBy: reqStr(row.deleted_by, 'sessions.deleted_by') }
+        : {}),
+      ...(row.delete_reason !== undefined && row.delete_reason !== null
+        ? { deleteReason: nullableStr(row.delete_reason) }
+        : {}),
     }
   },
 

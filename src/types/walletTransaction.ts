@@ -6,6 +6,7 @@ export type WalletReferenceType =
   | 'item'
   | 'manual'
   | 'refund'
+  | 'reversal'         // #162: credit written when an owner reverses a completed session's wallet debit
   | 'canteen_sale'
   | 'coin_redemption'
   | 'coin_expiry'      // Phase 3: coins auto-expired after coinExpiryDays

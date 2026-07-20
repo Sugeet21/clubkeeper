@@ -4,6 +4,14 @@
 
 ---
 
+## 20 Jul 2026 — #162: owner can delete a completed session with FULL atomic undo (Layer 2 of session-correction)
+
+- The core correction feature. Owner opens a completed session → "Delete Session" (owner-only) → confirm modal shows exactly what reverses (removed from totals, N items → stock, wallet credit, cash → piggy) + optional reason → `reverseSession(id, reason)` undoes everything in ONE syncedBatch, then owner re-enters the correct one via Back Entry.
+- New `reverseSession` + `SessionReversalError` (queries.ts): tombstone session (via b.update carrying deletedAt+deletedBy+deleteReason) + soft-delete items + return stock (re-create/undelete removed items with a "↩ reverted" badge) + wallet credit-reversal row + balance restore. Piggy self-corrects (derived from completed sessions, tombstone drops it). Owner uid decoded lock-free BEFORE the batch (S24 rule 3). Double-reverse guarded.
+- Reader-coverage sweep (Pattern S27): added `!deletedAt` to every completed-session reader — useLiveData hooks, getPiggyBalance, getTodaysSessions, getSessionsBetween, getSessionsWithBreakdownByDate, Summary's 4 direct queries, Home todayStaticTotals. useSession(id) + getAllDataForExport deliberately NOT filtered (display audit / backup integrity).
+- Migration `20260720_session_reversal_audit` (APPLIED + Rule-M verified): sessions.deleted_by + delete_reason columns. Sync mappers carry them; canteen_items push mapper now sends deleted_at:null so un-delete propagates. New types: Session.deletedBy/deleteReason, CanteenItem.revertedStockAt, WalletReferenceType 'reversal'.
+- New Pattern S29. Reviewer pass + build clean + zero net-new tsc errors (88 both at HEAD and with changes — all pre-existing #138 baseline). Layer 3 (edit-in-place, #163) still open.
+
 ## 20 Jul 2026 — #161: runaway-session prevention gate (Layer 1 of the session-correction feature)
 
 - Owner's biggest trust problem: staff forgets a running session, realises 2-3h later, the bill + day's Summary are ruined → owners keep the paper notebook running in parallel. This is the PREVENT half; delete+reversal correction is #162 (not started), edit-in-place is #163.

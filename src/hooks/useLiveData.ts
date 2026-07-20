@@ -63,10 +63,20 @@ export function useTables(): GameTable[] {
   return useLiveQuery(() => db.gameTables.orderBy('sortOrder').toArray(), []) ?? []
 }
 
+// #162 — all list/range session readers exclude reversed (soft-deleted)
+// sessions: a tombstone (deletedAt set) must vanish from Home, History,
+// Summary and every aggregate, exactly like session_items do (#124). Only
+// `useSession(id)` (single get, below) deliberately still returns a reversed
+// row so SessionDetail can DISPLAY it with its audit trail.
 export function useActiveSessions(): Session[] {
   return (
     useLiveQuery(
-      () => db.sessions.where('status').anyOf(['running', 'paused']).toArray(),
+      () =>
+        db.sessions
+          .where('status')
+          .anyOf(['running', 'paused'])
+          .filter((s) => !s.deletedAt)
+          .toArray(),
       [],
     ) ?? []
   )
@@ -77,7 +87,11 @@ export function useTodaysSessions(): Session[] {
     useLiveQuery(() => {
       const start = startOfDay(new Date()).getTime()
       const end = endOfDay(new Date()).getTime()
-      return db.sessions.where('startedAt').between(start, end, true, true).toArray()
+      return db.sessions
+        .where('startedAt')
+        .between(start, end, true, true)
+        .filter((s) => !s.deletedAt)
+        .toArray()
     }, []) ?? []
   )
 }
@@ -92,7 +106,12 @@ export function useSession(id: string | undefined): Session | undefined {
 export function useSessionsBetween(start: number, end: number): Session[] {
   return (
     useLiveQuery(
-      () => db.sessions.where('startedAt').between(start, end, true, true).toArray(),
+      () =>
+        db.sessions
+          .where('startedAt')
+          .between(start, end, true, true)
+          .filter((s) => !s.deletedAt)
+          .toArray(),
       [start, end],
     ) ?? []
   )
@@ -103,7 +122,12 @@ export function useSessionsForDate(date: Date): Session[] {
   const end = endOfDay(date).getTime()
   return (
     useLiveQuery(
-      () => db.sessions.where('startedAt').between(start, end, true, true).toArray(),
+      () =>
+        db.sessions
+          .where('startedAt')
+          .between(start, end, true, true)
+          .filter((s) => !s.deletedAt)
+          .toArray(),
       [start, end],
     ) ?? []
   )
@@ -127,6 +151,7 @@ export function useSessionsInRange(startMs: number, endMs: number): SessionWithI
       const sessions = await db.sessions
         .where('startedAt')
         .between(startMs, endMs, true, true)
+        .filter((s) => !s.deletedAt) // #162 — exclude reversed sessions
         .toArray()
       const sessionIds = sessions.map((s) => s.id!).filter(Boolean)
       const allItems = sessionIds.length

@@ -86,7 +86,9 @@ export interface Session {
   paymentInProgress?: boolean         // true while session is paused waiting for staff to confirm payment
   _migrationSeq?: number              // set by v20 .upgrade(), used by §10.4 upload
   updatedAt?: number                  // Phase C LWW metadata (#117) — epoch ms
-  deletedAt?: number | null           // Phase C soft-delete marker (#117) — epoch ms
+  deletedAt?: number | null           // Phase C soft-delete marker (#117) — epoch ms. #162: also the "session reversed/voided by owner" tombstone — excludes it from ALL completed-session readers.
+  deletedBy?: string | null           // #162: auth user id of the owner who reversed this session (audit trail)
+  deleteReason?: string | null        // #162: optional owner-entered reason for the reversal (audit trail)
 }
 
 /**
@@ -228,6 +230,7 @@ export interface CanteenItem {
   createdAt: number
   sortOrder: number
   peakPrice?: number     // v18: optional peak-hour price, integer rupees, 1-9999. Undefined = item never uses peak pricing.
+  revertedStockAt?: number | null // #162: set when stock was returned to this item by a session reversal AND the item had been removed from the menu (re-created to hold the returned stock). Drives the "↩ reverted stock" badge so the owner recognises it. Owner can delete the item again if unwanted.
   _migrationSeq?: number // set by v20 .upgrade(), used by §10.4 upload
   updatedAt?: number     // Phase C LWW metadata (#117) — epoch ms
   deletedAt?: number | null // Phase C soft-delete marker (#117) — epoch ms

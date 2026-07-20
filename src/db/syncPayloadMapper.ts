@@ -241,6 +241,9 @@ const MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
     if (row.deletedAt !== undefined && row.deletedAt !== null) {
       out.deleted_at = msToIso(row.deletedAt as number | string)
     }
+    // #162 — reversal audit trail travels with the tombstone.
+    if (row.deletedBy !== undefined) out.deleted_by = row.deletedBy ?? null
+    if (row.deleteReason !== undefined) out.delete_reason = row.deleteReason ?? null
     return out
   },
 
@@ -295,8 +298,11 @@ const MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
     if (row.sortOrder !== undefined) out.display_order = row.sortOrder
     if (row.createdAt !== undefined) out.created_at = msToIso(row.createdAt as number | string)
     if (row.updatedAt !== undefined) out.updated_at = msToIso(row.updatedAt as number | string)
-    if (row.deletedAt !== undefined && row.deletedAt !== null) {
-      out.deleted_at = msToIso(row.deletedAt as number | string)
+    // #162 — an explicit null must CLEAR the server tombstone (un-delete on
+    // session reversal re-creating a removed item), so send null through, not
+    // just non-null timestamps. Undefined (field absent) still leaves it alone.
+    if (row.deletedAt !== undefined) {
+      out.deleted_at = row.deletedAt === null ? null : msToIso(row.deletedAt as number | string)
     }
     return out
   },

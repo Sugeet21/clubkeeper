@@ -98,6 +98,7 @@ export default function Home() {
     const todaySessions = await db.sessions
       .where('startedAt')
       .between(start, end, true, true)
+      .filter((s) => !s.deletedAt) // #162 — reversed sessions excluded from today's total
       .toArray()
 
     const sessionIds = todaySessions.map((s) => s.id!).filter(Boolean)

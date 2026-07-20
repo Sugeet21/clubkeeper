@@ -31,7 +31,7 @@ import { UpiQrCard } from '../components/UpiQrCard'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
 import { OwnerOnly } from '../components/auth/RoleGuard'
 import { CoinRedemptionPill } from '../components/CoinRedemptionPill'
-import { redeemCoins, getCoinConfig } from '../db/queries'
+import { redeemCoins, getCoinConfig, reverseSession, SessionReversalError } from '../db/queries'
 import { resolveCoinConfig } from '../lib/coins'
 import { checkAndAwardStreak } from '../lib/streak'
 import { phoneLookupCandidates, preferCanonicalPhone } from '../lib/phone'
@@ -409,6 +409,10 @@ export default function SessionDetail() {
   const [editDate, setEditDate] = useState('')
   const [editTime, setEditTime] = useState('')
   const [editError, setEditError] = useState<string | null>(null)
+  // #162 — reverse (delete) session confirm
+  const [reverseOpen, setReverseOpen] = useState(false)
+  const [reverseReason, setReverseReason] = useState('')
+  const [reversing, setReversing] = useState(false)
   const [pending, setPending] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [alarmSheetOpen, setAlarmSheetOpen] = useState(false)
@@ -675,6 +679,26 @@ export default function SessionDetail() {
       setEditStartOpen(false)
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Failed to update.')
+    }
+  }
+
+  // #162 — reverse (fully undo) this completed session, then navigate away.
+  // Owner re-enters the correct one via Back Entry (History → Log a past session).
+  async function handleReverse() {
+    if (!session?.id || reversing) return
+    setReversing(true)
+    try {
+      await reverseSession(session.id, reverseReason)
+      showToast('Session deleted — totals, stock and wallet reversed', 'success')
+      setReverseOpen(false)
+      navigate(-1)
+    } catch (err) {
+      const msg =
+        err instanceof SessionReversalError || err instanceof Error
+          ? err.message
+          : 'Failed to delete session.'
+      showToast(msg, 'error')
+      setReversing(false)
     }
   }
 
@@ -1010,6 +1034,15 @@ export default function SessionDetail() {
           >
             Edit Start Time
           </button>
+
+          {/* #162 — Delete (reverse) this session. Owner-only. Full undo:
+              removes it from all totals, returns stock, reverses wallet. */}
+          <button
+            onClick={() => setReverseOpen(true)}
+            className="w-full py-3.5 bg-busy/10 text-busy border border-busy/40 rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
+          >
+            Delete Session
+          </button>
         </OwnerOnly>
       </div>
 
@@ -1129,6 +1162,59 @@ export default function SessionDetail() {
               Save
             </button>
           </div>
+        </div>
+      </Modal>
+
+      {/* ── #162 Delete/reverse confirm — owner-only mount (Pattern A12) ─── */}
+      <Modal
+        open={reverseOpen}
+        onClose={() => !reversing && setReverseOpen(false)}
+        title="Delete this session?"
+      >
+        <div className="space-y-3 mb-5">
+          <p className="text-text-dim text-sm">
+            This fully reverses the session — as if it never happened:
+          </p>
+          <ul className="text-[13px] text-text-dim space-y-1.5 list-disc pl-5">
+            <li>Removed from today's total, Summary and reports</li>
+            {items.length > 0 && (
+              <li>{items.reduce((n, i) => n + i.quantity, 0)} canteen item(s) returned to stock</li>
+            )}
+            {(session.paymentBreakdown?.wallet ?? 0) > 0 && (
+              <li>₹{(session.paymentBreakdown?.wallet ?? 0).toLocaleString('en-IN')} credited back to the customer's wallet</li>
+            )}
+            {(session.paymentBreakdown?.cash ?? 0) > 0 && (
+              <li>₹{(session.paymentBreakdown?.cash ?? 0).toLocaleString('en-IN')} cash removed from the piggy bank</li>
+            )}
+          </ul>
+          <p className="text-[12px] text-text-faint">
+            To fix it, delete this and add it again via History → “Log a past session”.
+          </p>
+          <input
+            type="text"
+            value={reverseReason}
+            onChange={(e) => setReverseReason(e.target.value)}
+            placeholder="Reason (optional) — e.g. staff forgot to stop timer"
+            className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-[14px] focus:border-accent focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setReverseOpen(false)}
+            disabled={reversing}
+            className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleReverse}
+            disabled={reversing}
+            className="py-3.5 bg-busy text-white rounded-xl text-[14px] font-bold disabled:opacity-50"
+          >
+            {reversing ? 'Deleting…' : 'Delete session'}
+          </button>
         </div>
       </Modal>
       </OwnerOnly>

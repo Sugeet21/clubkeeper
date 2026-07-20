@@ -252,6 +252,7 @@ function StaffSummaryToday() {
       const sessions = await db.sessions
         .where('startedAt')
         .between(start, end, true, true)
+        .filter((s) => !s.deletedAt) // #162 — reversed sessions excluded
         .toArray()
 
       const sessionIds = sessions.map((s) => s.id!).filter(Boolean)
@@ -382,6 +383,7 @@ function OwnerSummary() {
         const sessions = await db.sessions
           .where('startedAt')
           .between(start, end, true, true)
+          .filter((s) => !s.deletedAt) // #162 — reversed sessions excluded
           .toArray()
 
         const sessionIds = sessions.map((s) => s.id!).filter(Boolean)
@@ -452,6 +454,7 @@ function OwnerSummary() {
       const sessions = await db.sessions
         .where('startedAt')
         .between(start, end, true, true)
+        .filter((s) => !s.deletedAt) // #162 — reversed sessions excluded
         .toArray()
       const sessionIds = sessions.map((s) => s.id!).filter(Boolean)
       if (!sessionIds.length) return { sessions, itemsBySessionId: new Map<number, SessionItem[]>() }
@@ -569,7 +572,7 @@ function OwnerSummary() {
           .where('endedAt')
           .between(winStart, end, true, true)
           .filter(
-            (s) => s.status === 'completed' && s.paymentBreakdown !== undefined,
+            (s) => s.status === 'completed' && s.paymentBreakdown !== undefined && !s.deletedAt, // #162
           )
           .toArray(),
         db.canteenSales

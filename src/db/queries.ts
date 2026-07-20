@@ -5,6 +5,7 @@ import { validatePlayerName, validateItemName, validateCanteenItemName } from '.
 import { seedIfEmpty } from './seed'
 import { normalizeName, findMatchingCanteenItem } from '../lib/canteenMatch'
 import { syncedCreate, syncedUpdate, syncedSoftDelete, syncedBatch } from './syncWrappers'
+import { readAccessTokenLockFree, decodeJwtClaims } from './syncClubId'
 import { coinsEarnedForTopup, resolveCoinConfig } from '../lib/coins'
 import { toCustomerPhone, phoneLookupCandidates, preferCanonicalPhone } from '../lib/phone'
 import { getEngagementConfig } from '../lib/streak'
@@ -466,6 +467,7 @@ export async function getTodaysSessions(): Promise<Session[]> {
   return db.sessions
     .where('startedAt')
     .between(start, end, true, true)
+    .filter((s) => !s.deletedAt) // #162 — reversed sessions excluded
     .toArray()
 }
 
@@ -476,6 +478,7 @@ export async function getSessionsBetween(
   return db.sessions
     .where('startedAt')
     .between(start, end, true, true)
+    .filter((s) => !s.deletedAt) // #162 — reversed sessions excluded
     .toArray()
 }
 
@@ -1131,8 +1134,13 @@ export async function createBackEntry(input: BackEntryInput): Promise<string> {
     // ---- 2. Overlap check (unchanged) ----
     // Two intervals [a,b] and [c,d] overlap iff a < d AND c < b.
     // For active rows (running/paused) treat the open end as Date.now().
+    // #162 — exclude REVERSED sessions: a tombstoned (deletedAt) session keeps
+    // status:'completed' + its old start/end, so without this filter it would
+    // still "occupy" its slot and block the owner from re-entering the corrected
+    // session in the same slot — breaking the reverse-then-re-enter recovery flow.
     const candidates = await db.sessions.where('tableId').equals(input.tableId).toArray()
     const conflict = candidates.find((s) => {
+      if (s.deletedAt) return false
       const sEnd = s.status === 'completed' ? (s.endedAt ?? 0) : Date.now()
       return s.startedAt < input.endedAt && input.startedAt < sEnd
     })
@@ -1417,6 +1425,181 @@ export async function recordSessionPaymentBreakdown(
   )
 }
 
+/** Thrown by reverseSession when the target isn't a reversible completed session. */
+export class SessionReversalError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SessionReversalError'
+  }
+}
+
+/**
+ * #162 — OWNER-ONLY: fully reverse a completed session, as if it never
+ * happened, then the owner re-enters the correct one via Back Entry.
+ *
+ * All in ONE atomic syncedBatch (power-cut / partial-write safe):
+ *  1. Soft-delete the session (tombstone via b.update so the audit fields ride
+ *     the same push) + soft-delete each of its (non-deleted) session_items.
+ *     The tombstone removes it from EVERY completed-session reader (guarded in
+ *     task #4) → it leaves Summary, piggy cash-in, today's total automatically.
+ *  2. Wallet reversal — if the session debited a customer's wallet
+ *     (paymentBreakdown.wallet > 0, recorded as a `type:'debit',
+ *     referenceType:'session'` row), write a CREDIT reversal row
+ *     (referenceType 'reversal') and restore the customer balance. The ledger
+ *     is append-only (never soft-delete a wallet_transactions row — S24 rule 4).
+ *  3. Stock return — for each item line, re-add its qty to the matching canteen
+ *     item's current stock. If the item is no longer in the menu (deleted or
+ *     never stock-tracked as a canteen item), re-create/undelete it holding the
+ *     returned qty and stamp `revertedStockAt` so the "↩ reverted stock" badge
+ *     shows (owner decision — owner can delete it again if unwanted).
+ *  4. Piggy self-corrects — its cash-in is derived from completed sessions with
+ *     a paymentBreakdown, and the tombstone (step 1) drops this one, so the
+ *     session's cash leaves the piggy with NO separate piggy write.
+ *
+ * Audit: deletedBy (owner uid from the lock-free JWT sub) + deleteReason are
+ * stamped on the session so a partner dispute has a record. deletedBy is
+ * decoded OUTSIDE the tx (no await/network inside a syncedBatch — S24 rule 3).
+ */
+export async function reverseSession(sessionId: string, reason?: string): Promise<void> {
+  if (typeof sessionId !== 'string' || sessionId.length !== 36) {
+    throw new SessionReversalError('Invalid session id.')
+  }
+
+  // Owner uid for the audit trail — decoded lock-free BEFORE the tx (no network
+  // / auth calls inside a syncedBatch callback; Pattern S16/S24).
+  const token = readAccessTokenLockFree()
+  const sub = token ? decodeJwtClaims(token).sub : undefined
+  const ownerUid = typeof sub === 'string' && sub.length > 0 ? sub : null
+  const trimmedReason = reason?.trim() ? reason.trim().slice(0, 200) : null
+  const now = Date.now()
+
+  await syncedBatch(
+    ['sessions', 'session_items', 'customers', 'wallet_transactions', 'canteen_items'],
+    async (b) => {
+      const session = await db.sessions.get(sessionId)
+      if (!session) throw new SessionReversalError('Session not found.')
+      if (session.status !== 'completed') {
+        throw new SessionReversalError('Only a completed session can be reversed.')
+      }
+      if (session.deletedAt) {
+        throw new SessionReversalError('This session is already reversed.')
+      }
+
+      // ── 1. Tombstone the session (carry audit via update, not softDelete) ──
+      await b.update('sessions', sessionId, {
+        deletedAt: now,
+        deletedBy: ownerUid,
+        deleteReason: trimmedReason,
+      })
+
+      // ── 2. Item lines: return stock, then soft-delete the line ───────────
+      const items = await db.sessionItems
+        .where('sessionId')
+        .equals(sessionId)
+        .filter((i) => !i.deletedAt)
+        .toArray()
+
+      // Stock return is done in TWO phases so a canteen item that appears in
+      // more than one session line (same item added twice, possibly at
+      // different prices) is updated EXACTLY ONCE with the SUMMED qty — a
+      // per-line loop over a single stale snapshot would lost-update
+      // (only the last line's qty would stick). Phase 1: resolve each line to
+      // a target + accumulate returned qty. Phase 2: apply one write per target.
+      const canteenItems = await db.canteenItems.toArray()
+      const byExistingId = new Map<string, number>() // canteen item id → total qty to return
+      const byNewName = new Map<string, { name: string; price: number; qty: number }>() // normalized name → re-create
+
+      for (const line of items) {
+        const match =
+          findMatchingCanteenItem(line.name, line.price, canteenItems) ??
+          canteenItems.find(
+            (ci) => normalizeName(ci.name) === normalizeName(line.name),
+          ) ??
+          null
+
+        if (match?.id && (match.deletedAt || match.stockEnabled)) {
+          // Present-but-untracked (stockEnabled===false, not deleted) → skip stock.
+          byExistingId.set(match.id, (byExistingId.get(match.id) ?? 0) + line.quantity)
+        } else if (!match) {
+          const key = normalizeName(line.name)
+          const acc = byNewName.get(key)
+          if (acc) acc.qty += line.quantity
+          else byNewName.set(key, { name: line.name, price: line.price, qty: line.quantity })
+        }
+        // present + stockEnabled===false → intentionally untracked; no stock op.
+
+        if (line.id) await b.softDelete('session_items', line.id)
+      }
+
+      // Phase 2 — one write per resolved target, qty already summed.
+      let newSort = (canteenItems.length + 1) * 10
+      for (const [id, qty] of byExistingId) {
+        const ci = canteenItems.find((c) => c.id === id)!
+        if (ci.deletedAt) {
+          // Removed from the menu — un-delete to hold the returned stock + badge.
+          await b.update('canteen_items', id, {
+            deletedAt: null,
+            isActive: true,
+            stockEnabled: true,
+            currentStock: (ci.currentStock ?? 0) + qty,
+            revertedStockAt: now,
+          })
+        } else {
+          await b.update('canteen_items', id, {
+            currentStock: (ci.currentStock ?? 0) + qty,
+          })
+        }
+      }
+      for (const { name, price, qty } of byNewName.values()) {
+        // No matching canteen item at all — re-create one to hold the stock,
+        // badged as reverted. Owner can delete it if unwanted.
+        await b.insert('canteen_items', {
+          id: crypto.randomUUID(),
+          name,
+          defaultPrice: price,
+          stockEnabled: true,
+          currentStock: qty,
+          isActive: true,
+          createdAt: now,
+          sortOrder: newSort,
+          revertedStockAt: now,
+        } as CanteenItem & { id: string })
+        newSort += 10
+      }
+
+      // ── 3. Wallet reversal (if any wallet portion was debited) ────────────
+      const walletPaid = session.paymentBreakdown?.wallet ?? 0
+      if (walletPaid > 0) {
+        // Find the debit row this session wrote, to know which customer to credit.
+        const debit = await db.walletTransactions
+          .where('referenceId')
+          .equals(sessionId)
+          .filter((t) => t.referenceType === 'session' && t.type === 'debit')
+          .first()
+        if (debit?.customerId) {
+          const customer = await db.customers.get(debit.customerId)
+          if (customer) {
+            const newBalance = customer.walletBalance + walletPaid
+            await b.insert('wallet_transactions', {
+              id: crypto.randomUUID(),
+              customerId: customer.id,
+              type: 'credit',
+              amount: walletPaid,
+              balanceAfter: newBalance,
+              paymentMode: null,
+              referenceType: 'reversal',
+              referenceId: sessionId.toString(),
+              notes: `Reversal of session ${sessionId.slice(0, 8)}`,
+              createdAt: now,
+            } as WalletTransaction)
+            await b.update('customers', customer.id, { walletBalance: newBalance })
+          }
+        }
+      }
+    },
+  )
+}
+
 /**
  * Errors thrown by createCanteenSale.
  */
@@ -1615,7 +1798,7 @@ export async function getSessionsWithBreakdownByDate(date: Date): Promise<Sessio
     .between(start, end, true, true)
     .toArray()
   return rows.filter(
-    (s) => s.status === 'completed' && s.paymentBreakdown !== undefined,
+    (s) => s.status === 'completed' && s.paymentBreakdown !== undefined && !s.deletedAt, // #162
   )
 }
 
@@ -1661,7 +1844,7 @@ export async function getPiggyBalance(): Promise<{
       .where('endedAt')
       .aboveOrEqual(since)
       .filter(
-        (s) => s.status === 'completed' && s.paymentBreakdown !== undefined,
+        (s) => s.status === 'completed' && s.paymentBreakdown !== undefined && !s.deletedAt, // #162 — reversed sessions leave the piggy cash-in
       )
       .toArray(),
     db.canteenSales.where('createdAt').aboveOrEqual(since).toArray(),
