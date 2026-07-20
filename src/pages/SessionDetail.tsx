@@ -31,7 +31,7 @@ import { UpiQrCard } from '../components/UpiQrCard'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
 import { OwnerOnly } from '../components/auth/RoleGuard'
 import { CoinRedemptionPill } from '../components/CoinRedemptionPill'
-import { redeemCoins, getCoinConfig, reverseSession, SessionReversalError } from '../db/queries'
+import { redeemCoins, getCoinConfig, reverseSession, SessionReversalError, resplitSessionPayment } from '../db/queries'
 import { resolveCoinConfig } from '../lib/coins'
 import { checkAndAwardStreak } from '../lib/streak'
 import { phoneLookupCandidates, preferCanonicalPhone } from '../lib/phone'
@@ -413,6 +413,8 @@ export default function SessionDetail() {
   const [reverseOpen, setReverseOpen] = useState(false)
   const [reverseReason, setReverseReason] = useState('')
   const [reversing, setReversing] = useState(false)
+  // #163 — re-split payment after an edit changed the total
+  const [resplitOpen, setResplitOpen] = useState(false)
   const [pending, setPending] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [alarmSheetOpen, setAlarmSheetOpen] = useState(false)
@@ -677,6 +679,29 @@ export default function SessionDetail() {
     try {
       await editSessionStart(session.id!, newTs)
       setEditStartOpen(false)
+      // #163 — the edit may have changed the total. A completed session with a
+      // recorded paymentBreakdown that no longer sums to the new grand total is
+      // internally inconsistent (Summary PAYMENT MODE / piggy would be wrong),
+      // so re-open the split sheet for the owner to re-confirm how the new total
+      // was paid. resplitSessionPayment (parent onConfirm) reverses the old
+      // wallet leg before applying the new one.
+      const sid = session?.id
+      if (sid) {
+        const fresh = await db.sessions.get(sid)
+        if (fresh?.status === 'completed' && fresh.paymentBreakdown) {
+          const freshItems = await db.sessionItems
+            .where('sessionId')
+            .equals(sid)
+            .filter((i) => !i.deletedAt)
+            .toArray()
+          const newTotal =
+            fresh.amount + freshItems.reduce((s, i) => s + i.price * i.quantity, 0)
+          const bd = fresh.paymentBreakdown
+          if (bd.cash + bd.upi + bd.wallet !== newTotal) {
+            setResplitOpen(true)
+          }
+        }
+      }
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Failed to update.')
     }
@@ -1217,6 +1242,31 @@ export default function SessionDetail() {
           </button>
         </div>
       </Modal>
+
+      {/* ── #163 Re-split payment after a time edit changed the total ────── */}
+      {resplitOpen && session.status === 'completed' && (() => {
+        const itemsTotal = items.reduce((s, i) => s + i.price * i.quantity, 0)
+        const newTotal = session.amount + itemsTotal
+        return (
+          <PaymentSplitSheet
+            open={resplitOpen}
+            total={newTotal}
+            headline={`${tableName} · updated total`}
+            initialCustomer={linkedCustomer}
+            onCustomerLinked={(c) => setLinkedCustomer(c)}
+            onCancel={() => setResplitOpen(false)}
+            onConfirm={async (breakdown, customerId) => {
+              try {
+                await resplitSessionPayment(session.id!, breakdown, customerId ?? linkedCustomer?.id)
+                showToast('Payment split updated', 'success')
+                setResplitOpen(false)
+              } catch (err) {
+                showToast(err instanceof Error ? err.message : 'Failed to update split', 'error')
+              }
+            }}
+          />
+        )
+      })()}
       </OwnerOnly>
 
       {/* ── Add Item bottom sheet ───────────────────────────────────────── */}

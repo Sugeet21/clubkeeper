@@ -1447,6 +1447,160 @@ export async function recordSessionPaymentBreakdown(
   )
 }
 
+/**
+ * #163 — RE-record a completed session's payment split after an edit changed
+ * its total (e.g. time edit → new amount). Unlike `recordSessionPaymentBreakdown`
+ * (a first-time record), this REVERSES the session's existing wallet debit
+ * before applying the new split, so a wallet leg is never double-charged and
+ * the customer balance stays correct across repeated edits.
+ *
+ * Atomic (one syncedBatch):
+ *  1. Validate new `cash+upi+wallet === grandTotal` (session.amount + live items).
+ *  2. Reverse the OLD wallet leg: find this session's prior `type:'debit',
+ *     referenceType:'session'` row; if present, write a `credit` reversal row +
+ *     restore the balance (append-only ledger — never delete the old debit).
+ *  3. Apply the NEW wallet leg (if wallet > 0): fresh debit + balance decrement,
+ *     checked against the balance AFTER step 2's restore.
+ *  4. Write the new `paymentBreakdown`.
+ *
+ * v1 scope: cash/UPI/wallet only. Coin redemptions and booking advances applied
+ * at the ORIGINAL stop are NOT re-derived here (rare on an edited session; a
+ * full coin/booking re-application is deferred). The wallet leg the customer
+ * literally paid IS corrected, which is the money-integrity core.
+ */
+export async function resplitSessionPayment(
+  sessionId: string,
+  breakdown: { cash: number; upi: number; wallet: number },
+  customerId?: string,
+): Promise<void> {
+  if (typeof sessionId !== 'string' || sessionId.length !== 36) {
+    throw new Error(`resplitSessionPayment: invalid sessionId`)
+  }
+  const { cash, upi, wallet } = breakdown
+  if (
+    !Number.isInteger(cash) || cash < 0 ||
+    !Number.isInteger(upi) || upi < 0 ||
+    !Number.isInteger(wallet) || wallet < 0
+  ) {
+    throw new PaymentBreakdownInvalidError('Cash, UPI, and wallet must be non-negative integers.')
+  }
+  if (wallet > 0 && !customerId) {
+    throw new PaymentBreakdownInvalidError('A linked customer is required for wallet payments.')
+  }
+
+  await syncedBatch(
+    ['sessions', 'session_items', 'customers', 'wallet_transactions'],
+    async (b) => {
+      const session = await db.sessions.get(sessionId)
+      if (!session) throw new Error(`Session ${sessionId} not found`)
+      if (session.status !== 'completed') {
+        throw new PaymentBreakdownInvalidError('Session must be completed to re-split payment.')
+      }
+
+      const sessionItems = await db.sessionItems
+        .where('sessionId')
+        .equals(sessionId)
+        .filter((i) => !i.deletedAt)
+        .toArray()
+      const itemsTotal = sessionItems.reduce((sum, i) => sum + i.price * i.quantity, 0)
+      const grandTotal = session.amount + itemsTotal
+      if (cash + upi + wallet !== grandTotal) {
+        throw new PaymentBreakdownInvalidError(
+          `Breakdown sum ₹${cash + upi + wallet} does not match total ₹${grandTotal}.`,
+        )
+      }
+
+      const now = Date.now()
+
+      // ── 1. Reverse the OLD wallet leg (net over any prior debits/reversals) ──
+      // Sum this session's net wallet effect from the ledger so repeated edits
+      // never drift: debits reduced the balance, prior reversals credited it
+      // back. netDebited = Σdebit − Σreversal for this referenceId.
+      const priorRows = await db.walletTransactions
+        .where('referenceId')
+        .equals(sessionId)
+        .filter(
+          (t) =>
+            (t.referenceType === 'session' && t.type === 'debit') ||
+            (t.referenceType === 'reversal' && t.type === 'credit'),
+        )
+        .toArray()
+      const netDebited = priorRows.reduce(
+        (sum, t) => sum + (t.type === 'debit' ? t.amount : -t.amount),
+        0,
+      )
+      // The customer this session's wallet is tied to (from any prior row).
+      const priorCustomerId =
+        priorRows.find((t) => t.customerId)?.customerId ?? customerId ?? null
+
+      // Guard (reviewer #163): a re-split must NEVER silently move money between
+      // two real wallets. If this session had a wallet leg (netDebited>0 tied to
+      // priorCustomerId) and the new split ALSO uses wallet but for a DIFFERENT
+      // customer, that would credit one balance and debit another — refuse it.
+      // The wallet customer is fixed for the life of the session; to change who
+      // paid, delete + re-enter (reverseSession → Back Entry).
+      if (netDebited > 0 && wallet > 0 && priorCustomerId && customerId && customerId !== priorCustomerId) {
+        throw new PaymentBreakdownInvalidError(
+          'The wallet customer cannot be changed when re-splitting. Delete and re-enter the session to change who paid.',
+        )
+      }
+      // Derive the wallet customer ONCE so steps 1 and 2 can never target
+      // different people.
+      const walletCustomerId = priorCustomerId ?? customerId ?? null
+
+      if (netDebited > 0 && priorCustomerId) {
+        const customer = await db.customers.get(priorCustomerId)
+        if (customer) {
+          const restored = customer.walletBalance + netDebited
+          await b.insert('wallet_transactions', {
+            id: crypto.randomUUID(),
+            customerId: customer.id,
+            type: 'credit',
+            amount: netDebited,
+            balanceAfter: restored,
+            paymentMode: null,
+            referenceType: 'reversal',
+            referenceId: sessionId.toString(),
+            notes: `Re-split of session ${sessionId.slice(0, 8)}`,
+            createdAt: now,
+          } as WalletTransaction)
+          await b.update('customers', customer.id, { walletBalance: restored })
+        }
+      }
+
+      // ── 2. Apply the NEW wallet leg against the restored balance ──────────
+      if (wallet > 0) {
+        if (!walletCustomerId) throw new PaymentBreakdownInvalidError('A linked customer is required for wallet payments.')
+        // Re-read AFTER step 1: within this rw tx, the .get sees step-1's
+        // balance restore, so we never over/under-charge across edits. Uses the
+        // SAME customer step 1 restored (walletCustomerId), not the raw arg.
+        const customer = await db.customers.get(walletCustomerId)
+        if (!customer) throw new Error('Customer not found')
+        if (customer.walletBalance < wallet) {
+          throw new WalletInsufficientError(customer.walletBalance, wallet)
+        }
+        const newBalance = customer.walletBalance - wallet
+        await b.insert('wallet_transactions', {
+          id: crypto.randomUUID(),
+          customerId: customer.id,
+          type: 'debit',
+          amount: wallet,
+          balanceAfter: newBalance,
+          paymentMode: null,
+          referenceType: 'session',
+          referenceId: sessionId.toString(),
+          notes: null,
+          createdAt: now,
+        } as WalletTransaction)
+        await b.update('customers', customer.id, { walletBalance: newBalance, lastVisitAt: now })
+      }
+
+      // ── 3. Persist the new breakdown ──────────────────────────────────────
+      await b.update('sessions', sessionId, { paymentBreakdown: { cash, upi, wallet } })
+    },
+  )
+}
+
 /** Thrown by reverseSession when the target isn't a reversible completed session. */
 export class SessionReversalError extends Error {
   constructor(message: string) {
