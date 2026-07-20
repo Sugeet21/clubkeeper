@@ -553,6 +553,27 @@ export class ClubKeeperDB extends Dexie {
       bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
       _outbox: '++seq, table, op, rowId, createdAt',
     })
+    // Version 22: additive index only, no .upgrade() block. Adds `referenceId`
+    // to walletTransactions so the session-reversal (#162 reverseSession) and
+    // re-split (#163 resplitSessionPayment) code can query the ledger by
+    // referenceId. Those functions ran `.where('referenceId').equals(sessionId)`
+    // against a table that only indexed id/customerId/createdAt → Dexie threw
+    // "KeyPath referenceId on object store walletTransactions is not indexed"
+    // mid-save. Dexie backfills the index for existing rows on open. Only this
+    // one keyPath changes; every other store string is identical to v21.
+    this.version(22).stores({
+      gameTables: 'id, name, gameType, sortOrder, outOfService',
+      sessions: 'id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: 'id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, referenceId, [customerId+createdAt]',
+      canteenItems: 'id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+      bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
+      _outbox: '++seq, table, op, rowId, createdAt',
+    })
   }
 }
 

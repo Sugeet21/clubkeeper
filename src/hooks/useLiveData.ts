@@ -49,6 +49,11 @@ export function useSyncClubFromSupabase() {
         await db.settings.update(1, {
           slug: club.slug,
           slugLocked: true,
+          // upiId: fresh-device hydration (same class as #145). getOwnerClub
+          // returns it but it was never backfilled, so a fresh device showed the
+          // empty "e.g. example@upi" placeholder even though Supabase had the id.
+          // string|null on the DTO, string? in ClubSettings — skip null.
+          ...(local?.upiId === undefined && club.upiId !== null ? { upiId: club.upiId } : {}),
           ...(local?.acceptsTopups === undefined ? { acceptsTopups: club.acceptsTopups } : {}),
           ...(local?.coinsEnabled === undefined ? { coinsEnabled: club.coinsEnabled } : {}),
           ...(club.coinTiers.length > 0 && !local?.coinTiers?.length

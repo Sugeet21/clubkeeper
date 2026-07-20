@@ -33,7 +33,7 @@ Rules for this file: OVERWRITE in place, never append (Rule G lives here). One l
 - **Import / Export** — Atomic full-DB export/import, `ClubKeeperBackupV21`, 7 typed failure reasons, DEV round-trip self-test.
 - **Desktop responsiveness (#91)** — Verified for Tables/Canteen/Bookings/QuickSale/shared Modal/PaymentSplitSheet; Settings + Wallet-topup-success still mobile-only.
 - **PWA + deployment** — Vercel auto-deploy from `main`, SPA rewrite, per-user IndexedDB `ClubKeeperDB_<userId>`, custom domain `app.handbookhq.in`.
-- **Dexie schema** — **v21 current** (`CURRENT_SCHEMA_VERSION = 21`); v20 was the UUID migration; details in `references/data_model.md`.
+- **Dexie schema** — **v22 current** (`CURRENT_SCHEMA_VERSION = 22`); v22 = additive index only (`walletTransactions.referenceId`, for #162/#163 ledger-by-referenceId queries — fixed the "referenceId not indexed" throw); v20 was the UUID migration; details in `references/data_model.md`.
 - **Bug tracking** — GitHub issues ONLY authoritative; `history/bug_archive.md` is the offline pointer index.
 
 ## Load-bearing pending (blocks something; delete when resolved)

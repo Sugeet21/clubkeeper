@@ -4,6 +4,13 @@
 
 ---
 
+## 20 Jul 2026 — hotfix: "referenceId not indexed" crash on session reverse/re-split + UPI-ID fresh-device hydration
+
+- Two live-test bugs from owner's phone.
+- **Dexie "KeyPath referenceId ... is not indexed" thrown mid-save** on both `reverseSession` (#162) and `resplitSessionPayment` (#163): both ran `db.walletTransactions.where('referenceId').equals(sessionId)` but walletTransactions only indexed id/customerId/createdAt/[customerId+createdAt]. Fix: **Dexie schema v22** — additive index `referenceId` on walletTransactions (no `.upgrade()` block; Dexie backfills the index on open). `CURRENT_SCHEMA_VERSION` 21→22. referenceId is null on some rows (topups) — Dexie skips null keys, harmless since both queries only want referenceId===sessionId rows.
+- **UPI ID didn't sync to a fresh device** (same class as #145): Settings showed the empty `e.g. example@upi` placeholder though Supabase had the id. `getOwnerClub` already returned `upiId` but `useSyncClubFromSupabase` never backfilled it. Added the undefined-guarded backfill (skip null — string|null DTO into string? ClubSettings slot).
+- Build + strict tsc clean. STATE Dexie line → v22; ripple fresh-device-hydration invariant already covers the upiId case.
+
 ## 20 Jul 2026 — #145: fresh-device hydration for booking config (acceptsBookings + hours + per-slot advance)
 
 - P1 cross-device correctness bug (found during #97 RCA). On a fresh device / fresh browser profile the owner's booking config silently reset to defaults in the UI (Accept-bookings OFF, hours unset, per-slot ₹50) even though the Supabase clubs row had the real values and the player `/c/:slug` page kept honoring them — because the clubs row is mirror-only (not a Phase-C synced table) and `useSyncClubFromSupabase` backfilled only slug/topups/coins, never the booking fields. Risk: any owner-side re-save from the fresh device would clobber the good remote values.
