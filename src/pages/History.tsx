@@ -1,10 +1,12 @@
 import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { format, subDays, startOfDay, endOfDay, isToday, isYesterday } from 'date-fns'
 import { useSessionsInRange, useTables, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatDuration } from '../lib/time'
 import { calculateAmount } from '../lib/money'
 import { BackEntryModal } from '../components/BackEntryModal'
+import { Toggle } from '../components/Toggle'
 import { useRole } from '../hooks/useRole'
 import type { GameType, GameTable, Session } from '../types'
 
@@ -44,11 +46,15 @@ function SessionRow({
   table,
   currency,
   displayAmount,
+  editMode,
+  onOpen,
 }: {
   session: Session
   table: GameTable | undefined
   currency: string
   displayAmount: number
+  editMode: boolean
+  onOpen: (id: string) => void
 }) {
   const elapsed = getElapsedMs(session)
   const abbr = table ? tableAbbr(table.name) : '?'
@@ -73,8 +79,20 @@ function SessionRow({
     durationLabel = formatDuration(elapsed)
   }
 
+  // #162 — rows are inert by default (protects the money record). When the
+  // owner turns on the "Edit history" toggle, a row becomes a button that opens
+  // the session detail (where Delete / Edit Start Time live). Only completed
+  // sessions are openable for correction here.
+  const tappable = editMode && !!session.id
   return (
-    <div className="flex items-center gap-3 px-5 py-3.5 border-b border-border last:border-0">
+    <div
+      role={tappable ? 'button' : undefined}
+      tabIndex={tappable ? 0 : undefined}
+      onClick={tappable ? () => onOpen(session.id!) : undefined}
+      className={`flex items-center gap-3 px-5 py-3.5 border-b border-border last:border-0 ${
+        tappable ? 'cursor-pointer active:bg-bg-card transition-colors' : ''
+      }`}
+    >
       <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-mono font-bold text-[12px] shrink-0 ${badgeClass}`}>
         {abbr}
       </div>
@@ -102,6 +120,9 @@ function SessionRow({
         <p className="text-[15px] font-bold text-text tabular-nums">{currency}{displayAmount.toLocaleString('en-IN')}</p>
         <p className="text-[11px] text-text-faint font-mono mt-0.5">{durationLabel}</p>
       </div>
+      {tappable && (
+        <span className="text-text-faint shrink-0" aria-hidden="true">›</span>
+      )}
     </div>
   )
 }
@@ -167,6 +188,11 @@ function OwnerHistory() {
   // Number(uuid)=NaN so the filter dropdown never matched (#134 sibling).
   const [filterTableId, setFilterTableId] = useState<string | 'all'>('all')
   const [showBackEntry, setShowBackEntry] = useState(false)
+  // #162 — "Edit history" unlock. OFF by default so a stray tap can never open
+  // (and risk deleting) a past session — History is the money record. Not
+  // persisted: it resets to OFF every visit, so the unlock is always deliberate.
+  const [editMode, setEditMode] = useState(false)
+  const navigate = useNavigate()
 
   useTick()
 
@@ -288,6 +314,18 @@ function OwnerHistory() {
         </div>
       </div>
 
+      {/* #162 — Edit-history unlock. Locked by default; flip ON to make rows
+          tappable so a past session can be opened and corrected/deleted. */}
+      <div className="mx-5 mb-3 flex items-center justify-between bg-bg-card border border-border rounded-2xl px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-[14px] font-semibold text-text">Edit history</p>
+          <p className="text-[11px] text-text-faint mt-0.5">
+            {editMode ? 'Tap a session to open, edit or delete it' : 'Locked — turn on to correct a past session'}
+          </p>
+        </div>
+        <Toggle value={editMode} onChange={setEditMode} aria-label="Toggle edit history mode" />
+      </div>
+
       <BackEntryModal
         open={showBackEntry}
         onClose={() => setShowBackEntry(false)}
@@ -383,6 +421,8 @@ function OwnerHistory() {
                         table={tableMap.get(session.tableId)}
                         currency={currency}
                         displayAmount={base + itemsAmt}
+                        editMode={editMode}
+                        onOpen={(id) => navigate(`/session/${id}`)}
                       />
                     )
                   })}
