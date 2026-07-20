@@ -457,7 +457,29 @@ export async function editSessionStart(
     throw new Error('Start time must be before end time')
   }
 
-  await syncedUpdate<Session & { id: string }>('sessions', sessionId, { startedAt: newStartedAt })
+  // For a COMPLETED session, `amount` is a STORED value frozen at stop time —
+  // moving the start time changes the billable duration, so we MUST recompute
+  // it (and roundedDurationMs) with the exact same logic as stopSession, or the
+  // bill shows the stale amount while the elapsed clock shows the new duration
+  // (the "edited start but ₹ didn't change" bug). Running/paused sessions
+  // compute amount live in the render body (Pattern T4), so they need only the
+  // startedAt write — their amount follows automatically.
+  const patch: Partial<Session> = { startedAt: newStartedAt }
+  if (session.status === 'completed' && session.endedAt !== null) {
+    const rawElapsedMs = session.endedAt - newStartedAt - session.pausedTotalMs
+    const settings = await db.settings.get(1)
+    const isRateCard = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
+    let billableMs = rawElapsedMs
+    let roundedDurationMs: number | undefined
+    if (!isRateCard && session.billingMode === 'per_hour' && settings && settings.rounding !== 'none') {
+      roundedDurationMs = applyRounding(rawElapsedMs, settings.rounding)
+      billableMs = roundedDurationMs
+    }
+    patch.amount = calculateAmount(session, billableMs, settings?.rounding ?? 'none')
+    patch.roundedDurationMs = roundedDurationMs
+  }
+
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, patch)
 }
 
 export async function getTodaysSessions(): Promise<Session[]> {

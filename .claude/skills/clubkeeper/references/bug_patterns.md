@@ -50,6 +50,12 @@ const todayTotal = (todayStaticTotals?.completed ?? 0) + (todayStaticTotals?.ite
 **Root cause:** Action code never reads the setting.
 **Rule:** When adding any setting, grep for the action that uses it. If `stopSession()` should round time, `stopSession()` must read settings + call `applyRounding()`. Store the rounded value in its own field (e.g. `roundedDurationMs`) so display layers don't recompute.
 
+### Pattern T10 — Editing any time field of a COMPLETED session must recompute the stored `amount` (#164, 20 Jul 2026)
+**Symptom signature:** Owner edits a completed session's start (or end) time; the elapsed clock updates but the money (Table time / bill total) shows the OLD value — bill and duration disagree.
+**Root cause:** For `status === 'completed'`, `amount` is a STORED field frozen at `stopSession`. Running/paused sessions recompute amount live in the render body (Pattern T4), so a time edit "just works" for them — but a completed session's stored `amount` is stale until explicitly recomputed. `editSessionStart` originally wrote only `startedAt`.
+**Rule:** Any mutation of a completed session's `startedAt`/`endedAt`/`pausedTotalMs` MUST recompute `amount` (+ `roundedDurationMs`) via the SAME path as `stopSession`: `billableMs = endedAt - startedAt - pausedTotalMs` → `applyRounding` (only when `!rateCard && billingMode==='per_hour' && rounding!=='none'`) → `calculateAmount(session, billableMs, rounding)`. Never write a completed-session time field alone. This applies to #163 (edit-in-place) too — every time/canteen edit re-derives the bill.
+**Files:** `src/db/queries.ts` (`editSessionStart`; future edit-in-place paths).
+
 ### Pattern T3 — Rate snapshot per session
 **Rule:** Each session stores its own `rateSnapshot` at start. Editing a table's rate later does NOT change in-progress sessions. This is load-bearing — never use the live table rate for an active session.
 
