@@ -37,9 +37,15 @@ export function useSyncClubFromSupabase() {
         if (!club) return
         const local = await db.settings.get(1)
         // slug + slugLocked: always mirror from Supabase (source of truth).
-        // acceptsTopups / coinsEnabled / coinTiers: only fill in when Dexie
-        // has no value yet (undefined). If the owner toggled these on THIS
-        // device, Dexie already has a value — don't race-overwrite it.
+        // acceptsTopups / coinsEnabled / coinTiers / booking-config: only fill
+        // in when Dexie has no value yet (undefined). If the owner toggled these
+        // on THIS device, Dexie already has a value — don't race-overwrite it.
+        // #145 — booking-config fields (acceptsBookings + hours + per-slot advance)
+        // had NO fresh-device hydration path; the clubs row is mirror-only (not a
+        // Phase-C synced table), so a fresh device showed booking OFF/defaults even
+        // though Supabase + the player /c/:slug page had the real values. Same
+        // undefined-guard as acceptsTopups. hours are number|null on the DTO but
+        // number? in ClubSettings — skip null so we never write null into a number slot.
         await db.settings.update(1, {
           slug: club.slug,
           slugLocked: true,
@@ -47,6 +53,16 @@ export function useSyncClubFromSupabase() {
           ...(local?.coinsEnabled === undefined ? { coinsEnabled: club.coinsEnabled } : {}),
           ...(club.coinTiers.length > 0 && !local?.coinTiers?.length
             ? { coinTiers: club.coinTiers }
+            : {}),
+          ...(local?.acceptsBookings === undefined ? { acceptsBookings: club.acceptsBookings } : {}),
+          ...(local?.bookingOpenMinutes === undefined && club.bookingOpenMinutes !== null
+            ? { bookingOpenMinutes: club.bookingOpenMinutes }
+            : {}),
+          ...(local?.bookingCloseMinutes === undefined && club.bookingCloseMinutes !== null
+            ? { bookingCloseMinutes: club.bookingCloseMinutes }
+            : {}),
+          ...(local?.bookingAdvancePerSlot === undefined
+            ? { bookingAdvancePerSlot: club.bookingAdvancePerSlot }
             : {}),
         })
       })

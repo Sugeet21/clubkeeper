@@ -4,6 +4,13 @@
 
 ---
 
+## 20 Jul 2026 — #145: fresh-device hydration for booking config (acceptsBookings + hours + per-slot advance)
+
+- P1 cross-device correctness bug (found during #97 RCA). On a fresh device / fresh browser profile the owner's booking config silently reset to defaults in the UI (Accept-bookings OFF, hours unset, per-slot ₹50) even though the Supabase clubs row had the real values and the player `/c/:slug` page kept honoring them — because the clubs row is mirror-only (not a Phase-C synced table) and `useSyncClubFromSupabase` backfilled only slug/topups/coins, never the booking fields. Risk: any owner-side re-save from the fresh device would clobber the good remote values.
+- `getOwnerClub` (playerHubApi.ts): the owner DTO only selected `accepts_bookings` + the deprecated `booking_advance_amount`. Added `booking_open_minutes`, `booking_close_minutes`, `booking_advance_per_slot` to the `.select()` + `ClubRow` shape + return mapper (null-coalesced, per-slot default 50) so there IS a hydration source.
+- `useSyncClubFromSupabase` (useLiveData.ts): added the same undefined-guarded backfill used for acceptsTopups for all 4 booking fields (never race-overwrite a locally-toggled value — Pattern R4). The two `number|null` hour fields also guard `!== null` so we never write null into their `number?` ClubSettings slots.
+- Client-only fix, NO migration. Build + strict tsc clean. ripple_effects §Player-Hub / Settings mirror note updated.
+
 ## 20 Jul 2026 — #162: owner can delete a completed session with FULL atomic undo (Layer 2 of session-correction)
 
 - The core correction feature. Owner opens a completed session → "Delete Session" (owner-only) → confirm modal shows exactly what reverses (removed from totals, N items → stock, wallet credit, cash → piggy) + optional reason → `reverseSession(id, reason)` undoes everything in ONE syncedBatch, then owner re-enters the correct one via Back Entry.

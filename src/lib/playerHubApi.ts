@@ -114,12 +114,17 @@ export interface ClubRow {
   // v17 — advance booking
   acceptsBookings: boolean
   bookingAdvanceAmount: number
+  // #145 — per-club hours + per-30-min-slot advance (#84/#106). Without these
+  // in the owner DTO there is no fresh-device hydration path for them.
+  bookingOpenMinutes: number | null
+  bookingCloseMinutes: number | null
+  bookingAdvancePerSlot: number
 }
 
 export async function getOwnerClub(): Promise<ClubRow | null> {
   const { data, error } = await supabase
     .from('clubs')
-    .select('id, slug, club_name, upi_id, accepts_topups, coins_enabled, coin_tiers_json, accepts_bookings, booking_advance_amount')
+    .select('id, slug, club_name, upi_id, accepts_topups, coins_enabled, coin_tiers_json, accepts_bookings, booking_advance_amount, booking_open_minutes, booking_close_minutes, booking_advance_per_slot')
     .maybeSingle()
   if (error) throw error
   if (!data) return null
@@ -133,6 +138,9 @@ export async function getOwnerClub(): Promise<ClubRow | null> {
     coinTiers: (data.coin_tiers_json as CoinTier[] | null) ?? [],
     acceptsBookings: (data.accepts_bookings as boolean | null) ?? false,
     bookingAdvanceAmount: (data.booking_advance_amount as number | null) ?? 100,
+    bookingOpenMinutes: (data.booking_open_minutes as number | null) ?? null,
+    bookingCloseMinutes: (data.booking_close_minutes as number | null) ?? null,
+    bookingAdvancePerSlot: (data.booking_advance_per_slot as number | null) ?? 50,
   }
 }
 
