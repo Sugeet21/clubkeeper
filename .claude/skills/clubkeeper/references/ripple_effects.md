@@ -297,7 +297,7 @@ Files in scope:
 - `src/db/database.ts` — v12 (additive, no index)
 - `src/db/queries.ts` — `createBackEntry`, `BackEntryInput`, `BackEntryItemInput`, `BackEntryOverlapError` (`.conflictingSession: Session`), `InsufficientStockError(available, itemName)`
 - `src/lib/validation.ts` — `validateBackEntry` (reuses `validatePlayerName`, `validateNote`)
-- `src/components/BackEntryModal.tsx` — Phase 1 + Phase 2 UI; canteen chips with out-of-stock dimming, draft items list with +/− stepper + × remove, collapsible manual form, price-mismatch inline warning, extended preview (Duration / Table Amt / Items / Grand Total)
+- `src/components/BackEntryModal.tsx` — Phase 1 + Phase 2 UI; draft items list with +/− stepper + × remove, collapsible manual form, price-mismatch inline warning, extended preview (Duration / Table Amt / Items / Grand Total). **#167: the old horizontal-scroll canteen chip row is now the shared `<CanteenItemPicker>` with `usePeakPricing={false}` (historical log → always `defaultPrice`, no peak tag) + `getBadgeCount`=draft qty. `handleCanteenChipTap` (merges into `draftItems`) is the `onSelect`.**
 - `src/pages/History.tsx` — entry button + modal mount + `Logged` badge on `session.isBackEntry`
 
 Invariants:
@@ -333,7 +333,8 @@ Files in scope:
 - `src/hooks/useLiveData.ts` — `useSessionItems`
 - `src/lib/money.ts` — `calculateItemsTotal`
 - `src/lib/canteenMatch.ts` — `normalizeName`, `findMatchingCanteenItem`, `findMatchingCanteenItemForRow`
-- `src/components/AddItemBottomSheet.tsx` — all add/edit/delete UI. Since the 20 Jul redesign there are 3 add paths: **canteen grid tap** (search + `grid-cols-2 sm:grid-cols-3`, `×N added` badge; replaced the horizontal-scroll chip row), manual matched, manual freeform. The **quick-add/recently-sold path was REMOVED** (`useRecentItems`/`quickAddItems`/`handleQuickAddChipTap` deleted) — canteen items are now searchable in the grid so the recent shortcut is redundant.
+- `src/components/AddItemBottomSheet.tsx` — all add/edit/delete UI. Since the 20 Jul redesign there are 3 add paths: **canteen grid tap** (search + `grid-cols-2 sm:grid-cols-3`, `×N added` badge; replaced the horizontal-scroll chip row), manual matched, manual freeform. The **quick-add/recently-sold path was REMOVED** (`useRecentItems`/`quickAddItems`/`handleQuickAddChipTap` deleted) — canteen items are now searchable in the grid so the recent shortcut is redundant. **#167: the grid itself is now the shared `<CanteenItemPicker>` (`src/components/CanteenItemPicker.tsx`)** — this file supplies `onSelect=handleCanteenChipTap` (the D7 atomic tx STAYS here) + `getBadgeCount` (live session count); the picker owns search/grid/peak-tag/out-of-stock styling.
+- `src/components/CanteenItemPicker.tsx` — **shared searchable canteen tap-grid (#167).** Used by the 3 "tap-to-add" surfaces: AddItemBottomSheet, QuickSale, BackEntryModal. Props: `items, onSelect, getBadgeCount?, peakNow, peakCfg, usePeakPricing?(true), disabled?, searchThreshold?(6), label?, showStock?`. Owns ONLY presentation (search filter via `normalizeName`, grid, peak tag, out-of-stock disable+dim, `×N` badge, optional "N left" pill). Owns NO stock/tx logic — the caller's `onSelect` does that. Out-of-stock tap is BLOCKED (disabled tile) in every surface. NOT used by the Canteen management page (those cards are edit/delete/restock, not add). **Ripple: a change here hits all 3 surfaces at once — verify session-add (peak on, ×N session), back-entry (peak OFF → defaultPrice, ×N draft), quick-sale (showStock on, ×N cart) after any edit.**
 - `src/pages/SessionDetail.tsx` — bill split section, grandTotal, sheet mount
 - `src/pages/Home.tsx`, `src/pages/Summary.tsx`, `src/pages/History.tsx` — `todayTotals`, `itemsTotalForDate`, `itemsBySessionId`, CSV columns
 
@@ -467,7 +468,7 @@ Files in scope:
 - `src/db/database.ts` — v13 `canteenSales: 'id, createdAt, customerId'`
 - `src/db/queries.ts` — `createCanteenSale`, `CanteenSaleInvalidError`, `CanteenSaleStockError(itemName, available)`, `getCanteenSalesByDate`
 - `src/types/walletTransaction.ts` — `WalletReferenceType` extended with `'canteen_sale'`
-- `src/pages/QuickSale.tsx` — only writer (v1: no edit flow). Cart with `−`/`✕` controls, sticky Continue-to-Payment, reuses `PaymentSplitSheet`. Post-confirm UPI QR screen (fix #69, 14 Jun 2026) shows only the UPI split amount, not subtotal.
+- `src/pages/QuickSale.tsx` — only writer (v1: no edit flow). Cart with `−`/`✕` controls, sticky Continue-to-Payment, reuses `PaymentSplitSheet`. Post-confirm UPI QR screen (fix #69, 14 Jun 2026) shows only the UPI split amount, not subtotal. **#167: item list is now the shared `<CanteenItemPicker>` (`showStock` on for the "N left" pill, `getBadgeCount`=cart qty); the old local `ItemCard` + the Part-1 search box were deleted (picker owns search). `addToCart` keeps a now-unreachable out-of-stock toast as commented defensive code (picker blocks the tap).**
 - `src/components/TopBar.tsx` — `+ Quick Sale` pill on date subtitle row (conditional on `onQuickSalePress?: () => void`)
 - `src/pages/Summary.tsx` — `canteenSalesForDate` live query feeds canteen revenue tile + PAYMENT MODE + piggy cashIn
 - `src/pages/History.tsx` — **(#165) History is a READER of `canteenSales`.** `useCanteenSalesInRange` merges walk-in sales into the day groups as a distinct `CanteenSaleRow`, into `dayGrandTotal`, and into CSV export. Read-only (reversal is #166). Excluded when a specific table is selected in the filter dropdown.

@@ -7,9 +7,11 @@ import { validateBackEntry, validateItemName } from '../lib/validation'
 import { calculateAmount, calculateItemsTotal } from '../lib/money'
 import { formatDuration } from '../lib/time'
 import { normalizeName, findMatchingCanteenItem, findCanteenItemByName } from '../lib/canteenMatch'
+import { getPeakConfig } from '../lib/peakPricing'
 import { useTables, useSettings } from '../hooks/useLiveData'
 import { useToastStore } from '../store/toastStore'
 import { db } from '../db/database'
+import { CanteenItemPicker } from './CanteenItemPicker'
 import type { Session, CanteenItem, SessionItem } from '../types'
 
 interface BackEntryModalProps {
@@ -78,6 +80,18 @@ export function BackEntryModal({ open, onClose, onSaved }: BackEntryModalProps) 
 
   // ── Items draft ─────────────────────────────────────────────────────────────
   const [draftItems, setDraftItems] = useState<DraftItem[]>([])
+  // Picker plumbing (#167). Peak pricing is OFF for back entries (historical),
+  // so peakNow/peakCfg are inert — passed only to satisfy the shared component.
+  const peakCfg = useMemo(() => getPeakConfig(settings), [settings])
+  const peakNow = useMemo(() => new Date(), [])
+  const draftCountByName = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const d of draftItems) {
+      const key = normalizeName(d.name)
+      m.set(key, (m.get(key) ?? 0) + d.quantity)
+    }
+    return m
+  }, [draftItems])
   const [manualOpen, setManualOpen] = useState(false)
   const [manualName, setManualName] = useState('')
   const [manualPrice, setManualPrice] = useState('')
@@ -456,39 +470,20 @@ export function BackEntryModal({ open, onClose, onSaved }: BackEntryModalProps) 
             Items (optional)
           </p>
 
-          {/* Canteen chips */}
+          {/* Canteen picker — shared <CanteenItemPicker> (#167). usePeakPricing
+              is OFF: a back entry logs a historical session, so today's peak
+              window is irrelevant — always the defaultPrice. ×N badge = draft
+              qty by normalized name. */}
           {canteenItems.length > 0 && (
             <div className="mb-3">
-              <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-                {canteenItems.map((ci) => {
-                  const outOfStock = ci.stockEnabled && (ci.currentStock ?? 0) <= 0
-                  return (
-                    <button
-                      key={ci.id}
-                      type="button"
-                      disabled={outOfStock}
-                      onClick={() => handleCanteenChipTap(ci)}
-                      className={`min-h-[44px] px-4 border rounded-full text-sm flex flex-col items-center justify-center shrink-0 transition-colors ${
-                        outOfStock
-                          ? 'bg-bg-card border-border text-text-faint opacity-50 cursor-not-allowed'
-                          : 'bg-bg-card border-border text-text active:scale-95 transition-transform'
-                      }`}
-                    >
-                      <span className="font-medium whitespace-nowrap">
-                        {ci.name}{' '}
-                        <span className="font-mono text-text-dim text-xs">
-                          ₹{ci.defaultPrice.toLocaleString('en-IN')}
-                        </span>
-                      </span>
-                      {outOfStock && (
-                        <span className="text-[10px] font-mono text-busy leading-none mt-0.5">
-                          Out of stock
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
+              <CanteenItemPicker
+                items={canteenItems}
+                onSelect={handleCanteenChipTap}
+                getBadgeCount={(ci) => draftCountByName.get(normalizeName(ci.name)) ?? 0}
+                peakNow={peakNow}
+                peakCfg={peakCfg}
+                usePeakPricing={false}
+              />
             </div>
           )}
 

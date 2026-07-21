@@ -4,6 +4,17 @@
 
 ---
 
+## 21 Jul 2026 — #167 (part 2): shared CanteenItemPicker extracted + adopted in 3 surfaces
+
+- Root-cause fix for the drift that spawned #167: the 20 Jul searchable tap-grid lived only in `AddItemBottomSheet`. Extracted it to **`src/components/CanteenItemPicker.tsx`** (searchable 2/3-col grid, out-of-stock + peak aware, `×N` badge). Props: `items, onSelect, getBadgeCount?, peakNow, peakCfg, usePeakPricing?(true), disabled?, searchThreshold?(6), label?, showStock?`. Caller owns the tap semantics + badge source; component owns search/grid/peak-tag/out-of-stock styling.
+- Adopted in the three "tap-to-add" surfaces (net −7 LOC — extraction removed more than it added):
+  - **AddItemBottomSheet** — `onSelect=handleCanteenChipTap` (atomic add+stock decrement stays in the caller, Pattern D7 intact), `×N`=live session count, peak ON, `label="Canteen items"`.
+  - **BackEntryModal** — replaced the old horizontal-scroll chip row; `usePeakPricing={false}` (historical log → `defaultPrice`, no peak tag), `×N`=draft qty. First time BackEntry got the grid+search upgrade.
+  - **QuickSale** — replaced the single-col `ItemCard` list (deleted); `×N`=cart qty, `showStock` keeps the live "N left" pill a cashier needs, peak ON. The Part-1 QuickSale search box is now redundant (picker owns search) and was removed.
+- **Canteen management PAGE deliberately NOT migrated** — its cards carry edit/delete/restock actions, not "add"; it keeps the plain Part-1 search box over its own list. Documented in the component header (Rule L).
+- Out-of-stock tap BLOCKED everywhere (owner decision): dimmed+disabled, no toast. QuickSale's now-unreachable oversell toast kept as commented defensive code (review note).
+- Reviewer agent: **VERDICT SHIP**, zero blocking violations; confirmed no D7 tx logic leaked into the shared component, no `noUnusedLocals` casualties, stock pill/peak tag/badge all preserved. Build + strict tsc clean.
+
 ## 21 Jul 2026 — #167 (part 1): search boxes on Canteen page + Quick Sale
 
 - Owner ask: restocking meant scrolling the whole canteen list to find an item; same friction on Quick Sale.

@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { getCanteenItems, createCanteenSale, CanteenSaleStockError } from '../db/queries'
-import { normalizeName } from '../lib/canteenMatch'
 import { useToastStore } from '../store/toastStore'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
+import { CanteenItemPicker } from '../components/CanteenItemPicker'
 import { useSettings } from '../hooks/useLiveData'
-import { getEffectivePrice, getPeakConfig, isInPeakWindow } from '../lib/peakPricing'
+import { getEffectivePrice, getPeakConfig } from '../lib/peakPricing'
 import type { CanteenItem } from '../types'
 
 interface CartLine {
@@ -24,15 +24,6 @@ export default function QuickSale() {
   const settings = useSettings()
 
   const items = useLiveQuery(() => getCanteenItems(false), [])
-  // #167 — search box so a walk-in item can be found without scrolling.
-  // Reuses normalizeName (Rule L). Empty query = full list.
-  const [search, setSearch] = useState('')
-  const filteredItems = useMemo(() => {
-    if (items === undefined) return undefined
-    const q = normalizeName(search)
-    if (!q) return items
-    return items.filter((it) => normalizeName(it.name).includes(q))
-  }, [items, search])
   const [cart, setCart] = useState<Map<string, CartLine>>(new Map())
   const [paymentOpen, setPaymentOpen] = useState(false)
   // After a successful sale with upi > 0, store the UPI amount to show the QR screen.
@@ -49,12 +40,15 @@ export default function QuickSale() {
     const id = window.setInterval(() => setPeakNow(new Date()), 60_000)
     return () => window.clearInterval(id)
   }, [peakCfg.enabled])
-  const peakActive = isInPeakWindow(peakNow, peakCfg)
+  // (peak-active tile styling now lives inside <CanteenItemPicker>)
 
   function addToCart(item: CanteenItem) {
     if (item.id === undefined) return
     const stockEnabled = item.stockEnabled === true
     const currentStock = item.currentStock ?? 0
+    // Defensive — CanteenItemPicker disables the out-of-stock tile so this
+    // path is unreachable today. Keep it: it's the only oversell guard if
+    // addToCart is ever wired to a non-picker caller. (#167 review note.)
     if (stockEnabled && currentStock <= 0) {
       showToast('Out of stock — restock first')
       return
@@ -228,23 +222,13 @@ export default function QuickSale() {
         </div>
       </div>
 
-      {/* Items list */}
+      {/* Items — shared <CanteenItemPicker> (#167). Grid + search + ×N cart
+          badge, matching the in-session Add Item sheet. showStock keeps the
+          live "N left" pill a walk-in cashier relies on. */}
       <div className="px-5 pb-2">
         <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint mb-2">
           Items
         </p>
-        {/* Search box (#167) — only worth showing once the list is long enough
-            to scroll (matches AddItemBottomSheet's >6 threshold). */}
-        {items !== undefined && items.length > 6 && (
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search items…"
-            aria-label="Search canteen items"
-            className="w-full bg-bg-card border border-border rounded-2xl px-4 py-3 mb-2 text-text text-[15px] focus:border-accent focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint"
-          />
-        )}
         {items === undefined ? (
           <div className="space-y-2">
             {[1, 2, 3].map((i) => (
@@ -261,23 +245,15 @@ export default function QuickSale() {
               Manage canteen →
             </button>
           </div>
-        ) : filteredItems!.length === 0 ? (
-          <p className="text-[13px] text-text-dim py-8 text-center">
-            No items match “{search.trim()}”.
-          </p>
         ) : (
-          <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-2">
-            {filteredItems!.map((item) => (
-              <ItemCard
-                key={item.id}
-                item={item}
-                onTap={() => addToCart(item)}
-                cartQty={cart.get(item.id!)?.quantity ?? 0}
-                peakActive={peakActive}
-                effectivePrice={getEffectivePrice(item, peakNow, peakCfg)}
-              />
-            ))}
-          </div>
+          <CanteenItemPicker
+            items={items}
+            onSelect={addToCart}
+            getBadgeCount={(ci) => cart.get(ci.id!)?.quantity ?? 0}
+            peakNow={peakNow}
+            peakCfg={peakCfg}
+            showStock
+          />
         )}
       </div>
 
@@ -369,67 +345,5 @@ export default function QuickSale() {
         onConfirm={handleConfirmPayment}
       />
     </div>
-  )
-}
-
-// ── ItemCard ────────────────────────────────────────────────────────────────
-
-function ItemCard({
-  item,
-  onTap,
-  cartQty,
-  peakActive,
-  effectivePrice,
-}: {
-  item: CanteenItem
-  onTap: () => void
-  cartQty: number
-  peakActive: boolean
-  effectivePrice: number
-}) {
-  const stockEnabled = item.stockEnabled === true
-  const stock = item.currentStock ?? 0
-  const outOfStock = stockEnabled && stock <= 0
-  const showPeakTag = peakActive && typeof item.peakPrice === 'number' && item.peakPrice > 0
-  return (
-    <button
-      onClick={onTap}
-      disabled={outOfStock}
-      className={
-        outOfStock
-          ? 'w-full flex items-center gap-3 bg-bg-card border border-border rounded-2xl px-4 py-3 text-left opacity-60 cursor-not-allowed'
-          : 'w-full flex items-center gap-3 bg-bg-card border border-border rounded-2xl px-4 py-3 text-left active:scale-[0.99] transition-transform'
-      }
-    >
-      <div className="flex-1 min-w-0">
-        <p className="text-text text-[15px] font-semibold truncate">{item.name}</p>
-        <p className="text-xs mt-0.5 flex items-center gap-1.5">
-          <span className={showPeakTag ? 'text-paused font-bold tabular-nums' : 'text-text-dim tabular-nums'}>
-            ₹{effectivePrice.toLocaleString('en-IN')}
-          </span>
-          {showPeakTag && (
-            <span className="text-[9px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-paused/15 text-paused leading-none">
-              Peak
-            </span>
-          )}
-        </p>
-      </div>
-      {stockEnabled && (
-        <span
-          className={
-            outOfStock
-              ? 'text-[10px] font-mono font-bold px-2 py-1 rounded-full bg-busy/15 text-busy whitespace-nowrap'
-              : 'text-[10px] font-mono px-2 py-1 rounded-full bg-bg text-text-faint whitespace-nowrap'
-          }
-        >
-          {outOfStock ? 'Out of stock' : `${stock} left`}
-        </span>
-      )}
-      {cartQty > 0 && (
-        <span className="text-[11px] font-mono font-bold px-2 py-1 rounded-full bg-accent/15 text-accent whitespace-nowrap">
-          × {cartQty}
-        </span>
-      )}
-    </button>
   )
 }

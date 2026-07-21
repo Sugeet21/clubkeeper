@@ -7,7 +7,8 @@ import { syncedBatch } from '../db/syncWrappers'
 import { useToastStore } from '../store/toastStore'
 import { validateItemName } from '../lib/validation'
 import { normalizeName, findMatchingCanteenItem, findCanteenItemByName } from '../lib/canteenMatch'
-import { getEffectivePrice, getPeakConfig, isInPeakWindow } from '../lib/peakPricing'
+import { getEffectivePrice, getPeakConfig } from '../lib/peakPricing'
+import { CanteenItemPicker } from './CanteenItemPicker'
 import type { SessionItem, CanteenItem } from '../types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -118,7 +119,7 @@ export function AddItemBottomSheet({
     const id = window.setInterval(() => setPeakNow(new Date()), 60_000)
     return () => window.clearInterval(id)
   }, [open, peakCfg.enabled])
-  const peakActive = isInPeakWindow(peakNow, peakCfg)
+  // (peak-active styling now lives inside <CanteenItemPicker>)
 
   // Post-v20 ID law (Pattern R5): session_item ids are UUID strings; was `number`
   // so `editingId === item.id` never matched and updateSessionItem got a
@@ -135,16 +136,9 @@ export function AddItemBottomSheet({
 
   const isReadOnly = sessionStatus === 'completed'
 
-  // ─── Canteen picker: search + grid (redesign 20 Jul) ──────────────────────
-  // Replaces the horizontal-scroll chip row + the recently-sold "Quick add"
-  // section. Staff scroll a grid and can filter by name when the list is long.
-  const [search, setSearch] = useState('')
-  const filteredCanteenItems = useMemo(() => {
-    const list = canteenItems ?? []
-    const q = normalizeName(search)
-    if (!q) return list
-    return list.filter((ci) => normalizeName(ci.name).includes(q))
-  }, [canteenItems, search])
+  // Canteen picker is the shared <CanteenItemPicker> (#167) — it owns its own
+  // search box + grid. This component only supplies the tap handler + the ×N
+  // badge count below.
 
   // How many of each canteen item are already in THIS session, keyed by
   // normalized NAME only. Drives the "×N" added badge for instant-add feedback.
@@ -184,7 +178,6 @@ export function AddItemBottomSheet({
       setError(null)
       setManualOpen(false)
       setPriceWarning(null)
-      setSearch('')
     }
   }, [open])
 
@@ -458,81 +451,20 @@ export function AddItemBottomSheet({
           {!isReadOnly && (
             <div className="mb-5">
 
-              {/* 1. Canteen picker — search + grid (redesign 20 Jul). Tap adds
-                     instantly + decrements stock (unchanged behavior). Grid
-                     (2 cols narrow / 3 wider) replaces the horizontal scroll;
-                     search filters when the list is long. */}
+              {/* 1. Canteen picker — shared <CanteenItemPicker> (#167). Tap adds
+                     instantly + decrements stock (handleCanteenChipTap). ×N badge
+                     = live session count by normalized name. */}
               {(canteenItems ?? []).length > 0 && (
                 <div className="mb-4">
-                  <p className="text-[10px] uppercase tracking-widest font-mono text-text-faint mb-2">
-                    Canteen items
-                  </p>
-
-                  {/* Search box — only worth showing once the list is long enough
-                      to scroll. Below that, the grid alone is faster. */}
-                  {(canteenItems ?? []).length > 6 && (
-                    <input
-                      type="text"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search items…"
-                      aria-label="Search canteen items"
-                      className="w-full bg-bg border border-border rounded-xl px-4 py-2.5 mb-3 text-text text-[15px] focus:border-accent focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint"
-                    />
-                  )}
-
-                  {filteredCanteenItems.length === 0 ? (
-                    <p className="text-[13px] text-text-dim py-3 text-center">
-                      No items match “{search.trim()}”.
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {filteredCanteenItems.map((ci) => {
-                        const outOfStock = ci.stockEnabled && ci.currentStock === 0
-                        const effectivePrice = getEffectivePrice(ci, peakNow, peakCfg)
-                        const showPeakTag = peakActive && typeof ci.peakPrice === 'number' && ci.peakPrice > 0
-                        const addedCount = addedCountByName.get(normalizeName(ci.name)) ?? 0
-                        return (
-                          <button
-                            key={ci.id}
-                            type="button"
-                            disabled={outOfStock || submitting}
-                            onClick={() => handleCanteenChipTap(ci)}
-                            className={`relative min-h-[60px] px-3 py-2 border rounded-2xl text-sm flex flex-col items-center justify-center text-center transition-colors ${
-                              outOfStock
-                                ? 'bg-bg-card border-border text-text-faint opacity-50 cursor-not-allowed'
-                                : addedCount > 0
-                                  ? 'bg-accent/10 border-accent/50 text-text active:scale-95 transition-transform'
-                                  : 'bg-bg-card border-border text-text active:scale-95 transition-transform'
-                            }`}
-                          >
-                            {/* ×N added badge — visible feedback for instant-add */}
-                            {addedCount > 0 && (
-                              <span className="absolute top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-bg text-[10px] font-mono font-bold flex items-center justify-center leading-none">
-                                ×{addedCount}
-                              </span>
-                            )}
-                            <span className="font-medium leading-tight line-clamp-2">{ci.name}</span>
-                            <span className="mt-0.5 inline-flex items-center gap-1">
-                              <span className={`font-mono text-xs ${showPeakTag ? 'text-paused font-bold' : 'text-text-dim'}`}>
-                                ₹{effectivePrice.toLocaleString('en-IN')}
-                              </span>
-                              {showPeakTag && (
-                                <span className="text-[9px] font-mono font-bold uppercase tracking-widest px-1 py-0.5 rounded-full bg-paused/15 text-paused leading-none">
-                                  Peak
-                                </span>
-                              )}
-                            </span>
-                            {outOfStock && (
-                              <span className="text-[10px] font-mono text-busy leading-none mt-0.5">
-                                Out of stock
-                              </span>
-                            )}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
+                  <CanteenItemPicker
+                    items={canteenItems ?? []}
+                    onSelect={handleCanteenChipTap}
+                    getBadgeCount={(ci) => addedCountByName.get(normalizeName(ci.name)) ?? 0}
+                    peakNow={peakNow}
+                    peakCfg={peakCfg}
+                    disabled={submitting}
+                    label="Canteen items"
+                  />
                 </div>
               )}
 
