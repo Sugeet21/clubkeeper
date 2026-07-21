@@ -154,7 +154,7 @@ Owns: `Session` interface, session lifecycle (start/pause/resume/stop), timer ma
 
 Files in scope:
 - `src/types/index.ts` — `Session`, `PaymentBreakdown`, `TableMove`
-- `src/db/queries.ts` — `startSession`, `pauseSession`, `resumeSession`, `stopSession`, `editSessionStart`, `pauseForPayment`, `confirmPaymentAndStop`, `cancelPaymentAndResume`
+- `src/db/queries.ts` — `startSession`, `pauseSession`, `resumeSession`, `stopSession`, `editSessionStart`, `pauseForPayment`, `confirmPaymentAndStop`, `cancelPaymentAndResume`, `reconcileActiveSessions` + `compareSessionCanonical` + `TableBusyError` + `returnSessionItemStock` (#168, Pattern T11)
 - `src/lib/time.ts` — `getElapsedMs`
 - `src/lib/money.ts` — `calculateAmount`, `applyRounding`
 - `src/lib/summaryMath.ts` — pure aggregation called from Summary render body
@@ -172,6 +172,8 @@ Invariants:
 - Stop-session flow is PAUSE-FIRST: SessionDetail UI calls `pauseForPayment` → `PaymentSplitSheet` → `confirmPaymentAndStop`. NEVER call `stopSession()` directly from SessionDetail UI. `stopSession()` remains for back-entry and legacy programmatic stops.
 - Only ONE post-Stop screen exists (#77, 14 Jun 2026) — the POST-confirm screen driven by `confirmedBreakdown.upi`. Legacy pre-record full-amount QR (`paymentScreenOpen`) is deleted. `PaymentSplitSheet` opens directly after Pause.
 - `Session.paymentInProgress?: boolean` is set by `pauseForPayment`, cleared by both confirm and cancel.
+- **One active session per table (Invariant #1) is enforced at TWO layers (#168, Pattern T11), never the UI alone.** (1) `startSession()` re-checks `getActiveSessionForTable` and throws `TableBusyError`; `StartSession.handleSubmit` catches it → redirects to the existing session. (2) `reconcileActiveSessions()` self-heals cross-device dups LWW can create — keeps the CANONICAL row (`compareSessionCanonical` = earliest `startedAt`, id tie-break) and tombstones the rest (returning canteen stock via the shared `returnSessionItemStock`, NO wallet leg — active sessions are unpaid). Fired from `Home` `useEffect` on `sessionMap.size < activeSessions.length`. **`getActiveSessionForTable` (redirect target) and `reconcileActiveSessions` (survivor) MUST share `compareSessionCanonical`** or a tie sends the user to a soon-tombstoned row. **Every active-session reader filters `!deletedAt`** (`getActiveSessionForTable`, `getAllActiveSessions`, `useActiveSessions`). **`Home.runningCount` counts unique running `tableId`s, not rows**, so the header matches the per-table cards.
+- **`returnSessionItemStock(b, sessionId, now)` is the SHARED stock-return-+-item-soft-delete helper** (extracted from `reverseSession`, #162). Both `reverseSession` (completed session) and `reconcileActiveSessions` (active dup) call it. Change the two-phase lost-update logic in ONE place. Caller owns the session tombstone + any wallet leg; the helper touches only `session_items` + `canteen_items` (caller's `syncedBatch` MUST list both).
 - "Paying…" badge on `TableCard` requires `session.paymentInProgress === true` on the paused branch (distinct from regular "Paused").
 - `Session` has NO `customerId` field. Wallet linkage = `WalletTransaction.referenceId = sessionId.toString()`.
 - **Pattern T4** for any aggregate including running sessions: DB-static sums in `useLiveQuery`; running-session calc in render body via `getElapsedMs`+`calculateAmount`; combine. NEVER place the running calc inside `useLiveQuery`.

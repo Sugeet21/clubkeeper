@@ -10,6 +10,7 @@ import {
   getUpcomingBookingsForTable,
   linkBookingToSession,
   BookingAlreadyConsumedError,
+  TableBusyError,
 } from '../db/queries'
 import { validatePlayerName, validateNote, NOTE_MAX } from '../lib/validation'
 import { NOTIFY_PRESETS } from '../lib/notifyPresets'
@@ -232,6 +233,15 @@ export default function StartSession() {
 
       navigate(`/session/${newId}`, { replace: true })
     } catch (err) {
+      // #168 — startSession enforces Invariant #1 at the write choke-point. If a
+      // dup landed between our pre-check (line ~181) and the write (fast double-
+      // tap, or a peer's session synced in), redirect to the existing session
+      // rather than showing a raw error — same UX as the pre-check path.
+      if (err instanceof TableBusyError) {
+        setError('A session is already running for this table. Redirecting…')
+        setTimeout(() => navigate(`/session/${err.existingSessionId}`, { replace: true }), 1200)
+        return
+      }
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
       setSubmitting(false)

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { startOfDay, endOfDay } from 'date-fns'
@@ -8,7 +8,7 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt'
 import { useSessionAlarm } from '../hooks/useSessionAlarm'
 import { getElapsedMs } from '../lib/time'
 import { calculateAmount } from '../lib/money'
-import { stopSession, acknowledgeNotify, snoozeNotify, RUNAWAY_MINUTES_DEFAULT } from '../db/queries'
+import { stopSession, acknowledgeNotify, snoozeNotify, reconcileActiveSessions, RUNAWAY_MINUTES_DEFAULT } from '../db/queries'
 import { useDexieSetting } from '../hooks/useDexieSetting'
 import { db } from '../db/database'
 import TopBar from '../components/TopBar'
@@ -54,6 +54,27 @@ export default function Home() {
     return map
   }, [activeSessions])
 
+  // #168 — self-heal cross-device duplicate active sessions. LWW sync can land
+  // two active rows on one table (both devices read "free", both wrote); the
+  // header count would then exceed the rendered cards (cards dedup per table via
+  // sessionMap, the count doesn't). reconcileActiveSessions keeps the earliest
+  // and tombstones the rest (returning their stock). It's a no-op unless a table
+  // has >1 active row, so we only call it when we actually detect a collision —
+  // sessionMap losing entries vs activeSessions length is exactly that signal.
+  // A ref debounces re-entry while the async tombstone is in flight. A
+  // persistently-failing reconcile does NOT hot-loop: it retries only when the
+  // duplicate signal next transitions false→true (next active-session change),
+  // which is the correct backstop cadence for a best-effort self-heal.
+  const reconcilingRef = useRef(false)
+  const hasDuplicateActive = sessionMap.size < activeSessions.length
+  useEffect(() => {
+    if (!hasDuplicateActive || reconcilingRef.current) return
+    reconcilingRef.current = true
+    reconcileActiveSessions()
+      .catch((e) => console.warn('[#168] reconcileActiveSessions failed:', e))
+      .finally(() => { reconcilingRef.current = false })
+  }, [hasDuplicateActive])
+
   // BUG-S7: hide outOfService tables on Home by default. Filter pills + counts
   // operate on the visible set so totals stay consistent. Owner can reveal
   // hidden tables inline via the "Show N disabled" toggle.
@@ -86,7 +107,14 @@ export default function Home() {
   )
 
   const totalTables = tables.filter((t) => !t.outOfService).length
-  const runningCount = activeSessions.filter((s) => s.status === 'running').length
+  // #168 — count UNIQUE running TABLES, not running session rows. Cards render
+  // per table (sessionMap dedups), so counting rows made the header exceed the
+  // card count whenever a duplicate active row slipped in via LWW sync. This
+  // keeps the header truthful even in the frame before reconcileActiveSessions
+  // heals the underlying dup.
+  const runningCount = new Set(
+    activeSessions.filter((s) => s.status === 'running').map((s) => s.tableId),
+  ).size
 
   // Today total — split into two parts so useTick() can drive the running portion:
   // 1. DB-static: completed session amounts + all today's items + walk-in Quick

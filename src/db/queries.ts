@@ -5,6 +5,7 @@ import { validatePlayerName, validateItemName, validateCanteenItemName } from '.
 import { seedIfEmpty } from './seed'
 import { normalizeName, findMatchingCanteenItem } from '../lib/canteenMatch'
 import { syncedCreate, syncedUpdate, syncedSoftDelete, syncedBatch } from './syncWrappers'
+import type { BatchContext } from './syncWrappers'
 import { readAccessTokenLockFree, decodeJwtClaims } from './syncClubId'
 import { coinsEarnedForTopup, resolveCoinConfig } from '../lib/coins'
 import { toCustomerPhone, phoneLookupCandidates, preferCanonicalPhone } from '../lib/phone'
@@ -88,25 +89,58 @@ export async function deleteTable(id: string): Promise<void> {
 
 // ─── Sessions ─────────────────────────────────────────────────────────────────
 
+/**
+ * Deterministic "which active session is canonical for this table" ordering
+ * (Invariant #1, #168). Earliest startedAt wins; an exact-ms tie breaks on the
+ * lexicographically smallest id so EVERY code path and EVERY device converges on
+ * the SAME winner. getActiveSessionForTable (the redirect target) and
+ * reconcileActiveSessions (who survives) MUST share this comparator — if they
+ * diverged, a user could be redirected to the very session about to be
+ * tombstoned. Sort a filtered array with this; `[0]` is the canonical row.
+ */
+export function compareSessionCanonical(a: Session, b: Session): number {
+  return a.startedAt - b.startedAt || (a.id ?? '').localeCompare(b.id ?? '')
+}
+
 export async function getActiveSessionForTable(
   tableId: string,
 ): Promise<Session | undefined> {
-  return db.sessions
+  // Canonical (earliest, id-tie-broken) active session for this table (#168).
+  // `!s.deletedAt` guards against a peer-tombstoned dup (a reversed/auto-deduped
+  // row must not read as active — twin of the §Session Items reader rule).
+  const rows = await db.sessions
     .where('tableId')
     .equals(tableId)
-    .filter((s) => s.status !== 'completed')
-    .first()
+    .filter((s) => s.status !== 'completed' && !s.deletedAt)
+    .toArray()
+  return rows.sort(compareSessionCanonical)[0]
 }
 
 export async function getAllActiveSessions(): Promise<Session[]> {
   return db.sessions
     .where('status')
     .anyOf(['running', 'paused'])
+    .filter((s) => !s.deletedAt) // #168 — a tombstoned dup is not active
     .toArray()
 }
 
 export async function getSessionById(id: string): Promise<Session | undefined> {
   return db.sessions.get(id)
+}
+
+/**
+ * Thrown by startSession when the table already has an active (running|paused)
+ * session — Invariant #1 ("one active session per table"), #168. Carries the
+ * existing session id so the caller can redirect to it instead of stranding the
+ * user. UI catches this in StartSession.handleSubmit.
+ */
+export class TableBusyError extends Error {
+  existingSessionId: string
+  constructor(existingSessionId: string) {
+    super('A session is already running for this table.')
+    this.name = 'TableBusyError'
+    this.existingSessionId = existingSessionId
+  }
 }
 
 export async function startSession(
@@ -122,6 +156,14 @@ export async function startSession(
   >,
   notifyAfterMs?: number | null,
 ): Promise<string> {
+  // Invariant #1 enforced at the write choke-point (#168). The UI pre-check in
+  // StartSession can't hold on a fast double-tap or across devices — this is the
+  // single place every start funnels through, so the check+write are adjacent.
+  // The durable cross-device backstop is reconcileActiveSessions() (LWW can
+  // still momentarily create a dup that two blind reads miss).
+  const existing = await getActiveSessionForTable(data.tableId)
+  if (existing?.id) throw new TableBusyError(existing.id)
+
   const startedAt = Date.now()
   const alarmFields =
     typeof notifyAfterMs === 'number' && notifyAfterMs > 0
@@ -1610,6 +1652,166 @@ export class SessionReversalError extends Error {
 }
 
 /**
+ * Return the canteen stock consumed by a session's item lines, then soft-delete
+ * each line — inside an existing syncedBatch `b`. Shared by reverseSession
+ * (#162, a completed session) and reconcileActiveSessions (#168, an auto-deduped
+ * active session). Extracted so the two-phase lost-update guard lives in ONE
+ * place (Rule L). The caller owns the session tombstone + any wallet leg; this
+ * ONLY touches `session_items` + `canteen_items`.
+ *
+ * Two phases: a canteen item appearing in more than one line (added twice,
+ * possibly at different prices) is written EXACTLY ONCE with the SUMMED qty — a
+ * per-line loop over one stale snapshot would lost-update (only the last line's
+ * qty would stick). Phase 1 resolves each line to a target + accumulates qty;
+ * Phase 2 applies one write per target. Caller must include 'session_items' and
+ * 'canteen_items' in the batch's table list.
+ */
+async function returnSessionItemStock(
+  b: BatchContext,
+  sessionId: string,
+  now: number,
+): Promise<void> {
+  const items = await db.sessionItems
+    .where('sessionId')
+    .equals(sessionId)
+    .filter((i) => !i.deletedAt)
+    .toArray()
+
+  const canteenItems = await db.canteenItems.toArray()
+  const byExistingId = new Map<string, number>() // canteen item id → total qty to return
+  const byNewName = new Map<string, { name: string; price: number; qty: number }>() // normalized name → re-create
+
+  for (const line of items) {
+    const match =
+      findMatchingCanteenItem(line.name, line.price, canteenItems) ??
+      canteenItems.find(
+        (ci) => normalizeName(ci.name) === normalizeName(line.name),
+      ) ??
+      null
+
+    if (match?.id && (match.deletedAt || match.stockEnabled)) {
+      // Present-but-untracked (stockEnabled===false, not deleted) → skip stock.
+      byExistingId.set(match.id, (byExistingId.get(match.id) ?? 0) + line.quantity)
+    } else if (!match) {
+      const key = normalizeName(line.name)
+      const acc = byNewName.get(key)
+      if (acc) acc.qty += line.quantity
+      else byNewName.set(key, { name: line.name, price: line.price, qty: line.quantity })
+    }
+    // present + stockEnabled===false → intentionally untracked; no stock op.
+
+    if (line.id) await b.softDelete('session_items', line.id)
+  }
+
+  // Phase 2 — one write per resolved target, qty already summed.
+  let newSort = (canteenItems.length + 1) * 10
+  for (const [id, qty] of byExistingId) {
+    const ci = canteenItems.find((c) => c.id === id)!
+    if (ci.deletedAt) {
+      // Removed from the menu — un-delete to hold the returned stock + badge.
+      await b.update('canteen_items', id, {
+        deletedAt: null,
+        isActive: true,
+        stockEnabled: true,
+        currentStock: (ci.currentStock ?? 0) + qty,
+        revertedStockAt: now,
+      })
+    } else {
+      await b.update('canteen_items', id, {
+        currentStock: (ci.currentStock ?? 0) + qty,
+      })
+    }
+  }
+  for (const { name, price, qty } of byNewName.values()) {
+    // No matching canteen item at all — re-create one to hold the stock,
+    // badged as reverted. Owner can delete it if unwanted.
+    await b.insert('canteen_items', {
+      id: crypto.randomUUID(),
+      name,
+      defaultPrice: price,
+      stockEnabled: true,
+      currentStock: qty,
+      isActive: true,
+      createdAt: now,
+      sortOrder: newSort,
+      revertedStockAt: now,
+    } as CanteenItem & { id: string })
+    newSort += 10
+  }
+}
+
+/**
+ * #168 — durable cross-device backstop for Invariant #1 ("one active session
+ * per table"). The startSession() guard blocks a same-device double-start, but
+ * LWW sync can still land TWO active rows for one table when two devices each
+ * read "free" and both write. This self-heals that: for any table carrying >1
+ * active (running|paused, non-tombstoned) session, KEEP the earliest startedAt
+ * (owner decision, #168 — never silently drop billed-for time) and tombstone
+ * the rest, returning their canteen stock so nothing is lost.
+ *
+ * Idempotent + safe to call on every activeSessions change: a table with ≤1
+ * active session is a no-op, so it does no writes in the common case. Runs one
+ * syncedBatch PER losing session (each is an independent tombstone; keeping them
+ * separate means one failure doesn't strand the others). Returns the number of
+ * sessions it tombstoned.
+ *
+ * Tie-break on equal startedAt: keep the lexicographically smallest id so every
+ * device converges on the SAME winner (deterministic, no clock dependence).
+ */
+export async function reconcileActiveSessions(): Promise<number> {
+  const active = await getAllActiveSessions() // already filters !deletedAt
+
+  // Group by tableId; find tables with more than one active session.
+  const byTable = new Map<string, Session[]>()
+  for (const s of active) {
+    const arr = byTable.get(s.tableId)
+    if (arr) arr.push(s)
+    else byTable.set(s.tableId, [s])
+  }
+
+  const losers: Session[] = []
+  for (const sessions of byTable.values()) {
+    if (sessions.length < 2) continue
+    // Winner = canonical (earliest, id-tie-broken) — SAME comparator as
+    // getActiveSessionForTable, so the redirect target and the survivor agree.
+    const sorted = [...sessions].sort(compareSessionCanonical)
+    losers.push(...sorted.slice(1))
+  }
+  if (losers.length === 0) return 0
+
+  // Audit stamp — decode lock-free BEFORE any tx (no auth/network inside a
+  // syncedBatch callback; Pattern S16/S24).
+  const token = readAccessTokenLockFree()
+  const sub = token ? decodeJwtClaims(token).sub : undefined
+  const actorUid = typeof sub === 'string' && sub.length > 0 ? sub : null
+
+  let tombstoned = 0
+  for (const loser of losers) {
+    if (!loser.id) continue
+    const now = Date.now()
+    await syncedBatch(
+      ['sessions', 'session_items', 'canteen_items'],
+      async (b) => {
+        // Re-read inside the tx — another device (or a prior loop turn) may have
+        // already tombstoned this row; a double-tombstone must be a no-op.
+        const fresh = await db.sessions.get(loser.id!)
+        if (!fresh || fresh.deletedAt) return
+        // Return stock for any items added to the losing session, soft-delete
+        // the lines (no wallet leg — an active session has no payment yet).
+        await returnSessionItemStock(b, loser.id!, now)
+        await b.update('sessions', loser.id!, {
+          deletedAt: now,
+          deletedBy: actorUid,
+          deleteReason: 'auto-dedup: duplicate active session on table (#168)',
+        })
+      },
+    )
+    tombstoned++
+  }
+  return tombstoned
+}
+
+/**
  * #162 — OWNER-ONLY: fully reverse a completed session, as if it never
  * happened, then the owner re-enters the correct one via Back Entry.
  *
@@ -1668,80 +1870,8 @@ export async function reverseSession(sessionId: string, reason?: string): Promis
         deleteReason: trimmedReason,
       })
 
-      // ── 2. Item lines: return stock, then soft-delete the line ───────────
-      const items = await db.sessionItems
-        .where('sessionId')
-        .equals(sessionId)
-        .filter((i) => !i.deletedAt)
-        .toArray()
-
-      // Stock return is done in TWO phases so a canteen item that appears in
-      // more than one session line (same item added twice, possibly at
-      // different prices) is updated EXACTLY ONCE with the SUMMED qty — a
-      // per-line loop over a single stale snapshot would lost-update
-      // (only the last line's qty would stick). Phase 1: resolve each line to
-      // a target + accumulate returned qty. Phase 2: apply one write per target.
-      const canteenItems = await db.canteenItems.toArray()
-      const byExistingId = new Map<string, number>() // canteen item id → total qty to return
-      const byNewName = new Map<string, { name: string; price: number; qty: number }>() // normalized name → re-create
-
-      for (const line of items) {
-        const match =
-          findMatchingCanteenItem(line.name, line.price, canteenItems) ??
-          canteenItems.find(
-            (ci) => normalizeName(ci.name) === normalizeName(line.name),
-          ) ??
-          null
-
-        if (match?.id && (match.deletedAt || match.stockEnabled)) {
-          // Present-but-untracked (stockEnabled===false, not deleted) → skip stock.
-          byExistingId.set(match.id, (byExistingId.get(match.id) ?? 0) + line.quantity)
-        } else if (!match) {
-          const key = normalizeName(line.name)
-          const acc = byNewName.get(key)
-          if (acc) acc.qty += line.quantity
-          else byNewName.set(key, { name: line.name, price: line.price, qty: line.quantity })
-        }
-        // present + stockEnabled===false → intentionally untracked; no stock op.
-
-        if (line.id) await b.softDelete('session_items', line.id)
-      }
-
-      // Phase 2 — one write per resolved target, qty already summed.
-      let newSort = (canteenItems.length + 1) * 10
-      for (const [id, qty] of byExistingId) {
-        const ci = canteenItems.find((c) => c.id === id)!
-        if (ci.deletedAt) {
-          // Removed from the menu — un-delete to hold the returned stock + badge.
-          await b.update('canteen_items', id, {
-            deletedAt: null,
-            isActive: true,
-            stockEnabled: true,
-            currentStock: (ci.currentStock ?? 0) + qty,
-            revertedStockAt: now,
-          })
-        } else {
-          await b.update('canteen_items', id, {
-            currentStock: (ci.currentStock ?? 0) + qty,
-          })
-        }
-      }
-      for (const { name, price, qty } of byNewName.values()) {
-        // No matching canteen item at all — re-create one to hold the stock,
-        // badged as reverted. Owner can delete it if unwanted.
-        await b.insert('canteen_items', {
-          id: crypto.randomUUID(),
-          name,
-          defaultPrice: price,
-          stockEnabled: true,
-          currentStock: qty,
-          isActive: true,
-          createdAt: now,
-          sortOrder: newSort,
-          revertedStockAt: now,
-        } as CanteenItem & { id: string })
-        newSort += 10
-      }
+      // ── 2. Item lines: return stock, then soft-delete each line ──────────
+      await returnSessionItemStock(b, sessionId, now)
 
       // ── 3. Wallet reversal (if any wallet portion was debited) ────────────
       const walletPaid = session.paymentBreakdown?.wallet ?? 0

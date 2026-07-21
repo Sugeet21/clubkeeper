@@ -116,6 +116,18 @@ If you wrote a new aggregate and it doesn't appear in that grep, it's almost cer
 **Rule:** Snooze offsets from the ORIGINAL `notifyAtMs`, not from `Date.now()`. Fallback to `Date.now() + snoozeMs` only when the resulting time would already be in the past (user snoozed long after alarm rang).
 **Files affected:** `src/db/queries.ts` (`snoozeNotify`).
 
+### Pattern T11 — A "one X per Y" invariant must be enforced at the WRITE choke-point AND self-healed on read; a UI pre-check alone cannot hold in a synced app (#168, 21 Jul 2026)
+**Symptom signature:** Two active session rows exist for one table. Header "RUNNING" count exceeds the number of rendered table cards (count is per-row; cards dedup per-table via `sessionMap`). History shows the same table with two simultaneous "Running" sessions. Same class for any "only one active/open/current X per Y" rule.
+**Root cause:** Invariant #1 ("one active session per table") was documented but its ONLY guard was a read-then-write in `StartSession.tsx` (`getActiveSessionForTable` → block). That guard (a) isn't atomic — a fast double-tap passes both reads before either writes; (b) **cannot hold across devices** — this is a Phase-C LWW-synced app, so two devices each read "free" and both write a `running` row (distinct UUIDs); sync keeps both. `startSession()` itself did no re-check.
+**Rule:**
+1. **Enforce at the single write choke-point.** The invariant lives in `startSession()` (throws `TableBusyError` carrying the existing id) — NOT only in the component. Every caller funnels through it, so check+write are adjacent.
+2. **Self-heal on read for the cross-device case** the write guard can't catch. `reconcileActiveSessions()` groups active rows by table, keeps the CANONICAL one (`compareSessionCanonical` — earliest `startedAt`, lexicographic-id tie-break so every device converges on the same winner), and tombstones the rest (soft-delete, returning their canteen stock — an active session is unpaid so NO wallet leg). Fired from `Home` via `useEffect` when `sessionMap.size < activeSessions.length` (the exact dup signal), ref-guarded against re-entry; a persistent failure retries only on the next dup false→true transition (correct backstop cadence, no hot-loop).
+3. **The redirect target and the survivor MUST share ONE comparator.** `getActiveSessionForTable` (where the user is sent) and `reconcileActiveSessions` (who lives) both use `compareSessionCanonical`; if they diverged, on an exact-ms tie a user could be redirected to the row about to be tombstoned.
+4. **Every active-session reader filters `!deletedAt`** (twin of §Session Items / #162): `getActiveSessionForTable`, `getAllActiveSessions`, `useActiveSessions`. A tombstoned dup must not read as active.
+5. **The header count aggregates the SAME way the cards do.** `runningCount` counts unique running `tableId`s, not rows — so the header stays truthful even in the frame before the async reconcile heals the dup.
+**Sweep query (Rule K):** `grep -rnE "where\('status'\).*anyOf\(\['running', 'paused'\]\)|status !== 'completed'" src/` — every hit is an active-session reader; confirm it filters `!deletedAt`. Out-of-scope-but-noted pre-existing gaps: `getOrphanedSessions`, `assertNoActiveSessions` (both err safe — counting a not-yet-reconciled dup as active only over-blocks a wipe).
+**Files affected:** `src/db/queries.ts` (`startSession`, `TableBusyError`, `getActiveSessionForTable`, `getAllActiveSessions`, `compareSessionCanonical`, `reconcileActiveSessions`, `returnSessionItemStock` extracted from `reverseSession`), `src/pages/StartSession.tsx` (catch → redirect), `src/pages/Home.tsx` (`runningCount` unique-table, reconcile effect).
+
 ---
 
 ## Forms & Inputs (validation, adversarial input)

@@ -4,6 +4,17 @@
 
 ---
 
+## 21 Jul 2026 — #168: two concurrent RUNNING sessions on one table (count > cards + dup active rows in History)
+
+- Owner ask (screenshots): Tables header showed `RUNNING: 4` but only 3 running cards; History showed the Snooker table with TWO active sessions at once (5:52 + 6:09). Root cause = Invariant #1 ("one active session per table") was documented (data_model.md:148) but its ONLY guard was a non-atomic read-then-write inside `StartSession.tsx` — which cannot hold across devices in a Phase-C LWW-synced app (two devices both read "free", both write a `running` row). The count-vs-cards mismatch is two aggregations of the same dup: `runningCount` counted rows (=2 for the pair), `sessionMap` dedups per table (=1 card). New **Pattern T11**.
+- Owner decision (asked before coding): **"Block 2nd, keep older" + DB-level self-heal.** Layers 1+2, no migration.
+- **Layer 1 (prevent):** `startSession()` now re-checks `getActiveSessionForTable` and throws new **`TableBusyError`** (carries existing id). `StartSession.handleSubmit` catches it → redirects to the running session (same UX as the old pre-check). Single write choke-point, so check+write are adjacent.
+- **Layer 2 (self-heal cross-device):** new **`reconcileActiveSessions()`** — groups active rows by table, keeps the CANONICAL one (new shared **`compareSessionCanonical`** = earliest `startedAt`, lexicographic-id tie-break → every device converges on the same winner) and tombstones the rest via `syncedBatch(['sessions','session_items','canteen_items'])`, returning their canteen stock (NO wallet leg — active sessions are unpaid). In-tx re-read makes double-tombstone/peer-race a no-op. Fired from `Home` `useEffect` when `sessionMap.size < activeSessions.length`, ref-guarded; persistent failure retries only on next dup false→true transition (no hot-loop).
+- **Shared helper extracted:** the stock-return + item-line-soft-delete block (two-phase lost-update guard) pulled out of `reverseSession` (#162) into **`returnSessionItemStock(b, sessionId, now)`**; both paths now call it (Rule L — one tested copy). Wallet leg correctly left in `reverseSession`.
+- **Reader hardening:** `getActiveSessionForTable` + `getAllActiveSessions` now filter `!deletedAt` (a tombstoned dup must not read as active). `Home.runningCount` counts unique running `tableId`s so the header matches the per-table cards even before the async reconcile lands.
+- Reviewer agent: **CHANGES NEEDED** → caught a divergent tie-break (`getActiveSessionForTable` used bare `.sortBy` while reconcile used an id tie-break → on an exact-ms tie the user could be redirected to the row about to be tombstoned). Fixed by extracting `compareSessionCanonical` and having both call it. Re-reviewed clean; confirmed extraction behavior-identical, S24 (JWT decode outside tx) honored, no double-stock-return. Build clean; strict tsc at the unchanged 88-error #118/#138 baseline (my files add 0).
+- **Not shipped this session** (owner batch-deploy pending, like #165/#166/#167). Owner live-verify is the close gate.
+
 ## 21 Jul 2026 — #166: reverse a walk-in Quick Sale from History (+ closes the S30 soft-delete gap)
 
 - Owner ask (paired with #165): the Edit-history toggle should also let the owner correct/undo a walk-in sale. `createCanteenSale` had NO edit/delete path.

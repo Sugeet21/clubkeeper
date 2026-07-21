@@ -145,7 +145,7 @@ Cash wallet top-ups count toward piggy (cash in till) but NOT toward PAYMENT MOD
 
 ## Critical Invariants
 
-1. **Only ONE active session per table** ("active" = running OR paused). Pre-check + re-check in `startSession()`.
+1. **Only ONE active session per table** ("active" = running OR paused, non-tombstoned). Enforced at TWO layers (#168, Pattern T11), NOT the UI alone: (a) `startSession()` re-checks + throws `TableBusyError`; (b) `reconcileActiveSessions()` self-heals cross-device LWW dups (keeps `compareSessionCanonical` earliest, tombstones the rest). Every active-session reader filters `!deletedAt`.
 2. **`startedAt` immutable** except via `editSessionStart()`.
 3. **`pausedTotalMs` only grows.**
 4. **`amount` set once** at stop; display values computed on the fly.
