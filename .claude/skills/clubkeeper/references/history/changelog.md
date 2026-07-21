@@ -4,6 +4,13 @@
 
 ---
 
+## 21 Jul 2026 — #167 (part 1): search boxes on Canteen page + Quick Sale
+
+- Owner ask: restocking meant scrolling the whole canteen list to find an item; same friction on Quick Sale.
+- `Canteen.tsx`: `search` state + `filteredItems` memo (reuses `normalizeName`, Rule L — no new helper). Input shown only when the list has >6 items (matches AddItemBottomSheet's threshold). `StatsRow` keeps the UNFILTERED list (low-stock count is whole-canteen); `ListArea` takes `filteredItems` + a `searchQuery` prop so a search miss renders "No items match …" distinct from the empty-canteen state. Header/onboarding/bulk-peak guards still key off the full list.
+- `QuickSale.tsx`: same `search` + `filteredItems` pattern; input above the items grid; cart is keyed by id and independent of the filter (filtering an item out does not drop its cart line).
+- Part 2 (shared `CanteenItemPicker` extraction + adoption in AddItem/QuickSale/BackEntry, blocking out-of-stock tap everywhere) is the next commit under #167. Build + strict tsc clean.
+
 ## 21 Jul 2026 — #165: walk-in Quick Sales now appear in History
 
 - Owner-reported: a walk-in Quick Sale (canteen sale, no table) was recorded but never showed in History — the day's money looked "not maintained" there even though Summary counted it.

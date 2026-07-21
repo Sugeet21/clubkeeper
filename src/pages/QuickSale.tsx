@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { getCanteenItems, createCanteenSale, CanteenSaleStockError } from '../db/queries'
+import { normalizeName } from '../lib/canteenMatch'
 import { useToastStore } from '../store/toastStore'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
@@ -23,6 +24,15 @@ export default function QuickSale() {
   const settings = useSettings()
 
   const items = useLiveQuery(() => getCanteenItems(false), [])
+  // #167 — search box so a walk-in item can be found without scrolling.
+  // Reuses normalizeName (Rule L). Empty query = full list.
+  const [search, setSearch] = useState('')
+  const filteredItems = useMemo(() => {
+    if (items === undefined) return undefined
+    const q = normalizeName(search)
+    if (!q) return items
+    return items.filter((it) => normalizeName(it.name).includes(q))
+  }, [items, search])
   const [cart, setCart] = useState<Map<string, CartLine>>(new Map())
   const [paymentOpen, setPaymentOpen] = useState(false)
   // After a successful sale with upi > 0, store the UPI amount to show the QR screen.
@@ -223,6 +233,18 @@ export default function QuickSale() {
         <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint mb-2">
           Items
         </p>
+        {/* Search box (#167) — only worth showing once the list is long enough
+            to scroll (matches AddItemBottomSheet's >6 threshold). */}
+        {items !== undefined && items.length > 6 && (
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search items…"
+            aria-label="Search canteen items"
+            className="w-full bg-bg-card border border-border rounded-2xl px-4 py-3 mb-2 text-text text-[15px] focus:border-accent focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint"
+          />
+        )}
         {items === undefined ? (
           <div className="space-y-2">
             {[1, 2, 3].map((i) => (
@@ -239,9 +261,13 @@ export default function QuickSale() {
               Manage canteen →
             </button>
           </div>
+        ) : filteredItems!.length === 0 ? (
+          <p className="text-[13px] text-text-dim py-8 text-center">
+            No items match “{search.trim()}”.
+          </p>
         ) : (
           <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-2">
-            {items.map((item) => (
+            {filteredItems!.map((item) => (
               <ItemCard
                 key={item.id}
                 item={item}

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { normalizeName } from '../lib/canteenMatch'
 import { useToastStore } from '../store/toastStore'
 import {
   getCanteenItems,
@@ -102,6 +103,7 @@ function ListArea({
   items,
   threshold,
   peakActive,
+  searchQuery,
   onEdit,
   onDelete,
   onRestock,
@@ -109,6 +111,7 @@ function ListArea({
   items: CanteenItem[] | undefined
   threshold: number
   peakActive: boolean
+  searchQuery: string
   onEdit: (item: CanteenItem) => void
   onDelete: (item: CanteenItem) => void
   onRestock: (item: CanteenItem) => void
@@ -120,6 +123,15 @@ function ListArea({
           <div key={i} className="h-20 bg-bg-card border border-border rounded-2xl animate-pulse" />
         ))}
       </div>
+    )
+  }
+
+  // Search returned nothing — distinct from the genuinely-empty canteen.
+  if (items.length === 0 && searchQuery.trim()) {
+    return (
+      <p className="text-[13px] text-text-dim py-8 text-center">
+        No items match “{searchQuery.trim()}”.
+      </p>
     )
   }
 
@@ -236,6 +248,10 @@ export default function Canteen() {
   const [deletingItem, setDeletingItem] = useState<CanteenItem | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [restockItem, setRestockItem] = useState<CanteenItem | null>(null)
+  // #167 — search box so owner/staff can find an item to restock without
+  // scrolling the whole list. Reuses normalizeName (Rule L) so the match is the
+  // same trim+lowercase+collapse used everywhere else.
+  const [search, setSearch] = useState('')
   // #68 Phase 4 — bulk peak-price editor + one-time onboarding banner
   const [bulkOpen, setBulkOpen] = useState(false)
   const PEAK_ONBOARDING_KEY = 'ck_peak_onboarding_seen'
@@ -258,6 +274,17 @@ export default function Canteen() {
   // undefined = still loading; [] = loaded, empty; [...] = loaded, has items
   const items = useLiveQuery<CanteenItem[] | undefined>(() => getCanteenItems(false), [])
   const allItems = useLiveQuery<CanteenItem[] | undefined>(() => getCanteenItems(true), [])
+  // #167 — filtered view for the list + search box. undefined stays undefined
+  // (loading skeleton); an empty query returns the full list unchanged.
+  const filteredItems = useMemo(() => {
+    if (items === undefined) return undefined
+    const q = normalizeName(search)
+    if (!q) return items
+    return items.filter((it) => normalizeName(it.name).includes(q))
+  }, [items, search])
+  // Search box only worth showing once the (unfiltered) list is long enough to
+  // scroll — matches AddItemBottomSheet's >6 threshold.
+  const showSearch = (items?.length ?? 0) > 6
   const threshold = useLiveQuery(() => getLowStockThreshold(), [], 5) ?? 5
   // Piggy balance — live, used by RestockSheet to gate the Piggy source option
   const piggy = useLiveQuery(() => getPiggyBalance(), [])
@@ -397,14 +424,30 @@ export default function Canteen() {
             </OwnerOnly>
           )}
 
-        {/* Stats — always rendered, handles undefined inside */}
+        {/* Stats — always rendered, handles undefined inside. Uses the full
+            (unfiltered) list so the low-stock count reflects the whole canteen,
+            not just the current search. */}
         <StatsRow items={items} threshold={threshold} />
+
+        {/* Search box (#167) — find an item to restock without scrolling.
+            Only shown once the list is long enough to be worth filtering. */}
+        {showSearch && (
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search items…"
+            aria-label="Search canteen items"
+            className="w-full bg-bg-card border border-border rounded-2xl px-4 py-3 mb-3 text-text text-[15px] focus:border-accent focus:outline-none transition-colors min-h-[44px] placeholder:text-text-faint"
+          />
+        )}
 
         {/* List area — skeleton / empty / cards */}
         <ListArea
-          items={items}
+          items={filteredItems}
           threshold={threshold}
           peakActive={peakActive}
+          searchQuery={search}
           onEdit={openEdit}
           onDelete={setDeletingItem}
           onRestock={setRestockItem}
