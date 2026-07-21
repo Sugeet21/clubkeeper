@@ -5,7 +5,7 @@ import { db } from '../db/database'
 import { getRecentItems, type RecentItem } from '../db/queries'
 import { useAuthStore } from '../store/authStore'
 import { getOwnerClub } from '../lib/playerHubApi'
-import type { GameTable, Session, ClubSettings, SessionItem } from '../types'
+import type { GameTable, Session, ClubSettings, SessionItem, CanteenSale } from '../types'
 
 // ─── Club sync: Supabase → Dexie ─────────────────────────────────────────────
 // Runs once per browser session. Ensures slug and cloud-mirrored fields in
@@ -193,6 +193,22 @@ export function useSessionsInRange(startMs: number, endMs: number): SessionWithI
         items: itemsBySessionId.get(s.id!) ?? [],
       }))
     }, [startMs, endMs], [] as SessionWithItems[]) ?? []
+  )
+}
+
+// Walk-in canteen sales in a [startMs, endMs] window, keyed on createdAt.
+// #165 — History (and any list surface) must include walk-in sales, which live
+// in the canteenSales table, NOT sessions. Mirrors useSessionsInRange's shape.
+// Filters !deletedAt so a reversed sale (#166) drops out, same as sessions.
+export function useCanteenSalesInRange(startMs: number, endMs: number): CanteenSale[] {
+  return (
+    useLiveQuery(async () => {
+      return db.canteenSales
+        .where('createdAt')
+        .between(startMs, endMs, true, true)
+        .filter((s) => !s.deletedAt)
+        .toArray()
+    }, [startMs, endMs], [] as CanteenSale[]) ?? []
   )
 }
 

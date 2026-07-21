@@ -469,8 +469,11 @@ Files in scope:
 - `src/pages/QuickSale.tsx` — only writer (v1: no edit flow). Cart with `−`/`✕` controls, sticky Continue-to-Payment, reuses `PaymentSplitSheet`. Post-confirm UPI QR screen (fix #69, 14 Jun 2026) shows only the UPI split amount, not subtotal.
 - `src/components/TopBar.tsx` — `+ Quick Sale` pill on date subtitle row (conditional on `onQuickSalePress?: () => void`)
 - `src/pages/Summary.tsx` — `canteenSalesForDate` live query feeds canteen revenue tile + PAYMENT MODE + piggy cashIn
+- `src/pages/History.tsx` — **(#165) History is a READER of `canteenSales`.** `useCanteenSalesInRange` merges walk-in sales into the day groups as a distinct `CanteenSaleRow`, into `dayGrandTotal`, and into CSV export. Read-only (reversal is #166). Excluded when a specific table is selected in the filter dropdown.
+- `src/hooks/useLiveData.ts` — `useCanteenSalesInRange(startMs, endMs)` (#165): range query, `!deletedAt` filter. Mirror of `useSessionsInRange`.
 
 Invariants:
+- **Pattern S30 (canteenSales is a SECOND revenue source — any date/range money surface must read it):** walk-in Quick Sales live in `canteenSales`, NOT `sessions`. Every surface that shows or sums revenue for a day/range MUST query BOTH tables or it understates the total. Known readers: Summary (tile + PAYMENT MODE + piggy cashIn), Home today-strip (#141), History (#165). Recurrence history: #93 → #141 → #165. Sweep query in bug_patterns S30 before adding any new revenue/list surface.
 - **Pattern D7:** single flat `db.transaction('rw', db.canteenSales, db.canteenItems, db.customers, db.walletTransactions)`. Order inside: (1) aggregate qty per `canteenItemId` and decrement stock (throws `CanteenSaleStockError` if would go negative); (2) wallet debit + `WalletTransaction(referenceType:'canteen_sale', referenceId:saleId)` if `wallet > 0`; (3) insert `CanteenSale` LAST so any earlier throw rolls everything back.
 - Out-of-stock cards `opacity-60` + tap blocked + toast.
 - Out-of-scope (v1): free-text items (every line MUST match a `CanteenItem.id`), discount, edit/refund/void.
@@ -484,8 +487,9 @@ Cross-feature ripples:
 - → [Wallet & Customers](#wallet--customers) (optional wallet debit).
 - → [Summary Dashboard](#summary-dashboard) (canteen revenue tile, PAYMENT MODE, piggy cashIn, **topCanteenItems / bucketByHour / rankTables synthetic walk-in row / dateRevenues per-date** — #93, 20 Jun 2026).
 - → [Tables Page (Home)](#tables-page-home) (TopBar pill from Home only; same `max-w-[1400px]` + grid pattern).
+- → [History](#history) — **(#165)** walk-in sales now render + total in History via `useCanteenSalesInRange`. Any change to `CanteenSale.total`/`subtotal`/`items` shape ripples to the History row + CSV.
 
-Last updated: 19 Jun 2026 (#91 Phase 2.5 — QuickSale desktop layout)
+Last updated: 21 Jul 2026 (#165 — History reads canteenSales; Pattern S30 promoted)
 
 ---
 

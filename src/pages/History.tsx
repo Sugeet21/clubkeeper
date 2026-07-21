@@ -1,14 +1,14 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, subDays, startOfDay, endOfDay, isToday, isYesterday } from 'date-fns'
-import { useSessionsInRange, useTables, useSettings } from '../hooks/useLiveData'
+import { useSessionsInRange, useCanteenSalesInRange, useTables, useSettings } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatDuration } from '../lib/time'
 import { calculateAmount } from '../lib/money'
 import { BackEntryModal } from '../components/BackEntryModal'
 import { Toggle } from '../components/Toggle'
 import { useRole } from '../hooks/useRole'
-import type { GameType, GameTable, Session } from '../types'
+import type { GameType, GameTable, Session, CanteenSale } from '../types'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,6 +127,43 @@ function SessionRow({
   )
 }
 
+// ─── Walk-in Quick Sale row (#165) ──────────────────────────────────────────
+// Walk-in canteen sales have no table/session — they live in the canteenSales
+// table. Rendered as a distinct row so History matches Summary (which already
+// counts them, #93/#141). Reversible via the Edit-history toggle is #166 — for
+// now these rows are read-only (never tappable) even in edit mode.
+function CanteenSaleRow({ sale, currency }: { sale: CanteenSale; currency: string }) {
+  const itemCount = sale.items.reduce((s, i) => s + i.quantity, 0)
+  const timeStr = format(sale.createdAt, 'h:mm a')
+  const namePreview = sale.items.map((i) => i.name).join(', ')
+  return (
+    <div className="flex items-center gap-3 px-5 py-3.5 border-b border-border last:border-0">
+      <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-accent/12 text-accent">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+          <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+        </svg>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <p className="text-[14px] font-semibold text-text truncate">Walk-in sale</p>
+          <span className="text-[10px] uppercase tracking-widest text-accent border border-accent/40 rounded-md px-1.5 py-0.5 shrink-0">
+            Quick Sale
+          </span>
+        </div>
+        <p className="text-[11px] text-text-faint font-mono mt-0.5 truncate">
+          {timeStr} · {itemCount} item{itemCount !== 1 ? 's' : ''}
+          {namePreview && <span className="text-text-dim"> · {namePreview}</span>}
+        </p>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="text-[15px] font-bold text-text tabular-nums">{currency}{sale.total.toLocaleString('en-IN')}</p>
+        <p className="text-[11px] text-text-faint font-mono mt-0.5">canteen</p>
+      </div>
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 // Phase D (D5) — role split (Pattern A12; owner answer 10 Jul amends the §2
@@ -218,6 +255,10 @@ function OwnerHistory() {
 
   // Single live query — sessions + their items in one shot, no N+1
   const rows = useSessionsInRange(rangeStart, rangeEnd)
+  // #165 — walk-in Quick Sales live in a separate table; History must include
+  // them or the day's money is understated (same omission fixed in Summary,
+  // #93/#141). Filtered out by the table dropdown (they belong to no table).
+  const canteenSales = useCanteenSalesInRange(rangeStart, rangeEnd)
 
   const tableMap = useMemo(() => {
     const m = new Map<string, GameTable>() // Pattern R5: table ids are UUID strings (#134 sibling)
@@ -229,16 +270,31 @@ function OwnerHistory() {
     ? rows
     : rows.filter((r) => r.session.tableId === filterTableId)
 
+  // A specific table is selected → walk-in sales (which have no table) are
+  // excluded, matching the intent of the filter.
+  const filteredSales = filterTableId === 'all' ? canteenSales : []
+
+  // Unified, sorted-within-day row model: session rows + walk-in sale rows,
+  // interleaved by their timestamp (startedAt vs createdAt).
+  type HistoryRow =
+    | { kind: 'session'; ts: number; data: (typeof filteredRows)[number] }
+    | { kind: 'sale'; ts: number; data: CanteenSale }
+
   const grouped = useMemo(() => {
-    const map = new Map<string, typeof filteredRows>()
-    for (const r of filteredRows) {
-      const key = format(r.session.startedAt, 'yyyy-MM-dd')
+    const map = new Map<string, HistoryRow[]>()
+    const push = (key: string, row: HistoryRow) => {
       if (!map.has(key)) map.set(key, [])
-      map.get(key)!.push(r)
+      map.get(key)!.push(row)
     }
-    for (const [, arr] of map) arr.sort((a, b) => b.session.startedAt - a.session.startedAt)
+    for (const r of filteredRows) {
+      push(format(r.session.startedAt, 'yyyy-MM-dd'), { kind: 'session', ts: r.session.startedAt, data: r })
+    }
+    for (const sale of filteredSales) {
+      push(format(sale.createdAt, 'yyyy-MM-dd'), { kind: 'sale', ts: sale.createdAt, data: sale })
+    }
+    for (const [, arr] of map) arr.sort((a, b) => b.ts - a.ts)
     return map
-  }, [filteredRows])
+  }, [filteredRows, filteredSales])
 
   const sortedDays = useMemo(
     () => [...grouped.keys()].sort((a, b) => b.localeCompare(a)),
@@ -250,26 +306,50 @@ function OwnerHistory() {
 
   function handleExport() {
     const headers = ['Table', 'Player', 'Players', 'Date', 'Start', 'End', 'Duration (min)', `Table Amount (${currency})`, `Items (${currency})`, `Total (${currency})`, 'Billing', 'Frames']
-    const exportRows = [...filteredRows].sort((a, b) => a.session.startedAt - b.session.startedAt).map(({ session: s, items }) => {
+    const sessionExportRows = filteredRows.map(({ session: s, items }) => {
       const t = tableMap.get(s.tableId)
       const e = getElapsedMs(s)
       const tableAmt = sessionBaseAmt(s)
       const itemsAmt = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
-      return [
-        t?.name ?? `Table ${s.tableId}`,
-        s.playerName ?? '',
-        s.playerCount,
-        format(s.startedAt, 'yyyy-MM-dd'),
-        format(s.startedAt, 'HH:mm:ss'),
-        s.endedAt ? format(s.endedAt, 'HH:mm:ss') : 'Running',
-        Math.floor((s.roundedDurationMs ?? e) / 60_000),
-        tableAmt,
-        itemsAmt,
-        tableAmt + itemsAmt,
-        s.billingMode,
-        s.framesPlayed ?? 0,
-      ]
+      return {
+        ts: s.startedAt,
+        cells: [
+          t?.name ?? `Table ${s.tableId}`,
+          s.playerName ?? '',
+          s.playerCount,
+          format(s.startedAt, 'yyyy-MM-dd'),
+          format(s.startedAt, 'HH:mm:ss'),
+          s.endedAt ? format(s.endedAt, 'HH:mm:ss') : 'Running',
+          Math.floor((s.roundedDurationMs ?? e) / 60_000),
+          tableAmt,
+          itemsAmt,
+          tableAmt + itemsAmt,
+          s.billingMode,
+          s.framesPlayed ?? 0,
+        ] as (string | number)[],
+      }
     })
+    // #165 — walk-in Quick Sales in the export too, so CSV matches the screen.
+    const saleExportRows = filteredSales.map((sale) => ({
+      ts: sale.createdAt,
+      cells: [
+        'Walk-in (Quick Sale)',
+        '',
+        '',
+        format(sale.createdAt, 'yyyy-MM-dd'),
+        format(sale.createdAt, 'HH:mm:ss'),
+        '',
+        '',
+        0,
+        sale.subtotal,
+        sale.total,
+        'canteen_sale',
+        '',
+      ] as (string | number)[],
+    }))
+    const exportRows = [...sessionExportRows, ...saleExportRows]
+      .sort((a, b) => a.ts - b.ts)
+      .map((r) => r.cells)
     const csv = [headers, ...exportRows]
       .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
       .join('\n')
@@ -306,7 +386,7 @@ function OwnerHistory() {
           >
             + Log past session
           </button>
-          {filteredRows.length > 0 && (
+          {(filteredRows.length > 0 || filteredSales.length > 0) && (
             <button onClick={handleExport} className="text-[13px] text-accent font-semibold min-h-[44px]">
               Export ↓
             </button>
@@ -382,9 +462,9 @@ function OwnerHistory() {
 
       {/* Content */}
       <div className="px-4">
-        {rows.length === 0 ? (
+        {rows.length === 0 && canteenSales.length === 0 ? (
           <div className="flex flex-col items-center py-16 text-center">
-            <p className="text-text-faint text-[14px]">No sessions in this range</p>
+            <p className="text-text-faint text-[14px]">No activity in this range</p>
           </div>
         ) : sortedDays.length === 0 ? (
           <div className="flex flex-col items-center py-16 text-center">
@@ -395,11 +475,16 @@ function OwnerHistory() {
             const dayRows = grouped.get(dayKey)!
             const dayDate = new Date(dayKey + 'T00:00:00')
 
-            // Grand total for the day = table-time + items for all sessions
-            const dayGrandTotal = dayRows.reduce((sum, { session, items }) => {
-              const base = sessionBaseAmt(session)
-              const itemsAmt = items.reduce((s, i) => s + i.price * i.quantity, 0)
-              return sum + base + itemsAmt
+            // Grand total for the day = session table-time + session items +
+            // walk-in canteen sales (#165 — was session-only, understated days
+            // with walk-in revenue).
+            const dayGrandTotal = dayRows.reduce((sum, row) => {
+              if (row.kind === 'session') {
+                const base = sessionBaseAmt(row.data.session)
+                const itemsAmt = row.data.items.reduce((s, i) => s + i.price * i.quantity, 0)
+                return sum + base + itemsAmt
+              }
+              return sum + row.data.total
             }, 0)
 
             return (
@@ -411,7 +496,11 @@ function OwnerHistory() {
                   </p>
                 </div>
                 <div className="bg-bg-card border border-border rounded-2xl divide-y divide-border overflow-hidden">
-                  {dayRows.map(({ session, items }) => {
+                  {dayRows.map((row) => {
+                    if (row.kind === 'sale') {
+                      return <CanteenSaleRow key={`sale-${row.data.id}`} sale={row.data} currency={currency} />
+                    }
+                    const { session, items } = row.data
                     const base = sessionBaseAmt(session)
                     const itemsAmt = items.reduce((s, i) => s + i.price * i.quantity, 0)
                     return (

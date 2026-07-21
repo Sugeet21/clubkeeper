@@ -4,6 +4,14 @@
 
 ---
 
+## 21 Jul 2026 — #165: walk-in Quick Sales now appear in History
+
+- Owner-reported: a walk-in Quick Sale (canteen sale, no table) was recorded but never showed in History — the day's money looked "not maintained" there even though Summary counted it.
+- **Root cause:** `History.tsx` (OwnerHistory) read ONLY `useSessionsInRange` (the `sessions` table). Walk-in sales live in the separate `canteenSales` table. Third recurrence of the exact same omission — already fixed in Summary at #93 (4 places) + #141 (Home strip). Promoted **Pattern S30** (canteenSales-is-a-second-revenue-source sweep) so a 4th surface can't silently drop them.
+- New hook `useCanteenSalesInRange(startMs, endMs)` in `useLiveData.ts` — mirrors `useSessionsInRange`, `between(createdAt)` + `!deletedAt` filter (so a future reversed sale, #166, drops out).
+- `History.tsx`: unified `HistoryRow` discriminated union (`session` | `sale`), interleaved by timestamp within each day group; walk-in sales render as a distinct read-only `CanteenSaleRow` (cart icon + "Quick Sale" tag, ₹total); `dayGrandTotal` now includes `sale.total`; CSV export appends walk-in rows (Table = "Walk-in (Quick Sale)", Items=subtotal, Total=total, Billing=canteen_sale); Export button + empty-state guards updated. Table-filter dropdown excludes walk-ins (they belong to no table). Rows are **read-only even in Edit-history mode** — reversibility is #166.
+- Build + strict tsc clean (History.tsx + useLiveData.ts have zero errors against the #118/#138 baseline).
+
 ## 20 Jul 2026 — hotfix: "referenceId not indexed" crash on session reverse/re-split + UPI-ID fresh-device hydration
 
 - Two live-test bugs from owner's phone.
