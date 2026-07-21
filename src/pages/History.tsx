@@ -6,8 +6,11 @@ import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatDuration } from '../lib/time'
 import { calculateAmount } from '../lib/money'
 import { BackEntryModal } from '../components/BackEntryModal'
+import { Modal } from '../components/Modal'
 import { Toggle } from '../components/Toggle'
 import { useRole } from '../hooks/useRole'
+import { reverseCanteenSale } from '../db/queries'
+import { useToastStore } from '../store/toastStore'
 import type { GameType, GameTable, Session, CanteenSale } from '../types'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -130,14 +133,32 @@ function SessionRow({
 // ─── Walk-in Quick Sale row (#165) ──────────────────────────────────────────
 // Walk-in canteen sales have no table/session — they live in the canteenSales
 // table. Rendered as a distinct row so History matches Summary (which already
-// counts them, #93/#141). Reversible via the Edit-history toggle is #166 — for
-// now these rows are read-only (never tappable) even in edit mode.
-function CanteenSaleRow({ sale, currency }: { sale: CanteenSale; currency: string }) {
+// counts them, #93/#141). #166 — under the Edit-history toggle the row becomes
+// tappable → a reverse-confirm (returns stock + reverses any wallet leg).
+function CanteenSaleRow({
+  sale,
+  currency,
+  editMode,
+  onReverse,
+}: {
+  sale: CanteenSale
+  currency: string
+  editMode: boolean
+  onReverse: (sale: CanteenSale) => void
+}) {
   const itemCount = sale.items.reduce((s, i) => s + i.quantity, 0)
   const timeStr = format(sale.createdAt, 'h:mm a')
   const namePreview = sale.items.map((i) => i.name).join(', ')
+  const tappable = editMode
   return (
-    <div className="flex items-center gap-3 px-5 py-3.5 border-b border-border last:border-0">
+    <div
+      role={tappable ? 'button' : undefined}
+      tabIndex={tappable ? 0 : undefined}
+      onClick={tappable ? () => onReverse(sale) : undefined}
+      className={`flex items-center gap-3 px-5 py-3.5 border-b border-border last:border-0 ${
+        tappable ? 'cursor-pointer active:bg-bg-card transition-colors' : ''
+      }`}
+    >
       <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-accent/12 text-accent">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
@@ -160,6 +181,9 @@ function CanteenSaleRow({ sale, currency }: { sale: CanteenSale; currency: strin
         <p className="text-[15px] font-bold text-text tabular-nums">{currency}{sale.total.toLocaleString('en-IN')}</p>
         <p className="text-[11px] text-text-faint font-mono mt-0.5">canteen</p>
       </div>
+      {tappable && (
+        <span className="text-text-faint shrink-0" aria-hidden="true">›</span>
+      )}
     </div>
   )
 }
@@ -229,9 +253,28 @@ function OwnerHistory() {
   // (and risk deleting) a past session — History is the money record. Not
   // persisted: it resets to OFF every visit, so the unlock is always deliberate.
   const [editMode, setEditMode] = useState(false)
+  // #166 — reverse a walk-in sale (returns stock + reverses wallet leg). Confirm
+  // modal, gated behind the same Edit-history toggle as session reversal.
+  const [reversingSale, setReversingSale] = useState<CanteenSale | null>(null)
+  const [reversing, setReversing] = useState(false)
+  const showToast = useToastStore((s) => s.show)
   const navigate = useNavigate()
 
   useTick()
+
+  async function handleConfirmReverseSale() {
+    if (!reversingSale) return
+    setReversing(true)
+    try {
+      await reverseCanteenSale(reversingSale.id)
+      showToast('Walk-in sale reversed', 'success')
+      setReversingSale(null)
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Could not reverse sale', 'error')
+    } finally {
+      setReversing(false)
+    }
+  }
 
   function parseLocalDate(str: string): Date {
     const [y, m, d] = str.split('-').map(Number)
@@ -416,6 +459,41 @@ function OwnerHistory() {
         }}
       />
 
+      {/* #166 — reverse a walk-in sale confirm. Returns stock + reverses any
+          wallet leg; the day total + Summary + piggy self-correct via the
+          !deletedAt filters. */}
+      <Modal
+        open={reversingSale !== null}
+        onClose={() => !reversing && setReversingSale(null)}
+        title="Reverse this walk-in sale?"
+      >
+        {reversingSale && (
+          <p className="text-text-dim text-sm mb-5">
+            {currency}{reversingSale.total.toLocaleString('en-IN')} · {reversingSale.items.reduce((s, i) => s + i.quantity, 0)} item
+            {reversingSale.items.reduce((s, i) => s + i.quantity, 0) !== 1 ? 's' : ''}.
+            {' '}Stock will be returned and any wallet payment refunded. This can't be undone.
+          </p>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setReversingSale(null)}
+            disabled={reversing}
+            className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold min-h-[44px]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirmReverseSale}
+            disabled={reversing}
+            className="py-3.5 bg-busy text-bg rounded-xl text-[14px] font-bold min-h-[44px] disabled:opacity-40"
+          >
+            {reversing ? 'Reversing…' : 'Reverse sale'}
+          </button>
+        </div>
+      </Modal>
+
       {/* Date inputs */}
       <div className="px-4 mb-3 grid grid-cols-2 gap-2">
         <div>
@@ -498,7 +576,15 @@ function OwnerHistory() {
                 <div className="bg-bg-card border border-border rounded-2xl divide-y divide-border overflow-hidden">
                   {dayRows.map((row) => {
                     if (row.kind === 'sale') {
-                      return <CanteenSaleRow key={`sale-${row.data.id}`} sale={row.data} currency={currency} />
+                      return (
+                        <CanteenSaleRow
+                          key={`sale-${row.data.id}`}
+                          sale={row.data}
+                          currency={currency}
+                          editMode={editMode}
+                          onReverse={setReversingSale}
+                        />
+                      )
                     }
                     const { session, items } = row.data
                     const base = sessionBaseAmt(session)

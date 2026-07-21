@@ -94,12 +94,13 @@ function OwnerPiggy() {
             .where('endedAt')
             .between(w.start, w.end, true, true)
             .filter(
-              (s) => s.status === 'completed' && s.paymentBreakdown !== undefined,
+              (s) => s.status === 'completed' && s.paymentBreakdown !== undefined && !s.deletedAt, // #162 residual caught in #166 sweep — reversed sessions leave cash-by-week
             )
             .toArray(),
           db.canteenSales
             .where('createdAt')
             .between(w.start, w.end, true, true)
+            .filter((c) => !c.deletedAt) // #166 — reversed walk-in sales leave cash-by-week
             .toArray(),
           db.walletTransactions
             .where('createdAt')

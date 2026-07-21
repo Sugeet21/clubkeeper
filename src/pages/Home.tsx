@@ -116,6 +116,7 @@ export default function Home() {
     const canteenSales = await db.canteenSales
       .where('createdAt')
       .between(start, end, true, true)
+      .filter((c) => !c.deletedAt) // #166 — reversed walk-in sales leave today's total
       .toArray()
 
     const completedAmount = todaySessions

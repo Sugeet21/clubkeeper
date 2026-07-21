@@ -272,6 +272,7 @@ function StaffSummaryToday() {
       const canteenSales = await db.canteenSales
         .where('createdAt')
         .between(start, end, true, true)
+        .filter((c) => !c.deletedAt) // #166 — reversed walk-in sales leave revenue
         .toArray()
       const walkInRevenue = canteenSales.reduce((sum, s) => sum + s.total, 0)
 
@@ -415,6 +416,7 @@ function OwnerSummary() {
         const canteenSales = await db.canteenSales
           .where('createdAt')
           .between(start, end, true, true)
+          .filter((c) => !c.deletedAt) // #166 — reversed walk-in sales leave per-date deltas
           .toArray()
         const walkInRevenue = canteenSales.reduce((sum, s) => sum + s.total, 0)
 
@@ -486,6 +488,7 @@ function OwnerSummary() {
       return db.canteenSales
         .where('createdAt')
         .between(start, end, true, true)
+        .filter((c) => !c.deletedAt) // #166 — reversed walk-in sales leave revenue + PAYMENT MODE
         .toArray()
     },
     [viewedDateMs],
@@ -578,6 +581,7 @@ function OwnerSummary() {
         db.canteenSales
           .where('createdAt')
           .between(winStart, end, true, true)
+          .filter((c) => !c.deletedAt) // #166 — reversed walk-in sales leave this cash aggregate
           .toArray(),
         db.walletTransactions
           .where('createdAt')

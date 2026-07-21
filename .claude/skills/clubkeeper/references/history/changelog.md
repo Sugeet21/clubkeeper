@@ -4,6 +4,14 @@
 
 ---
 
+## 21 Jul 2026 — #166: reverse a walk-in Quick Sale from History (+ closes the S30 soft-delete gap)
+
+- Owner ask (paired with #165): the Edit-history toggle should also let the owner correct/undo a walk-in sale. `createCanteenSale` had NO edit/delete path.
+- New **`reverseCanteenSale(saleId)`** in queries.ts — the canteen-sale twin of `reverseSession` (Pattern S29). ONE `syncedBatch(['canteen_sales','canteen_items','customers','wallet_transactions'])`: soft-delete the sale (tombstone) + return stock (aggregate-by-canteenItemId lost-update guard; removed/menu-gone item un-deleted or re-created badged `revertedStockAt`; `stockEnabled===false` skipped) + reverse any wallet leg (`referenceType:'canteen_sale'` debit → `'reversal'` credit + balance restore, append-only) + piggy self-corrects via the tombstone. Idempotency guard on `sale.deletedAt`. WHO = server `zz_stamp_actor` `updated_by`; a free-text delete-reason is DEFERRED (would need a `canteen_sales.delete_reason` column). Match prefers `line.canteenItemId` before the name/price fallback (canteen lines carry the id — more reliable than the session-item path).
+- **Closed the Pattern S30 soft-delete gap** (was documented as deferred at #165): added `!c.deletedAt` to EVERY canteenSales money reader — Home today-strip, Piggy cash-by-week, Summary ×4 (main revenue / per-date deltas / `canteenSalesForDate` live / cash aggregate), `getPiggyBalance`, `getCanteenSalesByDate`. `useCanteenSalesInRange` (#165) already had it. `getAllDataForExport` deliberately RAW (backup preserves tombstones — S29 exemption). **Sweep also caught a #162 residual:** Piggy cash-by-week SESSIONS filter was missing `!s.deletedAt` (a reversed session's cash could ghost into cash-by-week) — fixed in the same pass.
+- History: `CanteenSaleRow` tappable under the Edit-history toggle → shared `<Modal>` confirm ("stock returned, wallet refunded, can't be undone") → `reverseCanteenSale` + toast. Owner-only (staff never reach `OwnerHistory` — role split at the top of History).
+- Reviewer agent: **VERDICT SHIP**, zero blocking; verified wallet-reversal exactness, idempotency, D7 single-batch, full reader-coverage. Build + strict tsc clean (my files 0 errors; Summary stays at the 11-error #118/#138 baseline, unchanged).
+
 ## 21 Jul 2026 — #167 (part 2): shared CanteenItemPicker extracted + adopted in 3 surfaces
 
 - Root-cause fix for the drift that spawned #167: the 20 Jul searchable tap-grid lived only in `AddItemBottomSheet`. Extracted it to **`src/components/CanteenItemPicker.tsx`** (searchable 2/3-col grid, out-of-stock + peak aware, `×N` badge). Props: `items, onSelect, getBadgeCount?, peakNow, peakCfg, usePeakPricing?(true), disabled?, searchThreshold?(6), label?, showStock?`. Caller owns the tap semantics + badge source; component owns search/grid/peak-tag/out-of-stock styling.

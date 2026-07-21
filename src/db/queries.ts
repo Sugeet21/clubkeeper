@@ -1953,6 +1953,149 @@ export async function createCanteenSale(input: {
   return saleId
 }
 
+/** Thrown by reverseCanteenSale when the target isn't a reversible sale. */
+export class CanteenSaleReversalError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CanteenSaleReversalError'
+  }
+}
+
+/**
+ * #166 — OWNER-ONLY: fully reverse a walk-in Quick Sale, as if it never
+ * happened. The canteen-sale twin of `reverseSession` (Pattern S29).
+ *
+ * All in ONE atomic syncedBatch (power-cut / partial-write safe):
+ *  1. Soft-delete the sale (tombstone via b.softDelete → `deletedAt`). The
+ *     tombstone removes it from EVERY canteenSales reader (all now filter
+ *     `!deletedAt` — Summary tile/PAYMENT-MODE, piggy cash-in, History,
+ *     useCanteenSalesInRange), so its revenue + cash leave automatically.
+ *  2. Stock return — re-add each line's qty to the matching canteen item,
+ *     aggregated by canteenItemId so a repeated item is written ONCE with the
+ *     summed qty (lost-update guard, same as reverseSession). A removed/menu-
+ *     gone item is un-deleted / re-created to hold the stock, badged
+ *     `revertedStockAt`.
+ *  3. Wallet reversal — if the sale debited a wallet (paymentBreakdown.wallet>0,
+ *     a `type:'debit', referenceType:'canteen_sale'` row), write a CREDIT
+ *     reversal row + restore the balance. Ledger is append-only — never
+ *     soft-delete a wallet row (S24 rule 4).
+ *  4. Piggy self-corrects — cash-in is derived from non-deleted sales, so the
+ *     tombstone drops this one with NO separate piggy write.
+ *
+ * WHO reversed it is captured server-side by the `zz_stamp_actor` trigger
+ * (`updated_by = auth.uid()` on the tombstone update — migration
+ * 20260711_server_actor_stamping). A free-text delete REASON is deferred (would
+ * need a `canteen_sales.delete_reason` column) — v1 matches the plain
+ * delete/reverse ask.
+ */
+export async function reverseCanteenSale(saleId: string): Promise<void> {
+  if (typeof saleId !== 'string' || saleId.length !== 36) {
+    throw new CanteenSaleReversalError('Invalid sale id.')
+  }
+  const now = Date.now()
+
+  await syncedBatch(
+    ['canteen_sales', 'canteen_items', 'customers', 'wallet_transactions'],
+    async (b) => {
+      const sale = await db.canteenSales.get(saleId)
+      if (!sale) throw new CanteenSaleReversalError('Sale not found.')
+      if (sale.deletedAt) throw new CanteenSaleReversalError('This sale is already reversed.')
+
+      // ── 1. Tombstone the sale ────────────────────────────────────────────
+      await b.softDelete('canteen_sales', saleId)
+
+      // ── 2. Stock return (aggregate by canteenItemId — write once per item) ─
+      const canteenItems = await db.canteenItems.toArray()
+      const byExistingId = new Map<string, number>() // canteen item id → qty to return
+      const byNewName = new Map<string, { name: string; price: number; qty: number }>()
+
+      for (const line of sale.items) {
+        // A sale line carries the canteenItemId it was sold from; prefer it, then
+        // fall back to name+price / name match (mirrors reverseSession).
+        const byId = line.canteenItemId
+          ? canteenItems.find((ci) => ci.id === line.canteenItemId)
+          : undefined
+        const match =
+          byId ??
+          findMatchingCanteenItem(line.name, line.price, canteenItems) ??
+          canteenItems.find((ci) => normalizeName(ci.name) === normalizeName(line.name)) ??
+          null
+
+        if (match?.id && (match.deletedAt || match.stockEnabled)) {
+          byExistingId.set(match.id, (byExistingId.get(match.id) ?? 0) + line.quantity)
+        } else if (!match) {
+          const key = normalizeName(line.name)
+          const acc = byNewName.get(key)
+          if (acc) acc.qty += line.quantity
+          else byNewName.set(key, { name: line.name, price: line.price, qty: line.quantity })
+        }
+        // present + stockEnabled===false → intentionally untracked; no stock op.
+      }
+
+      let newSort = (canteenItems.length + 1) * 10
+      for (const [id, qty] of byExistingId) {
+        const ci = canteenItems.find((c) => c.id === id)!
+        if (ci.deletedAt) {
+          await b.update('canteen_items', id, {
+            deletedAt: null,
+            isActive: true,
+            stockEnabled: true,
+            currentStock: (ci.currentStock ?? 0) + qty,
+            revertedStockAt: now,
+          })
+        } else {
+          await b.update('canteen_items', id, {
+            currentStock: (ci.currentStock ?? 0) + qty,
+          })
+        }
+      }
+      for (const { name, price, qty } of byNewName.values()) {
+        await b.insert('canteen_items', {
+          id: crypto.randomUUID(),
+          name,
+          defaultPrice: price,
+          stockEnabled: true,
+          currentStock: qty,
+          isActive: true,
+          createdAt: now,
+          sortOrder: newSort,
+          revertedStockAt: now,
+        } as CanteenItem & { id: string })
+        newSort += 10
+      }
+
+      // ── 3. Wallet reversal (if any wallet portion was debited) ────────────
+      const walletPaid = sale.paymentBreakdown?.wallet ?? 0
+      if (walletPaid > 0) {
+        const debit = await db.walletTransactions
+          .where('referenceId')
+          .equals(saleId)
+          .filter((t) => t.referenceType === 'canteen_sale' && t.type === 'debit')
+          .first()
+        if (debit?.customerId) {
+          const customer = await db.customers.get(debit.customerId)
+          if (customer) {
+            const newBalance = customer.walletBalance + walletPaid
+            await b.insert('wallet_transactions', {
+              id: crypto.randomUUID(),
+              customerId: customer.id,
+              type: 'credit',
+              amount: walletPaid,
+              balanceAfter: newBalance,
+              paymentMode: null,
+              referenceType: 'reversal',
+              referenceId: saleId,
+              notes: `Reversal of walk-in sale ${saleId.slice(0, 8)}`,
+              createdAt: now,
+            } as WalletTransaction)
+            await b.update('customers', customer.id, { walletBalance: newBalance })
+          }
+        }
+      }
+    },
+  )
+}
+
 // ─── Split payment / canteen sale / piggy — v13 stubs ────────────────────────
 // These query helpers are added in Phase 1 for type safety and to centralise
 // aggregation logic. They are NOT wired to any UI yet — Phase 2+ consumers
@@ -1989,6 +2132,7 @@ export async function getCanteenSalesByDate(date: Date): Promise<CanteenSale[]> 
   return db.canteenSales
     .where('createdAt')
     .between(start, end, true, true)
+    .filter((c) => !c.deletedAt) // #166 — never surface a reversed sale in a money helper
     .toArray()
 }
 
@@ -2023,7 +2167,11 @@ export async function getPiggyBalance(): Promise<{
         (s) => s.status === 'completed' && s.paymentBreakdown !== undefined && !s.deletedAt, // #162 — reversed sessions leave the piggy cash-in
       )
       .toArray(),
-    db.canteenSales.where('createdAt').aboveOrEqual(since).toArray(),
+    db.canteenSales
+      .where('createdAt')
+      .aboveOrEqual(since)
+      .filter((c) => !c.deletedAt) // #166 — reversed walk-in sales leave the piggy cash-in
+      .toArray(),
     db.walletTransactions
       .where('createdAt')
       .aboveOrEqual(since)
