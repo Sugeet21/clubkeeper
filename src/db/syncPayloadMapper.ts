@@ -369,6 +369,10 @@ const MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
     if (row.deletedAt !== undefined && row.deletedAt !== null) {
       out.deleted_at = msToIso(row.deletedAt as number | string)
     }
+    // #173 — kind/reason PUSH side (prod columns exist, #174; paired with the
+    // read mapper). Now that batch-reverse writes them they DO round-trip.
+    if (row.kind !== undefined) out.kind = row.kind
+    if (row.reason !== undefined) out.reason = row.reason
     return out
   },
 

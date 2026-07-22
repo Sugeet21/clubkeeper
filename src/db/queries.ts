@@ -27,7 +27,7 @@ import type { Booking } from '../types/booking'
  * Current Dexie schema version. Mirror of `this.version(N)` in `database.ts`.
  * Used by export/import to gate forward-compatibility. Bump when database.ts bumps.
  */
-export const CURRENT_SCHEMA_VERSION = 22
+export const CURRENT_SCHEMA_VERSION = 23
 
 export interface ClubKeeperBackupV21 {
   schemaVersion: 21
@@ -2445,6 +2445,191 @@ export async function recordStockPurchase(input: {
   })
 
   return id
+}
+
+// #173 — bulk restock: RECEIVED/ADD semantics (owner-confirmed). NOT a new
+// stock-mutation path — a thin sequential loop over recordStockPurchase (the
+// only sanctioned atomic add-stock path). Each row is its own syncedBatch tx, so
+// a mid-loop failure leaves already-applied rows intact and Dexie consistent.
+//
+// v1 FORCES cost:0 + source:'other' (R9 — no piggy option while cost is 0, or
+// getPiggyBalance would count ₹0 piggy rows). All rows in one confirm share a
+// batchId, stamped in notes as "bulk-entry <batchId> <ISO>" so Batch History can
+// group them and reverse them (Chunk 5). kind is left undefined ⇒ 'received'.
+//
+// NO network await — recordStockPurchase is a local syncedBatch that returns
+// immediately; the outbox syncs later (R8). Returns per-row results so the caller
+// can report "38 applied, 2 failed: X, Y" without aborting the whole batch.
+export interface BulkRestockRow {
+  canteenItemId: string
+  quantityAdded: number       // > 0 — empty/blank rows are filtered out BEFORE calling this
+}
+export interface BulkRestockResult {
+  batchId: string
+  applied: Array<{ canteenItemId: string; purchaseId: string }>
+  failed: Array<{ canteenItemId: string; error: string }>
+}
+
+export async function confirmBulkRestock(
+  rows: BulkRestockRow[],
+  batchId: string,
+): Promise<BulkRestockResult> {
+  const iso = new Date().toISOString()
+  const note = `bulk-entry ${batchId} ${iso}` // ≤ 200 chars (uuid + iso ≈ 60)
+  const applied: BulkRestockResult['applied'] = []
+  const failed: BulkRestockResult['failed'] = []
+
+  for (const row of rows) {
+    try {
+      const purchaseId = await recordStockPurchase({
+        canteenItemId: row.canteenItemId,
+        quantityAdded: row.quantityAdded,
+        cost: 0,               // R9 — forced
+        source: 'other',       // R9 — forced (never 'piggy' while cost is 0)
+        notes: note,
+      })
+      applied.push({ canteenItemId: row.canteenItemId, purchaseId })
+    } catch (e) {
+      // Collect, don't abort — the rest of the batch still applies.
+      failed.push({
+        canteenItemId: row.canteenItemId,
+        error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
+  return { batchId, applied, failed }
+}
+
+// #173 Chunk 5 — Batch History + Reverse.
+//
+// Batches are reconstructed from stockPurchases.notes: bulk-entry rows carry
+// "bulk-entry <batchId> <ISO>"; the reversal rows this feature writes carry
+// "bulk-reversal <batchId> <ISO>". kind is the durable classifier — received
+// rows have kind undefined/null (⇒ 'received', pre-existing + bulk-entry rows)
+// or 'received'; reversal rows have kind='reversal'. NEVER hard-delete or edit
+// historical rows (offline-sync-safe: the row may not exist on the other device
+// yet, and stock has moved since). Reverse writes a COMPENSATING row instead;
+// both entries stay in the audit trail.
+
+const BULK_ENTRY_PREFIX = 'bulk-entry '
+const BULK_REVERSAL_PREFIX = 'bulk-reversal '
+
+/** Extract the batchId from a "bulk-entry <id> <iso>" / "bulk-reversal <id> <iso>"
+ *  note. Returns null if the note isn't a bulk marker. */
+function parseBatchId(notes: string | undefined, prefix: string): string | null {
+  if (!notes || !notes.startsWith(prefix)) return null
+  const rest = notes.slice(prefix.length)
+  const sp = rest.indexOf(' ')
+  return sp === -1 ? rest : rest.slice(0, sp)
+}
+
+export interface RestockBatch {
+  batchId: string
+  createdAt: number              // earliest row's createdAt
+  rows: StockPurchase[]          // the original received rows (kind !== 'reversal')
+  itemCount: number
+  totalUnits: number
+  reversed: boolean              // true if a bulk-reversal row exists for this batchId
+}
+
+/** List bulk-restock batches, newest first. Groups received rows by batchId and
+ *  flags which have already been reversed. Excludes soft-deleted rows. */
+export async function listRestockBatches(): Promise<RestockBatch[]> {
+  const all = await db.stockPurchases.filter((p) => !p.deletedAt).toArray()
+
+  // Which batchIds have a reversal row already?
+  const reversedIds = new Set<string>()
+  for (const p of all) {
+    if (p.kind === 'reversal') {
+      const bid = parseBatchId(p.notes, BULK_REVERSAL_PREFIX)
+      if (bid) reversedIds.add(bid)
+    }
+  }
+
+  // Group the received (non-reversal) bulk-entry rows by batchId.
+  const groups = new Map<string, StockPurchase[]>()
+  for (const p of all) {
+    if (p.kind === 'reversal') continue
+    const bid = parseBatchId(p.notes, BULK_ENTRY_PREFIX)
+    if (!bid) continue
+    const g = groups.get(bid)
+    if (g) g.push(p)
+    else groups.set(bid, [p])
+  }
+
+  const batches: RestockBatch[] = []
+  for (const [batchId, rows] of groups) {
+    batches.push({
+      batchId,
+      createdAt: Math.min(...rows.map((r) => r.createdAt)),
+      rows,
+      itemCount: rows.length,
+      totalUnits: rows.reduce((s, r) => s + r.quantityAdded, 0),
+      reversed: reversedIds.has(batchId),
+    })
+  }
+  batches.sort((a, b) => b.createdAt - a.createdAt) // newest first
+  return batches
+}
+
+export class RestockBatchError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RestockBatchError'
+  }
+}
+
+/**
+ * Reverse a bulk-restock batch by writing a COMPENSATING stock_purchases row per
+ * original received row (kind='reversal', same quantity magnitude) and
+ * SUBTRACTING that quantity from currentStock. Never deletes or edits the
+ * originals — both stay in the audit trail.
+ *
+ * Atomic PER original row (each its own syncedBatch, like confirmBulkRestock), so
+ * a mid-loop failure leaves already-reversed rows consistent. Idempotency: throws
+ * if the batch is already reversed. Stock is only decremented on stock-tracked
+ * items; currentStock is clamped at 0 (can't go negative — stock may have been
+ * sold since, so the honest floor is 0).
+ */
+export async function reverseRestockBatch(batchId: string): Promise<{ reversedRows: number }> {
+  const batches = await listRestockBatches()
+  const batch = batches.find((b) => b.batchId === batchId)
+  if (!batch) throw new RestockBatchError('Batch not found.')
+  if (batch.reversed) throw new RestockBatchError('This batch was already reversed.')
+
+  const iso = new Date().toISOString()
+  const note = `${BULK_REVERSAL_PREFIX}${batchId} ${iso}`
+  let reversedRows = 0
+
+  for (const orig of batch.rows) {
+    const reversalId = crypto.randomUUID()
+    await syncedBatch(['stock_purchases', 'canteen_items'], async (b) => {
+      // Compensating record — magnitude stays positive; kind carries direction.
+      await b.insert('stock_purchases', {
+        id: reversalId,
+        canteenItemId: orig.canteenItemId,
+        quantityAdded: orig.quantityAdded,
+        cost: 0,
+        source: 'other',
+        kind: 'reversal',
+        reason: `Reversal of bulk restock ${batchId.slice(0, 8)}`,
+        notes: note,
+        createdAt: Date.now(),
+      } as StockPurchase)
+
+      // Subtract from stock (only when tracked). Clamp at 0 — stock may have been
+      // sold since the original restock, so we never drive it negative.
+      const item = await db.canteenItems.get(orig.canteenItemId)
+      if (item && item.stockEnabled === true) {
+        const next = Math.max(0, (item.currentStock ?? 0) - orig.quantityAdded)
+        await b.update('canteen_items', orig.canteenItemId, { currentStock: next })
+      }
+    })
+    reversedRows += 1
+  }
+
+  return { reversedRows }
 }
 
 /**

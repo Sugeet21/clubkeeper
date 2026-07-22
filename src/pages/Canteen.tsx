@@ -429,6 +429,27 @@ export default function Canteen() {
             </OwnerOnly>
           )}
 
+        {/* #173 — owner-only Bulk restock entry points (R10). Routes are also
+            RequireOwner-gated (defense in depth). Fast paper-register data entry
+            + batch history/reverse. */}
+        <OwnerOnly>
+          <div className="flex gap-2 mb-3">
+            <button
+              onClick={() => navigate('/canteen/bulk-restock')}
+              className="flex-1 min-h-[44px] flex items-center justify-center gap-2 rounded-2xl bg-bg-card border border-border text-text text-[14px] font-semibold active:bg-bg transition-colors"
+            >
+              <span className="text-[16px] leading-none">⊞</span> Bulk restock
+            </button>
+            <button
+              onClick={() => navigate('/canteen/restock-history')}
+              aria-label="Restock history"
+              className="min-h-[44px] px-4 flex items-center justify-center rounded-2xl bg-bg-card border border-border text-text-dim text-[14px] font-semibold active:bg-bg transition-colors"
+            >
+              History
+            </button>
+          </div>
+        </OwnerOnly>
+
         {/* Stats — always rendered, handles undefined inside. Uses the full
             (unfiltered) list so the low-stock count reflects the whole canteen,
             not just the current search. */}

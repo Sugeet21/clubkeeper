@@ -455,6 +455,21 @@ const READ_MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
     ),
     createdAt: isoToMs(row.created_at, 'stock_purchases.created_at'),
     ...(row.notes !== undefined && row.notes !== null ? { notes: reqStr(row.notes, 'stock_purchases.notes') } : {}),
+    // #173 — kind/reason PULL side (paired with the write mapper). kind absent/
+    // null ⇒ omit; readers treat undefined as 'received'. A non-null kind is
+    // validated against the union (a foreign writer's junk fails loud, S14-style).
+    ...(row.kind !== undefined && row.kind !== null
+      ? {
+          kind: reqEnum<NonNullable<StockPurchase['kind']>>(
+            row.kind,
+            ['received', 'reversal', 'wastage', 'staff', 'complimentary'],
+            'stock_purchases.kind',
+          ),
+        }
+      : {}),
+    ...(row.reason !== undefined && row.reason !== null
+      ? { reason: reqStr(row.reason, 'stock_purchases.reason') }
+      : {}),
     updatedAt: isoToMs(row.updated_at, 'stock_purchases.updated_at'),
     ...(row.deleted_at !== undefined && row.deleted_at !== null
       ? { deletedAt: isoToMs(row.deleted_at, 'stock_purchases.deleted_at') }

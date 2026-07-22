@@ -25,6 +25,8 @@ import WalletNewCustomer from './pages/WalletNewCustomer'
 import WalletTopup from './pages/WalletTopup'
 import CustomerProfile from './pages/CustomerProfile'
 import Canteen from './pages/Canteen'
+import BulkRestock from './pages/BulkRestock'
+import RestockHistory from './pages/RestockHistory'
 import QuickSale from './pages/QuickSale'
 import Piggy from './pages/Piggy'
 import Bookings from './pages/Bookings'
@@ -39,6 +41,7 @@ import { SyncBackfillBoot } from './components/SyncBackfillBoot'
 import TestOutbox from './pages/__dev__/TestOutbox'
 // Phase C Chunk 5.2b — SyncReader runtime-proof page, DEV-only route.
 import TestSyncReader from './pages/__dev__/TestSyncReader'
+import TestNumberPad from './pages/__dev__/TestNumberPad'
 
 const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback', '/auth/login']
 // /c/ and /poster/ are public but use path prefixes — checked via startsWith in AppLayout
@@ -210,6 +213,10 @@ function AppLayout() {
                 role split stays as defense-in-depth behind this guard. */}
             <Route element={<RequireOwner />}>
               <Route path="/piggy" element={<Piggy />} />
+              {/* #173 — bulk restock is owner-only (R10). RequireOwner bounces
+                  staff to /tables at the router, before the page mounts. */}
+              <Route path="/canteen/bulk-restock" element={<BulkRestock />} />
+              <Route path="/canteen/restock-history" element={<RestockHistory />} />
             </Route>
             <Route path="/bookings" element={<Bookings />} />
             {/* Phase C Chunk 3 — DEV-only sync wrapper smoke test. Gated on
@@ -220,6 +227,10 @@ function AppLayout() {
             {/* Phase C Chunk 5.2b — DEV-only SyncReader runtime proof. */}
             {import.meta.env.DEV && (
               <Route path="/__dev/test-sync-reader" element={<TestSyncReader />} />
+            )}
+            {/* #173 Chunk 1 — DEV-only NumberPad no-keyboard harness. */}
+            {import.meta.env.DEV && (
+              <Route path="/__dev/test-number-pad" element={<TestNumberPad />} />
             )}
           </Route>
         </Routes>

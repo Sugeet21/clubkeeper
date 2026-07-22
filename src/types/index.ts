@@ -130,16 +130,44 @@ export interface CanteenSale {
  * 'other' does not. Inserted atomically with CanteenItem.currentStock
  * increment when stockEnabled=true.
  */
+// #173 — kind classifies a stock movement. ABSENT/null MEANS 'received' — every
+// pre-v23 row and everything the bulk-restock entry writes has kind undefined,
+// so all readers MUST treat undefined/null as 'received' (not "unknown"). This
+// lets v2 add wastage/staff/complimentary without a migration.
+export type StockPurchaseKind =
+  | 'received'      // default — stock bought/added (recordStockPurchase, bulk entry)
+  | 'reversal'      // #173 batch reverse — SUBTRACTS stock (currentStock -= quantity)
+  | 'wastage'       // v2 (not built) — spoilage/breakage
+  | 'staff'         // v2 (not built) — staff consumption
+  | 'complimentary' // v2 (not built) — given away free
+
 export interface StockPurchase {
   id: string                  // UUID v4
   canteenItemId: string       // FK → CanteenItem.id (UUID)
-  quantityAdded: number       // integer ≥ 1
+  quantityAdded: number       // integer ≥ 1 — ALWAYS positive (a magnitude). Direction lives in `kind`.
   cost: number                // total cost paid for this restock (integer rupees, ≥ 0)
   source: 'piggy' | 'other'
   createdAt: number           // Unix ms
   notes?: string              // max 200 chars
+  // #173 — SYNCED both ways as of Chunk 5: syncPayloadMapper (push) + syncReadMapper
+  // (pull, enum-validated) both reference kind/reason. Prod columns
+  // stock_purchases.kind/reason exist (#174, owner-run 22 Jul, Rule-M probe-verified).
+  // Batch-reverse is the first writer (kind='reversal'); bulk entry leaves kind
+  // undefined ⇒ 'received'. New synced field ⇒ BOTH mappers (bug_patterns standing check).
+  kind?: StockPurchaseKind    // undefined/null ⇒ 'received'
+  reason?: string             // freeform reason (max 200) — used by reversal/v2 kinds
   updatedAt?: number          // Phase C LWW metadata (#117) — epoch ms
   deletedAt?: number | null   // Phase C soft-delete marker (#117) — epoch ms
+}
+
+// #173 — device-local draft for the Bulk Restock Entry screen (R6). NOT a synced
+// table — it's ephemeral UI state so a phone call / back-tap / inline-item-create
+// doesn't wipe in-progress quantities. Singleton row (id=1). Cleared on confirm
+// or explicit discard. Never exported/imported, never pushed to Supabase.
+export interface RestockDraft {
+  id: number                            // singleton — always 1
+  quantities: Record<string, string>    // canteenItemId → qty as STRING ('' = blank, never coerced)
+  updatedAt: number                     // Unix ms
 }
 
 export interface CoinTier {

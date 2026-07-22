@@ -7,6 +7,7 @@ import type {
   CanteenItem,
   CanteenSale,
   StockPurchase,
+  RestockDraft,
   OutboxRow,
 } from '../types'
 import type { Customer } from '../types/customer'
@@ -33,6 +34,8 @@ export class ClubKeeperDB extends Dexie {
   bookings!: Table<Booking, string>
   // Phase C sync queue — local-only, never exported, unused until Phase C
   _outbox!: Table<OutboxRow, number>
+  // #173 — bulk-restock draft (R6). Local-only, singleton row, never synced.
+  restockDrafts!: Table<RestockDraft, number>
 
   constructor(dbName: string) {
     super(dbName)
@@ -573,6 +576,29 @@ export class ClubKeeperDB extends Dexie {
       stockPurchases: 'id, createdAt, canteenItemId, source',
       bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
       _outbox: '++seq, table, op, rowId, createdAt',
+    })
+    // Version 23: #173 Bulk Restock Entry — additive only, no .upgrade() block.
+    // Adds the `restockDrafts` table: a DEVICE-LOCAL, NOT-SYNCED singleton draft
+    // (R6) holding in-progress bulk-restock quantities so a phone call / back-tap
+    // / inline item-create doesn't wipe them. New table starts empty. Also adds
+    // optional StockPurchase.kind + .reason (undefined ⇒ 'received') — additive
+    // fields, NO index, so the stockPurchases store string is unchanged. kind/
+    // reason DO sync (prod columns exist, #174) and MUST be wired into
+    // syncPayloadMapper + syncReadMapper before anything writes them (Chunk 5).
+    // Every other store string is identical to v22.
+    this.version(23).stores({
+      gameTables: 'id, name, gameType, sortOrder, outOfService',
+      sessions: 'id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: 'id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, referenceId, [customerId+createdAt]',
+      canteenItems: 'id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+      bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
+      _outbox: '++seq, table, op, rowId, createdAt',
+      restockDrafts: 'id',
     })
   }
 }
