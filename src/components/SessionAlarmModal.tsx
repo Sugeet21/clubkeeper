@@ -42,6 +42,10 @@ export function SessionAlarmModal({
 
   // Start alarm loop on mount; cleanup stops it on unmount or navigation away.
   // Vibration fires once on mount (no loop — battery/annoyance tradeoff).
+  // NB (#171): on an owner device this modal only mounts AFTER the silent-backup
+  // window has already elapsed (useSessionAlarm withholds the session until
+  // then), so when it renders it is meant to be loud. The owner grace logic
+  // lives in the hook, not here.
   useEffect(() => {
     if (vibrationEnabled) triggerVibration()
     if (!soundEnabled) return

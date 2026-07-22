@@ -663,7 +663,7 @@ Files in scope:
 - `src/db/queries.ts` — `snoozeNotify` (anchor-to-original — Pattern T6), `updateSessionNotify` (set/clear from now), `startSession` accepts `notifyAfterMs` and writes `notifyAtMs`
 - `src/lib/alarm.ts` — `startAlarmLoop` (gain 1.0, looped, 60-sec cap — load-bearing for battery), `playBeepOnce`, `triggerVibration`, `unlockAudio` (iOS unlock)
 - `src/lib/notifyPresets.ts` — 30 min / 1 hr / 1.5 hr / 2 hr / custom 1–600 min
-- `src/hooks/useSessionAlarm.ts` — detection on `status === 'running'`; wall-clock `now >= notifyAtMs`
+- `src/hooks/useSessionAlarm.ts` — detection on `status === 'running'`; wall-clock `now >= notifyAtMs + fireOffset`. **#171 — takes a `role` param: on `owner` the fire is withheld by `OWNER_ALARM_SILENT_MS` (5 min) so routine staff-handled alarms don't take over the owner's phone (owner = silent safety-net, escalates only if unacknowledged past the window); staff fires at offset 0. `Home.tsx` passes `useRole()`. Snooze re-arms the window (notifyAtMs moves → owner silent 5 min past the NEW fire time — consistent with Pattern T6).**
 - `src/components/SessionAlarmModal.tsx` — fires when threshold met on `/tables`
 - `src/components/TableCard.tsx` — bell icon when `notifyAtMs != null && !notifyAcknowledgedAt`; pulsing on running
 - `src/pages/StartSession.tsx` — chips set FROM session start
@@ -675,6 +675,7 @@ Invariants:
 - Wall-clock semantics: pause does NOT shift `notifyAtMs`. Deliberate — matches phone alarms.
 - Paused sessions are deferred (detection requires `running`); completed sessions excluded.
 - Snooze anchors to original `notifyAtMs` (Pattern T6) with `Date.now()` fallback if past.
+- **#171 — owner is a SILENT BACKUP, not siloed off.** The alarm is a shared session field (`notifyAtMs`), so it syncs to every club device — the owner still gets it, just 5 min late and only if staff hasn't acknowledged (staff ack syncs via `notifyAcknowledgedAt` and clears it on both). Do NOT "fix" this into a per-user/staff-only alarm — a table running over while staff's phone is away is the exact revenue leak the app exists to stop. Role-scoped timing lives ONLY in `useSessionAlarm` (no schema/sync field).
 - 60-second auto-stop cap in `startAlarmLoop` is load-bearing — do not remove without explicit decision.
 - `NOTIFY_PRESETS` consumed by both StartSession AND SessionDetail edit sheet — change once, both update.
 

@@ -18,6 +18,7 @@ import TableCard from '../components/TableCard'
 import { Modal } from '../components/Modal'
 import { TableFormModal } from '../components/TableFormModal'
 import { OwnerOnly } from '../components/auth/RoleGuard'
+import { useRole } from '../hooks/useRole'
 import { SubscriptionStatusBanner } from '../components/SubscriptionStatusBanner'
 import { SessionAlarmModal } from '../components/SessionAlarmModal'
 import type { GameType, Session } from '../types'
@@ -31,6 +32,7 @@ export default function Home() {
   const tables = useTables()
   const activeSessions = useActiveSessions()
   const settings = useSettings()
+  const role = useRole()
   const navigate = useNavigate()
   const { showBanner: showInstall, install, dismiss: dismissInstall } = useInstallPrompt()
 
@@ -45,8 +47,10 @@ export default function Home() {
   const [endingId, setEndingId] = useState<string | null>(null)
   const [showDisabled, setShowDisabled] = useState(false)
 
-  // Alarm — checked every useTick() re-render (Pattern T1, Pattern T4)
-  const alarmSession = useSessionAlarm(activeSessions)
+  // Alarm — checked every useTick() re-render (Pattern T1, Pattern T4).
+  // #171 — role-scoped: owner devices withhold the alarm for a 5-min silent
+  // window (staff is the floor responder); after that it escalates to owner too.
+  const alarmSession = useSessionAlarm(activeSessions, role)
 
   const sessionMap = useMemo(() => {
     const map = new Map<string, Session>() // Pattern R5: table ids are UUID strings (#134 sibling)
