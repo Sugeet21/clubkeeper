@@ -60,7 +60,9 @@ export async function downloadRestockSheet(clubName: string, now: number): Promi
   const head = [['#', 'Item', ...Array.from({ length: QTY_COLS }, () => '')]]
 
   const body = items.map((it, i) => [
-    String(i + 1), // R1 — row number = sortOrder position; consecutive across pages (R7)
+    String(i + 1), // R1 — row number = position in the shared listRestockItems() order
+                   // (#176: (category, name)); same array the entry screen numbers, so
+                   // screen row N === paper row N. Consecutive across pages (R7).
     it.name, // R3 — full name, never truncated (linebreak overflow below)
     ...Array.from({ length: QTY_COLS }, () => ''), // blank cells to write into
   ])

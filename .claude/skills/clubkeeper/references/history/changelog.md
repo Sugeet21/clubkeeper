@@ -4,6 +4,17 @@
 
 ---
 
+## 23 Jul 2026 — #176 Chunk 1: canteen `category` field + (category, name) restock ordering + sync wiring
+
+- **Why:** owner about to print 12 restock sheets for staff whose paper register is alphabetical; current order was an insertion-order accident (`sortOrder`). Fix the order before the sheet becomes a habit.
+- **NO migration (verified live).** Rule-M probe of prod `canteen_items`: `category` column ALREADY EXISTS (`text`, nullable, **zero CHECK constraints** → any text value accepted). All 29 live items currently NULL. Both mappers previously named `category` as a server-only skip; this chunk just wires it.
+- **Type (`src/types/index.ts`):** `CanteenItemCategory = drinks|cigarettes|snacks|other` + `category?` on `CanteenItem`. `CATEGORY_ORDER` map + `categoryRank()` (unknown/null → 99 = LAST — owner decision: existing NULL items sort to the bottom until categorised). One home for the order.
+- **Sync BOTH ways (standing check):** push `syncPayloadMapper` `out.category = row.category ?? null` (explicit-null-clears, mirrors `peak_price`). Pull `syncReadMapper` — **LENIENT** (`typeof string && length>0`), deliberately NOT `reqEnum`: category is owner-extensible free-text underneath, and `reqEnum` throws → would dead-letter an older client's pull of a future value (e.g. "paan"). Unknown values round-trip and rank last. Non-strings/empty dropped. Field comment warns readers not to `switch`-exhaustively (runtime value may be outside the union).
+- **Ordering (`src/lib/restockItems.ts`):** `listRestockItems()` now sorts in memory by `compareRestockItems` = (categoryRank, name-lower localeCompare, `sortOrder` tiebreak → strict total order). Same `.filter()` (active + stockEnabled) so the item SET is unchanged; only order moved. **Restock surface ONLY** — `getCanteenItems()` (Canteen page/QuickSale/AddItem) stays on `sortOrder` (owner scope decision).
+- **Row N === paper N verified:** both `BulkRestock.tsx` and `restockSheetPdf.ts` call the single `listRestockItems()` and number by array index → identical numbering by construction (R1 preserved). Stale "sortOrder position" comment in the PDF fixed.
+- **No Dexie bump** — `category` isn't indexed; rides the existing `canteenItems` store additively (peakPrice/v18 precedent). Build confirms.
+- Reviewer agent: **APPROVE**, no blocking violations; the lenient-pull-over-reqEnum call explicitly endorsed as correct for an extensible field. Build clean; strict tsc at the unchanged 88-error baseline (0 new). Branch `feat/176-canteen-category`, not merged. **Chunk 2 (category picker in `CanteenItemFormModal`) still to build.**
+
 ## 23 Jul 2026 — #173 Bulk Restock Entry + Batch History + printable sheet (owner-only, offline; CODE DONE)
 
 - **Feature (owner-only, offline, no AI):** manual bulk restock for a ~50-item canteen where 5–6 items are borrowed daily. Replaces the shelved #172 AI photo-parser (issue retained with Chunk 0 findings). Built in 6 chunks; all build-clean at the 88-error #118/#138 baseline (0 new).

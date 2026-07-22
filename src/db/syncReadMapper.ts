@@ -356,7 +356,10 @@ const READ_MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
   // ⚠ REQUIRES migration 20260702_sync_client_fields.sql (stock_enabled
   // column). A row without it throws — stock_qty alone cannot distinguish
   // "0 in stock" from "stock tracking off" (Dexie currentStock: null).
-  // Server-only fields dropped: club_id, category, created_by/updated_by.
+  // Server-only fields dropped: club_id, created_by/updated_by.
+  // #176 — category IS now pulled (LENIENT — see the pull site below); paired with the
+  // push mapper (standing check). Absent/null ⇒ field stays undefined on the Dexie row ⇒
+  // uncategorised ⇒ sorts last. Column is live (text, nullable — no migration).
   canteen_items: (row): Partial<CanteenItem> => {
     const stockEnabled = reqBool(row.stock_enabled, 'canteen_items.stock_enabled')
     return {
@@ -365,6 +368,14 @@ const READ_MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
       defaultPrice: reqNum(row.price, 'canteen_items.price'),
       ...(row.peak_price !== undefined && row.peak_price !== null
         ? { peakPrice: reqNum(row.peak_price, 'canteen_items.peak_price') }
+        : {}),
+      // #176 — LENIENT pull (NOT reqEnum): category is intentionally extensible
+      // (owner may add "paan"/"ice cream" later). A newer client could write a value
+      // this build's union doesn't know; reqEnum would THROW and dead-letter that row's
+      // pull. Instead accept any non-empty string as-is — an unknown value round-trips
+      // fine and simply ranks last via categoryRank(). Non-strings are dropped.
+      ...(typeof row.category === 'string' && row.category.length > 0
+        ? { category: row.category as NonNullable<CanteenItem['category']> }
         : {}),
       stockEnabled,
       currentStock: stockEnabled ? reqNum(row.stock_qty, 'canteen_items.stock_qty') : null,

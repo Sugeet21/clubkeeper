@@ -4,21 +4,43 @@
 // printed sheet's row N is always the same item as screen row N. Do NOT re-inline the
 // orderBy/filter in either caller — that's the R1 duplication this file exists to kill.
 //
-// Ordering: sortOrder ascending (the owner's own arrangement). Filter: active +
-// stock-tracked only. filter() not .where() because IndexedDB stores booleans as
-// booleans, so a boolean equality index is unreliable — same reason getCanteenItems
-// uses filter() (queries.ts). The table is tiny; a full scan is free.
+// #176 — ORDERING is now (categoryRank, name), NOT sortOrder. Rationale: the owner prints
+// the sheet for staff whose paper register is alphabetical; grouping by category (drinks →
+// cigarettes → snacks → other, uncategorised last) with A-Z within each group makes the
+// printed sheet match how he shops AND how staff reads. This changes BOTH the entry screen
+// and the PDF together (single source), so row N still matches on both. Scope is the restock
+// surface ONLY — getCanteenItems() (Canteen page / QuickSale / AddItem) stays on sortOrder.
+//
+// Filter: active + stock-tracked only. filter() not .where() because IndexedDB stores booleans
+// as booleans, so a boolean equality index is unreliable — same reason getCanteenItems uses
+// filter() (queries.ts). Sort is done in memory (tiny table) since it's a compound key Dexie
+// can't index directly; sortOrder is the final tie-break so order is fully deterministic.
 
 import { db } from '../db/database'
+import { categoryRank } from '../types'
 import type { CanteenItem } from '../types'
 
-/** Active, stock-tracked canteen items in the owner's sortOrder. The row order for
- *  BOTH the entry screen and the printed sheet — call this, never re-inline it. */
+/** Active, stock-tracked canteen items ordered (categoryRank, name-A-Z, sortOrder). The row
+ *  order for BOTH the entry screen and the printed sheet — call this, never re-inline it. */
 export async function listRestockItems(): Promise<CanteenItem[]> {
-  return db.canteenItems
-    .orderBy('sortOrder')
+  const items = await db.canteenItems
     .filter((c) => c.isActive === true && c.stockEnabled === true)
     .toArray()
+  return items.sort(compareRestockItems)
+}
+
+/** Restock ordering comparator: category group first (drinks→cigarettes→snacks→other→
+ *  uncategorised), then item name case-insensitive A-Z, then sortOrder as a stable
+ *  final tie-break (two items with the same category + name keep a deterministic order). */
+export function compareRestockItems(a: CanteenItem, b: CanteenItem): number {
+  const ra = categoryRank(a.category)
+  const rb = categoryRank(b.category)
+  if (ra !== rb) return ra - rb
+  const na = a.name.trim().toLowerCase()
+  const nb = b.name.trim().toLowerCase()
+  const byName = na.localeCompare(nb)
+  if (byName !== 0) return byName
+  return a.sortOrder - b.sortOrder
 }
 
 // ── Sheet version code (R6) ────────────────────────────────────────────────────
