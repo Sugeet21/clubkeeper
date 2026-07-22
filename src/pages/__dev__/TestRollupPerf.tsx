@@ -12,8 +12,7 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { deriveRollups, rebuildRollups, type RollupSource } from '../../lib/rollups'
-import { db } from '../../db/database'
+import { deriveRollups, type RollupSource } from '../../lib/rollups'
 import type { Session, SessionItem, CanteenSale, StockPurchase } from '../../types'
 
 // Representative shape of a real small club, scaled by number of DAYS of history.
@@ -110,8 +109,6 @@ interface Result {
   rawRows: number
   rollupRows: number
   deriveMs: number
-  rebuildMs: number
-  cacheRows: number
 }
 
 export default function TestRollupPerf() {
@@ -130,28 +127,16 @@ export default function TestRollupPerf() {
       const rawRows =
         src.sessions.length + src.sessionItems.length + src.canteenSales.length + src.stockPurchases.length
 
-      // 1) pure derive timing — the computation cost alone, no I/O.
+      // PURE derive timing only — the computation cost, zero I/O. This harness NEVER touches
+      // Dexie: it used to seed the raw tables + call rebuildRollups() to time the round-trip,
+      // but that overwrote local data, and the owner deferred the on-device rebuild measurement
+      // until display pages exist (not worth the wipe risk for an unused number). The full-rebuild
+      // Dexie cost is a Chunk-1 concern; re-add a timing there if/when it's needed, in isolation.
       const t0 = performance.now()
       const rows = deriveRollups(src, 1_700_000_000_000)
       const deriveMs = performance.now() - t0
 
-      // 2) Dexie round-trip: load synth into the raw tables, then rebuildRollups() (reads raw
-      //    + clears/bulkPuts the cache). We seed the raw tables so rebuild exercises the real
-      //    read path. This MUTATES local Dexie — DEV only; caller can wipe after.
-      await db.transaction('rw', db.sessions, db.sessionItems, db.canteenSales, db.stockPurchases, async () => {
-        await Promise.all([db.sessions.clear(), db.sessionItems.clear(), db.canteenSales.clear(), db.stockPurchases.clear()])
-        await Promise.all([
-          db.sessions.bulkPut(src.sessions),
-          db.sessionItems.bulkPut(src.sessionItems),
-          db.canteenSales.bulkPut(src.canteenSales),
-          db.stockPurchases.bulkPut(src.stockPurchases),
-        ])
-      })
-      const t1 = performance.now()
-      const cacheRows = await rebuildRollups(1_700_000_000_000)
-      const rebuildMs = performance.now() - t1
-
-      setResult({ days, rawRows, rollupRows: rows.length, deriveMs, rebuildMs, cacheRows })
+      setResult({ days, rawRows, rollupRows: rows.length, deriveMs })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -164,8 +149,9 @@ export default function TestRollupPerf() {
       <button onClick={() => navigate(-1)} className="text-text-dim text-sm min-h-[44px] mb-2">← Back</button>
       <h1 className="text-[16px] font-bold mb-1">Rollup perf spike (#175 Chunk 0)</h1>
       <p className="text-[12px] text-text-faint mb-4">
-        DEV only. Synthesizes ~{SESSIONS_PER_DAY} sessions + {WALKINS_PER_DAY} walk-ins/day over N days,
-        then times the pure derive and the Dexie rebuild. ⚠ Overwrites local sessions/sale/stock tables — sign out/in to restore real data.
+        DEV only. Synthesizes ~{SESSIONS_PER_DAY} sessions + {WALKINS_PER_DAY} walk-ins/day over N days
+        IN MEMORY and times the PURE derive. Does NOT touch Dexie — your local data is never read or
+        written. (The Dexie full-rebuild cost is a Chunk-1 concern, measured then in isolation.)
       </p>
 
       <div className="flex items-center gap-2 mb-3">
@@ -198,14 +184,11 @@ export default function TestRollupPerf() {
           <Row k="Days of history" v={`${result.days}`} />
           <Row k="Raw rows (in)" v={result.rawRows.toLocaleString('en-IN')} />
           <Row k="Rollup rows (out)" v={result.rollupRows.toLocaleString('en-IN')} />
-          <Row k="Cache rows written" v={result.cacheRows.toLocaleString('en-IN')} />
           <div className="border-t border-border my-1" />
           <Row k="Pure derive" v={`${result.deriveMs.toFixed(1)} ms`} hot={result.deriveMs > 150} />
-          <Row k="Dexie rebuild (full)" v={`${result.rebuildMs.toFixed(1)} ms`} hot={result.rebuildMs > 400} />
           <p className="text-[11px] text-text-faint pt-2 leading-snug">
-            Target: on a low-end Android the full rebuild should be well under ~1s even at 730d, since it
-            only runs as a fallback (Chunk 1 makes updates incremental). If it isn&apos;t, split stores or
-            shrink the grain before building the display chunks.
+            Pure-compute cost only. On a low-end Android expect ~3-5× the laptop number. The Dexie
+            full-rebuild round-trip is measured separately in Chunk 1 if display pages ever feel slow.
           </p>
         </div>
       )}
