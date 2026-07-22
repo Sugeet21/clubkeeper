@@ -189,50 +189,55 @@ function ListArea({
 
             <StockPill item={item} threshold={threshold} />
 
-            {/* Staff CAN edit/delete canteen items (owner-approved 20 Jul).
-                RLS already allows it: name/price = canteen_items UPDATE with
-                deleted_at NULL (D6 #131); delete = softDeleteCanteenItem which
-                sets isActive:false, NOT the deletedAt tombstone, so it also
-                passes the staff UPDATE policy. No gate here. Restock (row 2
-                below) STAYS owner-only — stock_purchases has no staff branch. */}
-            <button
-              onClick={() => onEdit(item)}
-              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim shrink-0"
-              aria-label={`Edit ${item.name}`}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-            </button>
+            {/* Edit + Delete are OWNER-ONLY (#169 — reverts the 20 Jul staff
+                grant). Staff was silently overwriting stock counts via the
+                Edit modal's raw "Current stock" field (no audit trail). The
+                canteen_items UPDATE RLS stays open for staff (the in-session
+                stock-decrement path #131 depends on it), so this is a UI gate;
+                it fully stops UI-driven edits. Restock (row 2) also owner-only. */}
+            <OwnerOnly>
+              <button
+                onClick={() => onEdit(item)}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim shrink-0"
+                aria-label={`Edit ${item.name}`}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+              </button>
 
-            <button
-              onClick={() => onDelete(item)}
-              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-busy shrink-0"
-              aria-label={`Delete ${item.name}`}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 6h18" />
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              </svg>
-            </button>
+              <button
+                onClick={() => onDelete(item)}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center text-busy shrink-0"
+                aria-label={`Delete ${item.name}`}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+              </button>
+            </OwnerOnly>
           </div>
 
-          {/* Row 2: Restock button. STAFF-ALLOWED (owner-approved 20 Jul) —
-              stock_purchases now has a staff INSERT+UPDATE RLS branch
-              (20260720_staff_restock_rls). */}
-          <button
-            onClick={() => onRestock(item)}
-            className="mt-3 bg-bg border border-border h-9 px-3 rounded-xl text-text-dim text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.98] transition-transform"
-            aria-label={`Restock ${item.name}`}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21 12a9 9 0 1 1-3-6.7" />
-              <path d="M21 4v6h-6" />
-            </svg>
-            Restock
-          </button>
+          {/* Row 2: Restock button — OWNER-ONLY (#169, reverts 20 Jul grant).
+              Paired with the RLS revert (20260722_revert_staff_restock_rls)
+              that removes the staff branch on stock_purchases → staff INSERT
+              now 42501, so this is a hard block, not just UI. */}
+          <OwnerOnly>
+            <button
+              onClick={() => onRestock(item)}
+              className="mt-3 bg-bg border border-border h-9 px-3 rounded-xl text-text-dim text-[12px] font-semibold flex items-center gap-1.5 active:scale-[0.98] transition-transform"
+              aria-label={`Restock ${item.name}`}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-3-6.7" />
+                <path d="M21 4v6h-6" />
+              </svg>
+              Restock
+            </button>
+          </OwnerOnly>
         </div>
       ))}
     </div>
@@ -466,9 +471,11 @@ export default function Canteen() {
         +
       </button>
 
-      {/* Add / Edit modal — staff-allowed (INSERT + name/price UPDATE both pass
-          the live RLS with deleted_at NULL). Pattern A12 mount-gating no longer
-          applies because the writes are no longer staff-forbidden. */}
+      {/* Add / Edit modal. ADD stays staff-allowed (FAB above), but the EDIT
+          path is owner-only (#169) — editingItem is only ever set from the
+          owner-gated Edit button, so a staff role can only reach the Add flow.
+          The modal itself is left mounted so the staff Add path still works;
+          the Edit trigger being gated is what closes the stock-overwrite hole. */}
       <CanteenItemFormModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
@@ -476,9 +483,10 @@ export default function Canteen() {
         existingItems={allItems ?? []}
       />
 
-      {/* Delete confirm modal — staff-allowed. softDeleteCanteenItem sets
-          isActive:false (NOT the deletedAt tombstone), so it rides the staff
-          UPDATE policy (deleted_at IS NULL). */}
+      {/* Delete confirm modal — OWNER-ONLY (#169, Pattern A12 mount-gate).
+          deletingItem is only set from the owner-gated Delete button, but we
+          also gate the mount so the modal + its writer never exist for staff. */}
+      <OwnerOnly>
       <Modal
         open={deletingItem !== null}
         onClose={() => !deleting && setDeletingItem(null)}
@@ -506,10 +514,12 @@ export default function Canteen() {
           </button>
         </div>
       </Modal>
+      </OwnerOnly>
 
-      {/* Restock sheet — STAFF-ALLOWED (owner-approved 20 Jul). staff INSERT+
-          UPDATE branch on stock_purchases lives in 20260720_staff_restock_rls;
-          canteen_items currentStock UPDATE already passed the staff policy. */}
+      {/* Restock sheet — OWNER-ONLY (#169, Pattern A12 mount-gate). Reverts the
+          20 Jul staff grant; paired with the 20260722 RLS revert so a staff
+          write to stock_purchases 42501s even if the sheet were reached. */}
+      <OwnerOnly>
       <RestockSheet
         open={restockItem !== null}
         item={restockItem}
@@ -525,6 +535,7 @@ export default function Canteen() {
           setRestockItem(null)
         }}
       />
+      </OwnerOnly>
 
       {/* Bulk-peak STAYS owner-only (Pattern A12) — owner-only by product
           decision. Mount gated, not just its trigger pill. */}
