@@ -170,6 +170,57 @@ export interface RestockDraft {
   updatedAt: number                     // Unix ms
 }
 
+// ─── Insight rollups (#175 Chunk 0) ─────────────────────────────────────────────
+// DEVICE-LOCAL, NOT-SYNCED derived cache — same class as `restockDrafts`. These are
+// a PRECOMPUTED read layer so the (future) Canteen/Table insight pages never scan every
+// session/sale on open (#175 build constraint: must stay fast on a low-end Android after
+// months of data). Every rollup row is DERIVABLE from raw synced tables; the cache can be
+// wiped and rebuilt by `rebuildRollups()` at any time (raw is the source of truth, this is
+// just an index). Never exported, never pushed to Supabase.
+//
+// Chunk 0 (this) defines the schema + a PURE re-derive + a perf spike ONLY — no writers
+// wired onto live paths, no display. Chunk 1 hooks incremental updates; Chunks 2-5 read.
+//
+// `day` is a LOCAL-timezone 'yyyy-MM-dd' key (date-fns `format`, IST for the club) so it
+// matches every other date surface (Summary/History/Piggy all bucket by local day).
+// `id` is a deterministic composite so a re-derive UPSERTS the same row (idempotent rebuild,
+// no dup accumulation): `<kind>|<day>|<entityId>` — see rollupId() in src/lib/rollups.ts.
+
+export type RollupKind =
+  | 'item'   // day × canteenItemId — canteen metrics (days-of-cover, dead stock, top items, reconciliation)
+  | 'table'  // day × tableId — table metrics (revenue per table, turns, session length)
+  | 'hour'   // weekday × hour bucket — utilization heatmap, dead hours, peak-hour items
+
+// One precomputed row. Fields are additive per kind; a reader uses only the ones its kind
+// populates (others stay 0). Kept as ONE store (not three) for Chunk 0 — the spike proves
+// the re-derive cost; a later chunk may split stores if a grain dominates. All money is
+// integer rupees; all counts integers.
+export interface DailyRollup {
+  id: string          // '<kind>|<day>|<entityId>' — deterministic, upserted on rebuild
+  kind: RollupKind
+  day: string         // 'yyyy-MM-dd' LOCAL — for kind 'hour' this is the day the bucket rolls under
+  entityId: string    // canteenItemId | tableId | `${weekday}-${hour}` (0=Sun..6=Sat, hour 0-23)
+
+  // ── kind 'item' ──
+  unitsSold?: number       // qty sold this day (table SessionItems + walk-in CanteenSale lines)
+  itemRevenue?: number     // ₹ from those sales
+  unitsReceived?: number   // stock received this day (StockPurchase kind received, magnitude)
+  unitsReversed?: number   // stock reversed this day (StockPurchase kind='reversal', magnitude)
+  receiptCost?: number     // ₹ cost of received rows this day (0 for cost-0 rows; #176-adjacent)
+
+  // ── kind 'table' ──
+  tableRevenue?: number    // ₹ billed by sessions ending this day
+  sessionCount?: number    // completed sessions ending this day (turns)
+  playMs?: number          // summed billed play time (endedAt - startedAt - pausedTotalMs)
+  sessionsWithCanteen?: number // sessions this day that had ≥1 canteen line (attach-rate numerator)
+
+  // ── kind 'hour' (weekday × hour) ──
+  hourSessionStarts?: number // sessions started in this weekday/hour bucket (utilization)
+  hourRevenue?: number       // ₹ attributable to sessions started in this bucket
+
+  updatedAt: number   // when this row was last (re)derived — for staleness/debug
+}
+
 export interface CoinTier {
   minAmount: number  // ₹ — topup must be ≥ this to earn this tier's coins
   coins: number      // ClubCoins credited when this tier is the highest qualifying tier

@@ -27,7 +27,7 @@ import type { Booking } from '../types/booking'
  * Current Dexie schema version. Mirror of `this.version(N)` in `database.ts`.
  * Used by export/import to gate forward-compatibility. Bump when database.ts bumps.
  */
-export const CURRENT_SCHEMA_VERSION = 23
+export const CURRENT_SCHEMA_VERSION = 24
 
 export interface ClubKeeperBackupV21 {
   schemaVersion: 21

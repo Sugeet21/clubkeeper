@@ -8,6 +8,7 @@ import type {
   CanteenSale,
   StockPurchase,
   RestockDraft,
+  DailyRollup,
   OutboxRow,
 } from '../types'
 import type { Customer } from '../types/customer'
@@ -36,6 +37,9 @@ export class ClubKeeperDB extends Dexie {
   _outbox!: Table<OutboxRow, number>
   // #173 — bulk-restock draft (R6). Local-only, singleton row, never synced.
   restockDrafts!: Table<RestockDraft, number>
+  // #175 — insight rollups: device-local, NOT-synced precomputed read cache. Wipe-safe
+  // (rebuildRollups() re-derives from raw). Never exported / pushed to Supabase.
+  rollups!: Table<DailyRollup, string>
 
   constructor(dbName: string) {
     super(dbName)
@@ -599,6 +603,29 @@ export class ClubKeeperDB extends Dexie {
       bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
       _outbox: '++seq, table, op, rowId, createdAt',
       restockDrafts: 'id',
+    })
+    // Version 24: #175 Chunk 0 insight rollups — additive only, no .upgrade() block.
+    // Adds the `rollups` table: a DEVICE-LOCAL, NOT-SYNCED precomputed read cache
+    // (day × item / table / hour-bucket) so the future insight pages don't scan raw
+    // on open. Wipe-safe — rebuildRollups() re-derives from raw synced tables, which
+    // stay the source of truth. New table starts empty; nothing writes to it on live
+    // paths yet (Chunk 0 is schema + pure re-derive + perf spike only). Compound index
+    // [kind+day] backs the range reads the display chunks will do. Every OTHER store
+    // string is identical to v23 (Dexie requires the full schema each version).
+    this.version(24).stores({
+      gameTables: 'id, name, gameType, sortOrder, outOfService',
+      sessions: 'id, tableId, status, startedAt, endedAt',
+      settings: 'id',
+      sessionItems: 'id, sessionId, addedAt',
+      customers: 'id, phone, walkInCode, lastVisitAt',
+      walletTransactions: 'id, customerId, createdAt, referenceId, [customerId+createdAt]',
+      canteenItems: 'id, name, isActive, sortOrder',
+      canteenSales: 'id, createdAt, customerId',
+      stockPurchases: 'id, createdAt, canteenItemId, source',
+      bookings: 'id, tableId, slotStart, status, [tableId+slotStart]',
+      _outbox: '++seq, table, op, rowId, createdAt',
+      restockDrafts: 'id',
+      rollups: 'id, kind, day, [kind+day]',
     })
   }
 }

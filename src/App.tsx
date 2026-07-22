@@ -42,6 +42,8 @@ import TestOutbox from './pages/__dev__/TestOutbox'
 // Phase C Chunk 5.2b — SyncReader runtime-proof page, DEV-only route.
 import TestSyncReader from './pages/__dev__/TestSyncReader'
 import TestNumberPad from './pages/__dev__/TestNumberPad'
+// #175 Chunk 0 — DEV-only rollup re-derive perf spike.
+import TestRollupPerf from './pages/__dev__/TestRollupPerf'
 
 const PUBLIC_PATHS = ['/', '/signup', '/subscribe', '/auth/callback', '/auth/login']
 // /c/ and /poster/ are public but use path prefixes — checked via startsWith in AppLayout
@@ -231,6 +233,10 @@ function AppLayout() {
             {/* #173 Chunk 1 — DEV-only NumberPad no-keyboard harness. */}
             {import.meta.env.DEV && (
               <Route path="/__dev/test-number-pad" element={<TestNumberPad />} />
+            )}
+            {/* #175 Chunk 0 — DEV-only rollup re-derive perf spike. */}
+            {import.meta.env.DEV && (
+              <Route path="/__dev/test-rollup-perf" element={<TestRollupPerf />} />
             )}
           </Route>
         </Routes>
