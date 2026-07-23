@@ -2,10 +2,18 @@ import { useState, useEffect } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Modal } from './Modal'
 import { Toggle } from './Toggle'
+import { CategoryPicker } from './CategoryPicker'
 import { useToastStore } from '../store/toastStore'
 import { addCanteenItem, getSettings, updateCanteenItem } from '../db/queries'
 import { validateCanteenItemName } from '../lib/validation'
-import type { CanteenItem } from '../types'
+import { CATEGORY_ORDER } from '../types'
+import type { CanteenItem, CanteenItemCategory } from '../types'
+
+// Narrow a possibly-out-of-union stored value (lenient pull can smuggle unknown strings) to a
+// known category the picker can display, or undefined. Unknown/absent ⇒ the picker shows blank.
+function knownCategory(c: string | null | undefined): CanteenItemCategory | undefined {
+  return c != null && c in CATEGORY_ORDER ? (c as CanteenItemCategory) : undefined
+}
 
 interface Props {
   open: boolean
@@ -26,6 +34,8 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
   const [peakPrice, setPeakPrice] = useState('')
   const [stockEnabled, setStockEnabled] = useState(false)
   const [currentStock, setCurrentStock] = useState('')
+  // #176 — undefined = uncategorised (→ NULL → sorts last on the restock sheet).
+  const [category, setCategory] = useState<CanteenItemCategory | undefined>(undefined)
   const [nameError, setNameError] = useState<string | undefined>()
   const [priceError, setPriceError] = useState<string | undefined>()
   const [peakPriceError, setPeakPriceError] = useState<string | undefined>()
@@ -41,12 +51,14 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
       setPeakPrice(typeof item.peakPrice === 'number' ? String(item.peakPrice) : '')
       setStockEnabled(item.stockEnabled)
       setCurrentStock(item.currentStock !== null ? String(item.currentStock) : '')
+      setCategory(knownCategory(item.category))
     } else {
       setName('')
       setPrice('')
       setPeakPrice('')
       setStockEnabled(false)
       setCurrentStock('')
+      setCategory(undefined)
     }
     setNameError(undefined)
     setPriceError(undefined)
@@ -133,6 +145,13 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
           patch.peakPrice = peakNum
         }
         // Toggle OFF doesn't clear stored peakPrice — owner may toggle back on.
+        // #176 — send category only when it actually changed. `knownCategory(item.category)`
+        // normalises the stored value first so re-saving an unchanged (or unknown-string) item
+        // doesn't spuriously write. Sending `undefined` is the explicit-clear signal that
+        // updateCanteenItem turns into a NULL (see its 'category' in patch handling).
+        if (category !== knownCategory(item.category)) {
+          patch.category = category
+        }
         await updateCanteenItem(item.id, patch)
         showToast('Item updated', 'success')
       } else {
@@ -142,6 +161,7 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
           stockEnabled,
           currentStock: stockCount,
           peakPrice: peakNum,
+          category, // #176 — undefined ⇒ uncategorised ⇒ sorts last
         })
         showToast('Item added', 'success')
       }
@@ -209,6 +229,14 @@ export function CanteenItemFormModal({ open, onClose, item, existingItems }: Pro
             {peakPriceError && <p className="text-busy text-xs mt-1 pl-1">{peakPriceError}</p>}
           </div>
         )}
+
+        {/* Category — #176. Optional; blank ⇒ uncategorised ⇒ sorts last on the restock sheet. */}
+        <div>
+          <label className="text-[10px] font-mono font-bold uppercase tracking-widest text-text-faint block mb-1.5">
+            Category <span className="text-text-faint normal-case tracking-normal">(optional)</span>
+          </label>
+          <CategoryPicker value={category} onChange={setCategory} aria-label="Item category" />
+        </div>
 
         {/* Track stock toggle */}
         <div className="flex items-center justify-between">

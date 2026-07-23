@@ -248,6 +248,44 @@ export interface ClubSettings {
   backfillEnqueuedAt?: number
 }
 
+// #176 — canteen item category. Drives the restock-sheet grouping (drinks then
+// cigarettes then snacks, alphabetical within — matches how the owner shops). ABSENT/
+// null MEANS uncategorised → sorts LAST (see CATEGORY_ORDER). Stored as this small union;
+// the Postgres column `canteen_items.category` (text, nullable — verified live, no migration)
+// tolerates future values, so a later chunk can widen this union without a schema change.
+export type CanteenItemCategory = 'drinks' | 'cigarettes' | 'snacks' | 'other'
+
+// Sort rank for the restock surface. Lower = earlier. Follows the owner's shop-run order;
+// anything not in this map (undefined/null category, or an unknown future string) ranks
+// LAST via categoryRank()'s fallback. ONE home for the order — both listRestockItems() and
+// any future category-grouped reader import this, never re-hardcode the sequence.
+export const CATEGORY_ORDER: Record<CanteenItemCategory, number> = {
+  drinks: 0,
+  cigarettes: 1,
+  snacks: 2,
+  other: 3,
+}
+// Human labels for the picker chips. Same source as CATEGORY_ORDER so the UI, the sort,
+// and any future category-grouped display never drift. Order here = display order (matches
+// CATEGORY_ORDER). To add a category later: add it here, in CATEGORY_ORDER, and to the union.
+export const CATEGORY_LABELS: Record<CanteenItemCategory, string> = {
+  drinks: 'Drinks',
+  cigarettes: 'Cigarettes',
+  snacks: 'Snacks',
+  other: 'Other',
+}
+
+const CATEGORY_RANK_LAST = 99 // uncategorised / unknown → sorts after every known category
+
+/** Sort rank for an item's category. undefined/null/unknown ⇒ last (#176 owner decision:
+ *  existing items stay NULL and fall to the bottom until categorised). */
+export function categoryRank(category: string | null | undefined): number {
+  if (category != null && category in CATEGORY_ORDER) {
+    return CATEGORY_ORDER[category as CanteenItemCategory]
+  }
+  return CATEGORY_RANK_LAST
+}
+
 export interface CanteenItem {
   id?: string
   name: string           // 1-50 chars
@@ -258,6 +296,16 @@ export interface CanteenItem {
   createdAt: number
   sortOrder: number
   peakPrice?: number     // v18: optional peak-hour price, integer rupees, 1-9999. Undefined = item never uses peak pricing.
+  // #176 — SYNCED both ways: syncPayloadMapper (push, explicit-null-clears) + syncReadMapper
+  // (pull, LENIENT — accepts any string so a future free-text value doesn't dead-letter older
+  // clients). Prod column canteen_items.category already exists (text, nullable, no CHECK —
+  // live-probe-verified, NO migration). undefined/null ⇒ uncategorised ⇒ sorts last. New synced
+  // field ⇒ BOTH mappers (bug_patterns standing check). Ordering: restock surface ONLY (#176) —
+  // listRestockItems() sorts by (categoryRank, name); getCanteenItems() stays on sortOrder.
+  // ⚠ READERS: the lenient pull means the runtime value MAY be outside this union (a smuggled
+  // future category). Always validate via categoryRank() / `in CATEGORY_ORDER` at read time —
+  // never `switch`-exhaustively on `category` assuming only these 4 values.
+  category?: CanteenItemCategory
   revertedStockAt?: number | null // #162: set when stock was returned to this item by a session reversal AND the item had been removed from the menu (re-created to hold the returned stock). Drives the "↩ reverted stock" badge so the owner recognises it. Owner can delete the item again if unwanted.
   _migrationSeq?: number // set by v20 .upgrade(), used by §10.4 upload
   updatedAt?: number     // Phase C LWW metadata (#117) — epoch ms

@@ -283,13 +283,16 @@ const MAPPERS: Partial<Record<SyncTableName, Mapper>> = {
   // peak_price is sent as explicit NULL when Dexie peakPrice is undefined
   //   so clearing a peak price on this device also clears it server-side
   //   (a partial upsert would keep the stale value).
-  // category stays NULL — no Dexie source field.
+  // #176 — category is sent as explicit NULL when Dexie category is undefined, same
+  //   clear-on-clear reason as peak_price. Prod column exists (text, nullable — no
+  //   migration). Paired with the read mapper's `category` pull (standing check).
   canteen_items: (row, clubId) => {
     const out = stamp(clubId)
     if (row.id !== undefined) out.id = row.id
     if (row.name !== undefined) out.name = row.name
     if (row.defaultPrice !== undefined) out.price = row.defaultPrice
     out.peak_price = row.peakPrice ?? null
+    out.category = row.category ?? null
     if (row.stockEnabled !== undefined) {
       out.stock_enabled = row.stockEnabled
       out.stock_qty = (row.currentStock as number | null) ?? 0
