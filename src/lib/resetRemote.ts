@@ -37,3 +37,21 @@ export async function resetClubDataRemote(): Promise<Record<string, number>> {
   if (!data?.ok) throw new Error('Server reset failed (unexpected response)')
   return data.deleted ?? {}
 }
+
+// #155 — server-side half of Settings "Clear session history". SCOPED sibling of
+// reset_club_data(): the owner-gated clear_club_sessions() RPC SOFT-deletes (stamps
+// deleted_at + bumps updated_at) sessions + session_items for the club, nothing else.
+// Same Pattern PH2 write order: callers run this FIRST and only clear Dexie after it
+// resolves — a local-only clear resurrects on the next pull (that IS the #155 bug).
+// A hard-delete RPC would strand other devices (the pull path can't propagate deletes),
+// so the durable clear is a soft-delete that rides the normal LWW pull everywhere.
+export async function clearClubSessionsRemote(): Promise<Record<string, number>> {
+  const { data, error } = await withTimeout(
+    supabase.rpc('clear_club_sessions') as unknown as Promise<ResetRpcResponse>,
+    15000,
+    'clear_club_sessions',
+  )
+  if (error) throw new Error(`Server clear failed (${error.message})`)
+  if (!data?.ok) throw new Error('Server clear failed (unexpected response)')
+  return data.deleted ?? {}
+}
