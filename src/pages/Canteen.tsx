@@ -448,6 +448,14 @@ export default function Canteen() {
               History
             </button>
           </div>
+          {/* #176 — one-time bulk category tagging so the printed restock sheet groups by
+              category. Own row (secondary to the daily restock actions above). */}
+          <button
+            onClick={() => navigate('/canteen/tag-categories')}
+            className="w-full min-h-[44px] mb-3 flex items-center justify-center gap-2 rounded-2xl bg-bg-card border border-border text-text-dim text-[13px] font-semibold active:bg-bg transition-colors"
+          >
+            <span className="text-[15px] leading-none">🏷</span> Tag categories
+          </button>
         </OwnerOnly>
 
         {/* Stats — always rendered, handles undefined inside. Uses the full

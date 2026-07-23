@@ -26,6 +26,7 @@ import WalletTopup from './pages/WalletTopup'
 import CustomerProfile from './pages/CustomerProfile'
 import Canteen from './pages/Canteen'
 import BulkRestock from './pages/BulkRestock'
+import BulkCategoryTag from './pages/BulkCategoryTag'
 import RestockHistory from './pages/RestockHistory'
 import QuickSale from './pages/QuickSale'
 import Piggy from './pages/Piggy'
@@ -217,6 +218,8 @@ function AppLayout() {
                   staff to /tables at the router, before the page mounts. */}
               <Route path="/canteen/bulk-restock" element={<BulkRestock />} />
               <Route path="/canteen/restock-history" element={<RestockHistory />} />
+              {/* #176 — one-time bulk category tagging, owner-only like the rest of restock. */}
+              <Route path="/canteen/tag-categories" element={<BulkCategoryTag />} />
             </Route>
             <Route path="/bookings" element={<Bookings />} />
             {/* Phase C Chunk 3 — DEV-only sync wrapper smoke test. Gated on

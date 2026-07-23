@@ -265,6 +265,16 @@ export const CATEGORY_ORDER: Record<CanteenItemCategory, number> = {
   snacks: 2,
   other: 3,
 }
+// Human labels for the picker chips. Same source as CATEGORY_ORDER so the UI, the sort,
+// and any future category-grouped display never drift. Order here = display order (matches
+// CATEGORY_ORDER). To add a category later: add it here, in CATEGORY_ORDER, and to the union.
+export const CATEGORY_LABELS: Record<CanteenItemCategory, string> = {
+  drinks: 'Drinks',
+  cigarettes: 'Cigarettes',
+  snacks: 'Snacks',
+  other: 'Other',
+}
+
 const CATEGORY_RANK_LAST = 99 // uncategorised / unknown → sorts after every known category
 
 /** Sort rank for an item's category. undefined/null/unknown ⇒ last (#176 owner decision:

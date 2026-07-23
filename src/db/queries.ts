@@ -16,6 +16,7 @@ import type {
   ClubSettings,
   SessionItem,
   CanteenItem,
+  CanteenItemCategory,
   CanteenSale,
   StockPurchase,
 } from '../types'
@@ -1000,6 +1001,8 @@ export async function addCanteenItem(
     createdAt: Date.now(),
     sortOrder,
     ...(typeof input.peakPrice === 'number' ? { peakPrice: input.peakPrice } : {}),
+    // #176 — only include when set; absent ⇒ NULL ⇒ uncategorised ⇒ sorts last on the sheet.
+    ...(input.category != null ? { category: input.category } : {}),
   })
   return id
 }
@@ -1049,10 +1052,27 @@ export async function updateCanteenItem(
     currentStock = null
   }
 
-  await syncedUpdate<CanteenItem & { id: string }>('canteen_items', id, {
-    ...patch,
-    currentStock,
-  })
+  // #176 — category clear: the form/bulk-tag UI sends `category: undefined` to un-tag an item.
+  // A spread `...patch` drops undefined keys, so an un-tag would silently no-op. We pull category
+  // out of the base spread and re-add it explicitly ONLY when the caller included the key (an
+  // absent key leaves the stored category untouched). An included key — value or undefined — is
+  // forced to a real null so the payload mapper (out.category = row.category ?? null) writes NULL
+  // back to Postgres for the clear case.
+  const { category: _patchCategory, ...restPatch } = patch
+  const categoryPatch: { category?: CanteenItemCategory | null } =
+    'category' in patch ? { category: patch.category ?? null } : {}
+
+  // Omit-then-add so `category` is genuinely nullable in the row type: intersecting with
+  // CanteenItem's own `category?: CanteenItemCategory` would collapse the null away.
+  await syncedUpdate<Omit<CanteenItem, 'category'> & { id: string; category: CanteenItemCategory | null }>(
+    'canteen_items',
+    id,
+    {
+      ...restPatch,
+      ...categoryPatch,
+      currentStock,
+    },
+  )
 }
 
 // Business-level soft delete (isActive flag) — stays a syncedUpdate, NOT

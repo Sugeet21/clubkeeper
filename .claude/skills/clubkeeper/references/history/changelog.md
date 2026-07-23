@@ -4,6 +4,17 @@
 
 ---
 
+## 23 Jul 2026 — #176 Chunk 2: category picker (form) + one-time bulk category-tag screen
+
+- **Why:** tagging 29 items through open-modal→pick→save→close ×29 is a chore the owner would abandon half-done. Chunk 2a adds the picker to the add/edit form (new items going forward); Chunk 2b adds a one-pass bulk screen for the existing 29.
+- **Shape decision (owner asked me to propose):** inline-chips-per-row + one Save, NOT pick-category-then-multi-select-items. At 29 items "one pass down the list" beats "four passes, one per category". Rejected the multi-select shape (its advantage only shows at 50+ items/category).
+- **Shared component (`src/components/CategoryPicker.tsx`):** the ONE 4-chip selector, chips derived from `CATEGORY_LABELS` (new map in types, = `CATEGORY_ORDER` order → one source). Value `CanteenItemCategory | undefined`; tapping the selected chip clears to undefined (→ NULL → sorts last). `dense` prop for the bulk-screen rows (36px chips) vs form (44px). Used by BOTH the form modal and the bulk screen — one source of truth for the chips (owner's explicit ask).
+- **Chunk 2a (`CanteenItemFormModal.tsx`):** category state + picker, threaded through `addCanteenItem` (conditional include) / `updateCanteenItem` (send only when changed). `knownCategory()` narrows a possibly-out-of-union stored value (lenient pull) before seeding — unknown/absent shows blank.
+- **`updateCanteenItem` clear-path (`queries.ts`):** to un-tag, the UI sends `category: undefined`; a plain `...patch` spread drops undefined keys (silent no-op), so we detect intent via **`'category' in patch`** (not truthiness — the only way to tell "clear to null" from "don't touch") and force a real `null` so the payload mapper writes NULL. Generic type param is `Omit<CanteenItem,'category'> & { category: CanteenItemCategory | null }` — intersecting plain `CanteenItem` would collapse the null out of the union.
+- **Chunk 2b (`src/pages/BulkCategoryTag.tsx`, `/canteen/tag-categories`, owner-only):** lists all active items (`getCanteenItems()`, sortOrder — display-only, does NOT change the sell order) with the inline picker; local draft seeded once; `tagged X/total` counter + "untagged" row flag; dirty-tracked (compares normalised draft vs stored — re-tagging to the original isn't dirty); ONE Save writes exactly the dirty rows via awaited `updateCanteenItem` loop. Canteen `<OwnerOnly>` "🏷 Tag categories" button; route under `RequireOwner`.
+- **Guardrails re-confirmed (owner asked):** (1) sell screen untouched — Canteen (`:280`)/QuickSale (`:26`) read `getCanteenItems(false)`→sortOrder; unchanged. Only `listRestockItems()` order moved (Chunk 1). (2) Row N === paper N re-verify with real (non-uniform) categories is a POST-TAG on-device check — I can't tag the items for the owner; flagged for him to run after tagging.
+- Reviewer agent: **APPROVE**, no blocking violations; independently confirmed the clear-path writes NULL, absent-key leaves category untouched, dirty tracking is exact, sell order unchanged, no exhaustive switch on category. Build clean; strict tsc at the unchanged 88-error baseline (0 new). Branch `feat/176-canteen-category`, not merged.
+
 ## 23 Jul 2026 — #176 Chunk 1: canteen `category` field + (category, name) restock ordering + sync wiring
 
 - **Why:** owner about to print 12 restock sheets for staff whose paper register is alphabetical; current order was an insertion-order accident (`sortOrder`). Fix the order before the sheet becomes a habit.
