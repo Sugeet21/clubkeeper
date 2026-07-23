@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock'
 
 interface ModalProps {
   open: boolean
@@ -9,15 +10,9 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children, footer }: ModalProps) {
-  // Prevent body scroll while open; restore on close or unmount
-  useEffect(() => {
-    if (!open) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
-  }, [open])
+  // Prevent body scroll while open (#177 — reference-counted so overlapping
+  // modals never leak a permanent 'hidden' onto the body).
+  useBodyScrollLock(open)
 
   // Close on Escape key; listener added/removed with open state
   useEffect(() => {

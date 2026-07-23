@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock'
 
 interface PeakWindowBottomSheetProps {
   open: boolean
@@ -51,14 +52,8 @@ export function PeakWindowBottomSheet({
     setEndM(initialEndMinute)
   }, [open, initialStartHour, initialStartMinute, initialEndHour, initialEndMinute])
 
-  useEffect(() => {
-    if (!open) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
-  }, [open])
+  // Lock body scroll while open (#177 — shared reference-counted lock).
+  useBodyScrollLock(open)
 
   if (!open) return null
 

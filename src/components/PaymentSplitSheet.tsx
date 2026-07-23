@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock'
 import { useCustomerStore, recentCustomersQuery } from '../store/customerStore'
 import { customerFullLabel } from '../lib/customerDisplay'
 import type { Customer } from '../types/customer'
@@ -77,15 +78,8 @@ export function PaymentSplitSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // Lock body scroll while open (matches Modal.tsx behavior)
-  useEffect(() => {
-    if (!open) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
-  }, [open])
+  // Lock body scroll while open (#177 — shared reference-counted lock).
+  useBodyScrollLock(open)
 
   const walletAvailable = linkedCustomer?.walletBalance ?? 0
   const walletEnabled = linkedCustomer !== null && walletAvailable > 0

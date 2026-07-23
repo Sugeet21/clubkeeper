@@ -896,6 +896,23 @@ useEffect(() => {
 ### Pattern M3 — Payment sheet needs 4 escape paths (BUG-016)
 **Rule:** Any sheet over a financial commitment needs FOUR independent ways out: X button (with visible background fill, not bare icon), ESC key, backdrop click, AND an explicit "Maybe later" text button at the bottom. All 4 disabled while `paying=true`. "Maybe later" sets `selectedPlan = null` to hide the sticky checkout bar too.
 
+### Pattern M6 — Body scroll-lock MUST be reference-counted, never per-component save/restore (#177, 23 Jul 2026)
+**Symptom signature:** After a flow that opens more than one modal/sheet (e.g. bulk restock: "+ Add new item" → confirm sheet, or any nav between two locking sheets), the WHOLE APP can no longer scroll on ANY page. Buttons and taps still work — only scrolling is dead. A full page reload fixes it. No console error.
+**Root cause:** The per-component "save the previous value, restore it on close" pattern —
+```ts
+const prev = document.body.style.overflow   // ← captures whatever is set NOW
+document.body.style.overflow = 'hidden'
+return () => { document.body.style.overflow = prev }
+```
+— is correct for a SINGLE modal but LEAKS when two overlap. Sheet B opens while A already set `'hidden'`, so B captures `prev='hidden'`; on B's close it "restores" the body to `'hidden'` **permanently**. Every component captured its own baseline, and one of them captured a mid-lock `'hidden'`.
+**Rule:** NEVER write `document.body.style.overflow` directly in a component. Use the shared `useBodyScrollLock(open)` hook (`src/hooks/useBodyScrollLock.ts`): a module-level counter captures the true baseline on the 0→1 transition and restores it on 1→0 only, so overlapping locks can never leak. The count is clamped ≥0 against StrictMode double-cleanup. This is the ONE home for body scroll-locking.
+**Sweep query (run before close on any modal/scroll work):**
+```
+grep -rn "document\.body\.style\|body\.style\.overflow\|documentElement\.style" src/
+```
+Expected result: matches ONLY inside `src/hooks/useBodyScrollLock.ts`. Any other hit is a re-introduction of this bug.
+**Files affected (all converted to the hook 23 Jul):** `src/components/Modal.tsx`, `src/components/RestockSheet.tsx`, `src/components/PaymentSplitSheet.tsx`, `src/components/PeakWindowBottomSheet.tsx`, `src/pages/Subscribe.tsx`. (Note Pattern M4 above already flagged the body scroll-lock's mobile downside — M6 is the overlap-leak that M4 didn't cover.)
+
 ---
 
 ## Accessibility (a11y)

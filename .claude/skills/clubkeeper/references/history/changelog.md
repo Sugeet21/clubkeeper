@@ -4,6 +4,14 @@
 
 ---
 
+## 23 Jul 2026 — #177 App-wide scroll-stuck fixed: body scroll-lock centralized + reference-counted (CODE DONE, pending owner verify)
+
+- **Bug (owner-reported, blocks a demo):** after the bulk-restock flow (or any flow opening 2+ sheets), the WHOLE app could no longer scroll on ANY page — buttons still worked, only scrolling died; a reload cleared it.
+- **Root cause:** five components each ran the per-component `const prev = body.style.overflow; body.style.overflow='hidden'; return ()=>body.style.overflow=prev` lock. Correct for ONE modal, LEAKS on overlap: sheet B opens while A is already `'hidden'`, captures `prev='hidden'`, and on close restores `'hidden'` permanently. Bulk restock overlaps sheets ("+ Add new item" → confirm) around navigation and surfaced it. New Pattern M6.
+- **Fix:** new `src/hooks/useBodyScrollLock(open)` — a module-level reference counter captures the TRUE baseline on the 0→1 transition and restores it on 1→0 only, clamped ≥0 for StrictMode double-cleanup. Overlapping locks can no longer leak. Converted all five callers to the hook: `Modal.tsx`, `RestockSheet.tsx`, `PaymentSplitSheet.tsx`, `PeakWindowBottomSheet.tsx`, `Subscribe.tsx` — none write `body.style.overflow` directly anymore.
+- **Rule K sweep** (`grep -rn "body\.style\.overflow\|document\.body\.style\|documentElement\.style" src/`): 0 stray writes — all matches are inside the new hook (its one home). Sweep query recorded in Pattern M6.
+- **Build:** clean. Strict tsc unchanged at the pre-existing baseline (#118/#138 debt) — 0 new errors, none in any touched file; the 2 `Subscribe.tsx` errors are the pre-existing duplicate-`PlanId` debt (present on the stashed baseline, just line-shifted by −1 after the edit). Paired skill artifacts: this entry + Pattern M6 + ripple_effects Shared-UI update.
+
 ## 23 Jul 2026 — #155 clearAllSessions made server-first (SWEEP-#154; CODE DONE, pending owner verify)
 
 - **Bug:** Settings "Clear session history" ran a bare local `db.sessions.clear()` — resurrected from Supabase on the next pull (LWW never told the server), and left `session_items` orphaned (child table was never touched).

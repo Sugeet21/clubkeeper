@@ -7,6 +7,7 @@ import { PlanSelection } from '../components/subscribe/PlanSelection'
 import { StickyCheckout } from '../components/subscribe/StickyCheckout'
 import { PaymentBottomSheet } from '../components/subscribe/PaymentBottomSheet'
 import { ConfirmationScreen } from '../components/subscribe/ConfirmationScreen'
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock'
 
 type PlanId = 'starter' | 'standard' | 'pro' | 'test'
 type Billing = 'monthly' | 'annual'
@@ -139,11 +140,9 @@ export default function Subscribe() {
     setPayError(null)
   }
 
-  // Lock body scroll when sheet is open
-  useEffect(() => {
-    document.body.style.overflow = sheetOpen ? 'hidden' : ''
-    return () => { document.body.style.overflow = '' }
-  }, [sheetOpen])
+  // Lock body scroll when the payment sheet is open (#177 — shared
+  // reference-counted lock; never leaves the body 'hidden' after close).
+  useBodyScrollLock(sheetOpen)
 
   async function handlePayNow() {
     if (paying || !selectedPlan) return

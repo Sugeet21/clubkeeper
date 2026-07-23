@@ -871,7 +871,7 @@ Files in scope:
 Invariants:
 - **Pattern M4 ((Modal layout):** all consumers automatically inherit the scroll fix. If a modal needs pinned action buttons, pass `footer={<Buttons />}` — do NOT move buttons into `children` (they scroll off-screen on small devices).
 - Modal scrim is `fixed inset-0 z-40`; sheet is `fixed bottom-0 left-0 right-0 z-50`. Independent fixed layers — do NOT nest in a shared container (scrim intercepts clicks, BUG-012).
-- Modal `useEffect` with `[open]` dep sets `document.body.style.overflow = 'hidden'`; restores on close/unmount.
+- **Body scroll-lock is centralized in `src/hooks/useBodyScrollLock(open)` (#177, 23 Jul 2026).** Modal + RestockSheet + PaymentSplitSheet + PeakWindowBottomSheet + Subscribe ALL call it — NONE write `document.body.style.overflow` directly anymore. It is reference-counted (baseline captured 0→1, restored 1→0), so overlapping/sequential sheets never leak a permanent `'hidden'` onto the body (the old per-component save/restore did — bug_patterns Pattern M6). **Any NEW modal/sheet that needs to lock scroll MUST use this hook, never an inline `body.style.overflow` write.** Sweep: `grep -rn "body\.style\.overflow" src/` → hits only inside the hook.
 - Modal Escape key listener uses `[open, onClose]` dep — wrap `onClose` in `useCallback` at the call site if needed.
 - **Desktop Modal cap (#91 Phase 2, 19 Jun 2026):** at `md:` and up the sheet becomes a centered dialog: `md:bottom-auto md:left-1/2 md:top-1/2 md:right-auto md:-translate-x-1/2 md:-translate-y-1/2 md:w-[min(560px,calc(100vw-2rem))] md:rounded-3xl md:border md:max-h-[85vh]`. Mobile (<768px) unchanged — still bottom-sheet. **Affects every `<Modal>` consumer at once** — verify any new modal still feels right on desktop. Bottom-sheet components that DON'T use shared `<Modal>` (`RestockSheet`, `PaymentSplitSheet`, `PaymentBottomSheet`) are NOT affected and keep their bottom-sheet behavior on every viewport — they own their own positioning.
 - `PaymentBottomSheet`, `PaymentSplitSheet`, `RestockSheet` are NOT `<Modal>` (own translateY / fixed-bottom slide-up). Adding new bottom-sheet behavior? Decide upfront: shared `<Modal>` (gets the desktop centered-dialog treatment for free) OR own component. **`PaymentSplitSheet` is now an exception (Phase 2.5, #91, 19 Jun 2026): it ALSO becomes a centered dialog at `md:` and up** — same class set as shared `<Modal>` was given in Phase 2 (`md:bottom-auto md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-3xl md:border`). Main sheet caps at `md:w-[min(560px,calc(100vw-2rem))]`, inner customer-link picker at `md:w-[min(520px,calc(100vw-2rem))]`. `PaymentBottomSheet` (Subscribe page Razorpay sheet) and `RestockSheet` remain true bottom-sheets on every viewport.
@@ -886,9 +886,9 @@ Cross-feature ripples:
 - → Many. Most modals are used by Sessions, Settings, Tables, Canteen. Verify each on `<Modal>` change.
 - → [Subscription & Funnel](#subscription--funnel) (`PaymentBottomSheet` has its own escape paths — see that section).
 
-See also: `bug_patterns.md` Pattern M4 (scroll), `references/design_system.md`, [Tables Page (Home)](#tables-page-home) and Canteen/Bookings sections for the wider desktop-responsiveness pattern (max-w-[1400px] + grid + FAB-outside).
+See also: `bug_patterns.md` Pattern M4 (scroll layout) + Pattern M6 (body scroll-lock leak / `useBodyScrollLock`), `references/design_system.md`, [Tables Page (Home)](#tables-page-home) and Canteen/Bookings sections for the wider desktop-responsiveness pattern (max-w-[1400px] + grid + FAB-outside).
 
-Last updated: 9 Jun 2026
+Last updated: 23 Jul 2026 (#177 — body scroll-lock centralized in useBodyScrollLock)
 
 ---
 

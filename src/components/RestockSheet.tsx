@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { recordStockPurchase } from '../db/queries'
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock'
 import type { CanteenItem } from '../types'
 
 interface RestockSheetProps {
@@ -44,15 +45,8 @@ export function RestockSheet({
     setError(null)
   }, [open])
 
-  // Lock body scroll while open
-  useEffect(() => {
-    if (!open) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
-  }, [open])
+  // Lock body scroll while open (#177 — shared reference-counted lock).
+  useBodyScrollLock(open)
 
   if (!open || !item || item.id === undefined) return null
 
