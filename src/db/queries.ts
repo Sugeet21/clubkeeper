@@ -576,8 +576,41 @@ export async function updateSession(
 
 // ─── Bulk data operations ─────────────────────────────────────────────────────
 
+/**
+ * #155 — LOCAL half of "Clear session history". Server-first: the caller
+ * (Settings.handleClearSessions) runs clearClubSessionsRemote() FIRST and only
+ * calls this after it succeeds — never on RPC failure (a local-only clear is
+ * exactly the #155 resurrection bug).
+ *
+ * SOFT-delete, not `db.sessions.clear()` (the old bug). Two defects fixed:
+ *   1. Resurrection — a bare local wipe re-pulls from Supabase on the next pull.
+ *      Stamping deletedAt makes the local rows match the server soft-delete the
+ *      RPC just wrote; the pull sees equal state, nothing resurrects.
+ *   2. Orphaned items — the old code cleared `sessions` but not `session_items`,
+ *      leaving item rows pointing at deleted sessions. We stamp BOTH.
+ *
+ * NO outbox push here (unlike syncedSoftDelete): the RPC already stamped the
+ * server, so enqueuing hundreds of per-row soft-delete pushes would be a
+ * redundant storm that re-writes what the server already has. This is a local
+ * MIRROR of the server clear, in one rw tx, so the UI (all readers filter
+ * !deletedAt) updates immediately. Only live rows are stamped (idempotent).
+ */
 export async function clearAllSessions(): Promise<void> {
-  await db.sessions.clear()
+  const now = Date.now()
+  await db.transaction('rw', [db.sessions, db.sessionItems], async () => {
+    const liveSessions = await db.sessions.filter((s) => !s.deletedAt).toArray()
+    const liveItems = await db.sessionItems.filter((i) => !i.deletedAt).toArray()
+    if (liveSessions.length > 0) {
+      await db.sessions.bulkPut(
+        liveSessions.map((s) => ({ ...s, deletedAt: now, updatedAt: now })),
+      )
+    }
+    if (liveItems.length > 0) {
+      await db.sessionItems.bulkPut(
+        liveItems.map((i) => ({ ...i, deletedAt: now, updatedAt: now })),
+      )
+    }
+  })
 }
 
 export class ActiveSessionsPresentError extends Error {

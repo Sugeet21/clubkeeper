@@ -4,7 +4,7 @@ import { format } from 'date-fns'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useTables, useSettings, useSyncClubFromSupabase } from '../hooks/useLiveData'
 import { updateSettings, clearAllSessions, resetEverything, getAllDataForExport, getPiggyBalance, ActiveSessionsPresentError, assertNoActiveSessions, RUNAWAY_MINUTES_DEFAULT } from '../db/queries'
-import { resetClubDataRemote } from '../lib/resetRemote'
+import { resetClubDataRemote, clearClubSessionsRemote } from '../lib/resetRemote'
 import { TableFormModal } from '../components/TableFormModal'
 import { Modal } from '../components/Modal'
 import { Toggle } from '../components/Toggle'
@@ -522,8 +522,15 @@ function OwnerSettings() {
   async function handleClearSessions() {
     setBusy(true)
     try {
+      // #155, Pattern PH2 write order: server RPC first — only mirror into
+      // Dexie once the server soft-delete succeeds. A local-only clear
+      // resurrects the wiped sessions on the next pull (that's the #155 bug).
+      await clearClubSessionsRemote()
       await clearAllSessions()
       setClearModal(false)
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Please try again.'
+      useToastStore.getState().show(`Needs internet to clear sessions. ${reason}`, 'error')
     } finally {
       setBusy(false)
     }
