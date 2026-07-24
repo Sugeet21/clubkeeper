@@ -10,6 +10,28 @@
 
 > Custom domain went live 1 Jun 2026. DNS managed via Cloudflare. Both URLs serve the same deployment — no separate branch.
 
+## Staging environment (built 24 Jul 2026)
+
+Full-isolation staging so changes get verified OFF the owner's live app (the "never test on
+live again" fix after the 24 Jul demo). See `supabase/staging/README.md` + `SETUP.md`.
+
+| | Production | Staging |
+|---|---|---|
+| Branch | `main` | `staging` |
+| Supabase | `clubkeeper` (`vkczmgzujpidbwtzulel`) | `clubkeeper-staging` (`tdcvrmttnsyhqxxhfvwj`) |
+| Data | real club data | throwaway, empty |
+| Deploy | `app.handbookhq.in` | Vercel preview for `staging` branch |
+
+- **Isolation is at the Supabase-project level** — staging is a SEPARATE free-tier project, so it
+  can never touch prod data. Uses the 2nd of the 2 free-tier project slots (no room for a 3rd free project now).
+- **Staging DB = CORE-SYNC clone** (12 tables, RLS, LWW + actor-stamp triggers, JWT hook, auth trigger,
+  realtime — extracted verbatim from prod). SKIPPED: booking_intents/bookings/topup_intents + their RPCs
+  (add on demand). Clone SQL: `supabase/staging/staging_core_schema.sql`.
+- **Owner-only dashboard steps** (Claude can't do these): Vercel branch-scoped env vars, staging JWT hook
+  enable, staging Google OAuth. Click-by-click in `supabase/staging/SETUP.md`.
+- **Workflow:** build/test on `staging` → verify real flow on staging URL → merge `staging`→`main` to go live.
+- Free-tier staging pauses after 7 days idle (prod keep-alive Action doesn't ping it — restore via dashboard or add to keepalive later).
+
 ## DNS & Domain
 
 | | |
