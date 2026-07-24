@@ -4,6 +4,16 @@
 
 ---
 
+## 24 Jul 2026 — #178 Soft-deleted tables leak into list readers (demo-retro fix; CODE DONE, pending owner verify)
+
+- **Context — owner demo retro (24 Jul):** demo felt like a disaster (staff-create "wrong validation", canteen stock jumped to 60, deleted entries kept showing). RCA on all four symptoms found only ONE genuine code defect (#178). The "staff validation" was actually the TABLE duplicate-name check; the canteen double-count + stale-data were one-off artifacts of hand-deleting/re-importing prod data live via /rc during the demo — NOT standing bugs. Root lesson = "no safe environment, testing on live" (owner's page 7). Staging env queued next.
+- **Bug (#178):** a table deleted via sync/admin/rc kept rendering on Home AND its name stayed blocked in the "already exists" re-add check.
+- **Root cause:** `useTables()` (useLiveData.ts) + `getAllTables()` (queries.ts) returned ALL gameTables incl. soft-deleted tombstones. Every session/item/sale list reader was fixed for this in #124/#162/#166 — the tables table was the ONE missed. 4th recurrence of the tombstone-leak class.
+- **Trigger scope (honest):** `deleteTable()` has ZERO callers in src/ — no UI soft-deletes a table, so a tombstone only appears from an out-of-app deletion (sync/admin/rc). Normal users won't hit it; it surfaced because we hand-deleted table rows live during the demo. Fix is still correct (defensive, matches established pattern), severity low in normal use.
+- **Fix:** added `.filter((t) => !t.deletedAt)` to both list readers (useTables, getAllTables). Single-row getters (getTableById, useTable) left unfiltered by design — audit/direct-get returns tombstones, cf. useSession.
+- **Rule K sweep** (list readers over synced tables missing !deletedAt): useTables + getAllTables = the two leaks (fixed). `getCanteenItems(includeInactive)` filters isActive not deletedAt — same 'no UI delete' property, minor, noted in #178 not fixed here. `.get(id)` single-row calls = not leaks.
+- **Build:** clean; strict `tsc --noEmit -p tsconfig.app.json` shows 0 errors in either touched file (pre-existing #118/#138 baseline unchanged). NOT verified on device — deliberately did NOT drive prod (would risk owner's live weekend data — the exact demo mistake). Owner verifies post-deploy or in staging.
+
 ## 23 Jul 2026 — #177 App-wide scroll-stuck fixed: body scroll-lock centralized + reference-counted (CODE DONE, pending owner verify)
 
 - **Bug (owner-reported, blocks a demo):** after the bulk-restock flow (or any flow opening 2+ sheets), the WHOLE app could no longer scroll on ANY page — buttons still worked, only scrolling died; a reload cleared it.

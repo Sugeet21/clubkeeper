@@ -57,7 +57,11 @@ export type ClubKeeperBackupV16 = ClubKeeperBackupV21
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
 export async function getAllTables(): Promise<GameTable[]> {
-  return db.gameTables.orderBy('sortOrder').toArray()
+  // #178 — exclude soft-deleted tombstones from the list reader. This feeds the
+  // TableFormModal duplicate-name check (existingTables), so a ghost table must
+  // not block re-adding its name. Twin of the #124/#162 reader rule. Single-row
+  // getTableById() below is unfiltered by design (audit/direct get).
+  return db.gameTables.orderBy('sortOrder').filter((t) => !t.deletedAt).toArray()
 }
 
 export async function getTableById(id: string): Promise<GameTable | undefined> {
