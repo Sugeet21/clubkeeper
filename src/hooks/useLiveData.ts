@@ -81,7 +81,16 @@ export function useSyncClubFromSupabase() {
 export type SessionWithItems = { session: Session; items: SessionItem[] }
 
 export function useTables(): GameTable[] {
-  return useLiveQuery(() => db.gameTables.orderBy('sortOrder').toArray(), []) ?? []
+  // #178 — exclude soft-deleted tables (tombstone leak): a table deleted via
+  // sync/admin must vanish from Home, exactly like sessions (#162) and
+  // session_items (#124). List reader only — useTable(id) below intentionally
+  // still returns a tombstone for a direct get.
+  return (
+    useLiveQuery(
+      () => db.gameTables.orderBy('sortOrder').filter((t) => !t.deletedAt).toArray(),
+      [],
+    ) ?? []
+  )
 }
 
 // #162 — all list/range session readers exclude reversed (soft-deleted)
