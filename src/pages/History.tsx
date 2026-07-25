@@ -248,7 +248,19 @@ function OwnerHistory() {
   const [boundaryHour] = useDexieSetting('dayBoundaryHour', 0) // #179
   const currency = settings?.currency ?? '₹'
 
-  // Store as YYYY-MM-DD strings to match <input type="date"> format
+  // #179 — the picker thinks in BUSINESS days, not calendar days. After midnight
+  // (boundary > 0) the current business day is still "yesterday's" calendar date,
+  // so `max` (and the range clamp below) must use the business-day date — else a
+  // session logged at 1 AM (which belongs to the in-progress business day) becomes
+  // unreachable in the picker until the boundary hour, defeating Edit-history.
+  // boundaryHour=0 → this is exactly today's calendar date.
+  const today = format(businessDayOf(new Date(), boundaryHour), 'yyyy-MM-dd')
+
+  // Store as YYYY-MM-DD strings to match <input type="date"> format.
+  // NOTE: these useState initializers run on the FIRST render, when useDexieSetting
+  // is still resolving (boundaryHour = fallback 0). So they use plain calendar
+  // dates; correctness comes from the DERIVED rangeStart/rangeEnd + `today`/`max`
+  // below, which recompute every render once the real boundary loads (#179).
   const [fromStr, setFromStr] = useState(() => format(subDays(new Date(), 6), 'yyyy-MM-dd'))
   const [toStr, setToStr] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   // Post-v20 ID law (Pattern R5): table ids are UUID strings; was `number` +
@@ -299,11 +311,16 @@ function OwnerHistory() {
     else setToStr(value)
   }
 
-  // #179 — widen the fetch window to business-day bounds so late-night rows on the
-  // picked "to" date (which spill past midnight) are still fetched, then grouped
-  // under the correct business day above. boundaryHour=0 == old startOfDay..endOfDay.
-  const rangeStart = businessDayRange(parseLocalDate(fromStr), boundaryHour).start
-  const rangeEnd = businessDayRange(parseLocalDate(toStr), boundaryHour).end
+  // #179 — the range is computed on BUSINESS days. Two safeguards vs. the
+  // after-midnight edge (boundary > 0, current business day still "yesterday"):
+  //  - clamp `to` to `today` (the business-day max) so a default calendar "to"
+  //    that sits AHEAD of the in-progress business day can't produce an empty/
+  //    future window that hides tonight's sessions (the Edit-history bug).
+  //  - clamp `from` to `to` so an inverted range never yields nothing.
+  const effTo = toStr > today ? today : toStr
+  const effFrom = fromStr > effTo ? effTo : fromStr
+  const rangeStart = businessDayRange(parseLocalDate(effFrom), boundaryHour).start
+  const rangeEnd = businessDayRange(parseLocalDate(effTo), boundaryHour).end
 
   // Single live query — sessions + their items in one shot, no N+1
   const rows = useSessionsInRange(rangeStart, rangeEnd)
@@ -418,8 +435,6 @@ function OwnerHistory() {
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }
-
-  const today = format(new Date(), 'yyyy-MM-dd')
 
   // ── Render ───────────────────────────────────────────────────────────────
 
