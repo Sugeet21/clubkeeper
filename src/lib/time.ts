@@ -52,3 +52,49 @@ export function todayRange(): { start: number; end: number } {
     end: endOfDay(now).getTime(),
   }
 }
+
+// ── #179 Business-day boundary ────────────────────────────────────────────────
+// The "business day" starts at `boundaryHour` (0-11), not calendar midnight, so a
+// club open past midnight (Sat night → Sun morning) counts one continuous night as
+// ONE day. boundaryHour=0 is exactly the old calendar-day behaviour (default).
+//
+// SINGLE SOURCE OF TRUTH: every "today"/day-range reader (Summary, Home, History,
+// useLiveData, queries) MUST go through these two helpers so all screens agree.
+// Booking calendars (Bookings.tsx, player/BookingScreen.tsx) deliberately do NOT
+// use these — a booking slot is a literal calendar date, not a business day.
+
+/** Clamp any input to a valid boundary hour 0-11 (defensive; UI already limits). */
+function normalizeBoundaryHour(hour: number | undefined): number {
+  if (typeof hour !== 'number' || !Number.isFinite(hour)) return 0
+  return Math.min(11, Math.max(0, Math.floor(hour)))
+}
+
+/**
+ * The business day (as a calendar Date at 00:00 local) that the given instant
+ * belongs to. If the instant's local hour is before `boundaryHour`, it belongs to
+ * the PREVIOUS calendar day. Used to LABEL a day and to derive its range.
+ */
+export function businessDayOf(instant: Date, boundaryHour: number): Date {
+  const b = normalizeBoundaryHour(boundaryHour)
+  const d = startOfDay(instant)
+  if (instant.getHours() < b) d.setDate(d.getDate() - 1)
+  return d
+}
+
+/**
+ * [start, end] epoch-ms for the business day that `date` falls in.
+ * start = that day at boundaryHour:00:00.000; end = next day at boundaryHour − 1ms.
+ * boundaryHour=0 reproduces startOfDay..endOfDay exactly.
+ */
+export function businessDayRange(
+  date: Date,
+  boundaryHour: number,
+): { start: number; end: number } {
+  const b = normalizeBoundaryHour(boundaryHour)
+  const day = businessDayOf(date, b)          // calendar day this instant belongs to
+  const start = new Date(day)
+  start.setHours(b, 0, 0, 0)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 1)
+  return { start: start.getTime(), end: end.getTime() - 1 }
+}

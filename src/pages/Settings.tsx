@@ -460,6 +460,15 @@ function OwnerSettings() {
     useToastStore.getState().show(`Low-stock alert at ${clamped} unit${clamped === 1 ? '' : 's'}`, 'success')
   }
 
+  // #179 — business-day start hour (0-11). Direct select save (no typing buffer).
+  async function handleDayBoundaryChange(hour: number) {
+    const clamped = Math.min(11, Math.max(0, Math.floor(hour)))
+    if (clamped === (settings?.dayBoundaryHour ?? 0)) return
+    await updateSettings({ dayBoundaryHour: clamped })
+    const label = clamped === 0 ? 'midnight' : `${clamped} AM`
+    useToastStore.getState().show(`Business day starts at ${label}`, 'success')
+  }
+
   // #161 — runaway-session threshold. 0 = off; otherwise clamp 30–1440 min.
   async function handleRunawayBlur() {
     const current = settings?.runawaySessionMinutes ?? RUNAWAY_MINUTES_DEFAULT
@@ -829,6 +838,29 @@ function OwnerSettings() {
                 Rounding is ignored on tables with a rate card.
               </p>
             )}
+          </div>
+
+          {/* #179 — Business day start hour. Late-night traffic (Sat→Sun) counts
+              as ONE day. Read straight from settings (Rule 14 — no useState mirror). */}
+          <div className="mt-5">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[14px] font-semibold text-text">Business day starts at</span>
+            </div>
+            <p className="text-[11px] text-text-faint mb-3">
+              When your day rolls over for totals. Set this to your opening time so a
+              late night (after midnight) still counts under the same day.
+            </p>
+            <select
+              value={settings?.dayBoundaryHour ?? 0}
+              onChange={(e) => void handleDayBoundaryChange(Number(e.target.value))}
+              className="w-full min-h-[44px] px-4 bg-bg border border-border rounded-xl text-text text-[15px] focus:border-accent outline-none"
+            >
+              {Array.from({ length: 12 }, (_, h) => (
+                <option key={h} value={h}>
+                  {h === 0 ? '12:00 AM (midnight — default)' : `${h}:00 AM`}
+                </option>
+              ))}
+            </select>
           </div>
         </SettingsSection>
 

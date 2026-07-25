@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { startOfDay, endOfDay } from 'date-fns'
+import { businessDayRange } from '../lib/time'
 import { useTables, useActiveSessions, useSettings, useSyncClubFromSupabase } from '../hooks/useLiveData'
 import { useTick } from '../hooks/useTick'
 import { useInstallPrompt } from '../hooks/useInstallPrompt'
@@ -125,8 +125,9 @@ export default function Home() {
   //    Sales (re-fires only on DB write)
   // 2. Live: running/paused session amounts computed in render body (recalculates every tick)
   const todayStaticTotals = useLiveQuery(async () => {
-    const start = startOfDay(new Date()).getTime()
-    const end = endOfDay(new Date()).getTime()
+    // #179 — business-day boundary (read live so a Settings change re-runs this).
+    const boundary = (await db.settings.get(1))?.dayBoundaryHour ?? 0
+    const { start, end } = businessDayRange(new Date(), boundary)
     const todaySessions = await db.sessions
       .where('startedAt')
       .between(start, end, true, true)
