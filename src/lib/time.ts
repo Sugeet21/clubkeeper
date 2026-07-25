@@ -82,9 +82,15 @@ export function businessDayOf(instant: Date, boundaryHour: number): Date {
 }
 
 /**
- * [start, end] epoch-ms for the business day that `date` falls in.
- * start = that day at boundaryHour:00:00.000; end = next day at boundaryHour − 1ms.
- * boundaryHour=0 reproduces startOfDay..endOfDay exactly.
+ * [start, end] epoch-ms for the business day a given INSTANT falls in.
+ * Pass a real timestamp (now, a session's startedAt). start = that business day at
+ * boundaryHour; end = next day at boundaryHour − 1ms. boundaryHour=0 == startOfDay..endOfDay.
+ *
+ * ⚠ Do NOT pass a date that is ALREADY a business-day date (e.g. from a date picker
+ * or from businessDayOf) — a business-day date sits at 00:00, and with boundary>0
+ * that 00:00 is BEFORE the boundary so businessDayOf would shift it a day earlier
+ * (picking "25 Jul" would query the 24 Jul window). For that case use
+ * businessDayRangeFromDay(), which does not re-shift.
  */
 export function businessDayRange(
   date: Date,
@@ -92,7 +98,20 @@ export function businessDayRange(
 ): { start: number; end: number } {
   const b = normalizeBoundaryHour(boundaryHour)
   const day = businessDayOf(date, b)          // calendar day this instant belongs to
-  const start = new Date(day)
+  return businessDayRangeFromDay(day, b)
+}
+
+/**
+ * [start, end] epoch-ms for a business day given its OWN date (the picker case).
+ * `dayDate` is treated verbatim as the business day — NO businessDayOf shift — so
+ * picking "25 Jul" yields the 25 Jul business window (25 Jul boundary → 26 Jul boundary).
+ */
+export function businessDayRangeFromDay(
+  dayDate: Date,
+  boundaryHour: number,
+): { start: number; end: number } {
+  const b = normalizeBoundaryHour(boundaryHour)
+  const start = startOfDay(dayDate)
   start.setHours(b, 0, 0, 0)
   const end = new Date(start)
   end.setDate(end.getDate() + 1)

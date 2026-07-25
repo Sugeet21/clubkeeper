@@ -4,7 +4,7 @@ import { format, subDays, isSameDay } from 'date-fns'
 import { useSessionsInRange, useCanteenSalesInRange, useTables, useSettings } from '../hooks/useLiveData'
 import { useDexieSetting } from '../hooks/useDexieSetting'
 import { useTick } from '../hooks/useTick'
-import { getElapsedMs, formatDuration, businessDayOf, businessDayRange } from '../lib/time'
+import { getElapsedMs, formatDuration, businessDayOf, businessDayRangeFromDay } from '../lib/time'
 import { calculateAmount } from '../lib/money'
 import { BackEntryModal } from '../components/BackEntryModal'
 import { Modal } from '../components/Modal'
@@ -319,8 +319,11 @@ function OwnerHistory() {
   //  - clamp `from` to `to` so an inverted range never yields nothing.
   const effTo = toStr > today ? today : toStr
   const effFrom = fromStr > effTo ? effTo : fromStr
-  const rangeStart = businessDayRange(parseLocalDate(effFrom), boundaryHour).start
-  const rangeEnd = businessDayRange(parseLocalDate(effTo), boundaryHour).end
+  // #179 — the picked dates ARE business-day dates, so use *FromDay (no re-shift).
+  // Using businessDayRange here double-shifted midnight back a day, so picking
+  // "25 Jul" queried the 24 Jul window — the Summary/History mismatch.
+  const rangeStart = businessDayRangeFromDay(parseLocalDate(effFrom), boundaryHour).start
+  const rangeEnd = businessDayRangeFromDay(parseLocalDate(effTo), boundaryHour).end
 
   // Single live query — sessions + their items in one shot, no N+1
   const rows = useSessionsInRange(rangeStart, rangeEnd)

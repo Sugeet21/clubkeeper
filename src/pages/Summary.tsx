@@ -11,7 +11,7 @@ import { useTables, useActiveSessions, useSettings } from '../hooks/useLiveData'
 import { useDexieSetting } from '../hooks/useDexieSetting'
 import { useRole } from '../hooks/useRole'
 import { useTick } from '../hooks/useTick'
-import { getElapsedMs, formatDuration, businessDayRange, businessDayOf } from '../lib/time'
+import { getElapsedMs, formatDuration, businessDayRange, businessDayRangeFromDay, businessDayOf } from '../lib/time'
 import { calculateAmount, calculateItemsTotal } from '../lib/money'
 import {
   computeDelta,
@@ -349,17 +349,17 @@ function OwnerSummary() {
   // viewedDate stored as plain state — ephemeral, resets on remount
   const [viewedDate, setViewedDate] = useState<Date>(() => new Date())
   const [heatmapOpen, setHeatmapOpen] = useState(false)
-  // #179 — key queries on the BUSINESS-day start, not calendar midnight, so the
-  // viewed day's window (and its re-fire) tracks the boundary.
-  const viewedDateMs = businessDayRange(viewedDate, boundaryHour).start
+  // #179 — collapse the viewed date to its BUSINESS day ONCE. viewedDate may be a
+  // live instant (default "today") OR a picked date at midnight; businessDayOf
+  // normalises both. Every window below is built with *FromDay from this value, so
+  // there is no double-shift (the bug where picking "25 Jul" queried 24 Jul).
+  const viewedBizDay = businessDayOf(viewedDate, boundaryHour)
+  const viewedDateMs = businessDayRangeFromDay(viewedBizDay, boundaryHour).start
 
   useTick() // drives live running-session amounts every second
 
   // #179 — "is the viewed date the current business day?" (boundary-aware)
-  const isViewedToday = isSameDay(
-    businessDayOf(viewedDate, boundaryHour),
-    businessDayOf(new Date(), boundaryHour),
-  )
+  const isViewedToday = isSameDay(viewedBizDay, businessDayOf(new Date(), boundaryHour))
 
   // ── Build date keys for all comparison windows ──────────────────────────────
 
@@ -370,13 +370,14 @@ function OwnerSummary() {
     const add = (d: Date) => {
       const key = toDateKey(d)
       if (!windows.has(key)) {
-        windows.set(key, businessDayRange(d, boundaryHour)) // #179
+        // d is a business-day date (viewedBizDay or subDays of it) → *FromDay.
+        windows.set(key, businessDayRangeFromDay(d, boundaryHour)) // #179
       }
     }
-    add(viewedDate)
-    add(subDays(viewedDate, 1))
-    add(subDays(viewedDate, 7))
-    for (let i = 1; i <= 7; i++) add(subDays(viewedDate, i))
+    add(viewedBizDay)
+    add(subDays(viewedBizDay, 1))
+    add(subDays(viewedBizDay, 7))
+    for (let i = 1; i <= 7; i++) add(subDays(viewedBizDay, i))
     return windows
   }, [viewedDateMs, boundaryHour]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -453,13 +454,13 @@ function OwnerSummary() {
   }, [tables])
 
   // ── Current date data from live query ──────────────────────────────────────
-  const currentKey = toDateKey(viewedDate)
+  const currentKey = toDateKey(viewedBizDay) // #179 — key on the business day
   const currentData = dateRevenues?.get(currentKey)
 
   // ── Secondary live query for current-date items (needed for heatmap/tables/canteen) ──
   const currentDateItems = useLiveQuery(
     async () => {
-      const { start, end } = businessDayRange(viewedDate, boundaryHour) // #179
+      const { start, end } = businessDayRangeFromDay(viewedBizDay, boundaryHour) // #179
       const sessions = await db.sessions
         .where('startedAt')
         .between(start, end, true, true)
@@ -490,7 +491,7 @@ function OwnerSummary() {
   // Phase 4 will reuse this query for the PAYMENT MODE breakdown tile.
   const canteenSalesForDate = useLiveQuery(
     async () => {
-      const { start, end } = businessDayRange(viewedDate, boundaryHour) // #179
+      const { start, end } = businessDayRangeFromDay(viewedBizDay, boundaryHour) // #179
       return db.canteenSales
         .where('createdAt')
         .between(start, end, true, true)
@@ -544,7 +545,7 @@ function OwnerSummary() {
   // Restocks on the viewed date (any source for the "stock bought today" tile)
   const stockPurchasesForDate = useLiveQuery(
     async () => {
-      const { start, end } = businessDayRange(viewedDate, boundaryHour) // #179
+      const { start, end } = businessDayRangeFromDay(viewedBizDay, boundaryHour) // #179
       return db.stockPurchases
         .where('createdAt')
         .between(start, end, true, true)
@@ -568,7 +569,7 @@ function OwnerSummary() {
   // date here — past dates before piggyStartedAt naturally show 0).
   const cashInOnDate = useLiveQuery(
     async () => {
-      const { start, end } = businessDayRange(viewedDate, boundaryHour) // #179
+      const { start, end } = businessDayRangeFromDay(viewedBizDay, boundaryHour) // #179
       const settings = await db.settings.get(1)
       const since = settings?.piggyStartedAt ?? 0
       const winStart = Math.max(start, since)
@@ -606,7 +607,7 @@ function OwnerSummary() {
   // NOT in useMemo — useMemo only recomputes when activeSessions reference changes
   // (DB writes). useTick() re-renders must drive this every second, so it must
   // be inline in the render body.
-  const todayStart = businessDayRange(viewedDate, boundaryHour).start // #179
+  const todayStart = businessDayRangeFromDay(viewedBizDay, boundaryHour).start // #179
   const runningRevenueToday = isViewedToday
     ? activeSessions
         .filter((s) => s.startedAt >= todayStart)
