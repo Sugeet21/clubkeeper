@@ -446,7 +446,7 @@ function OwnerHistory() {
         <div className="min-w-0">
           <h1 className="text-[22px] font-bold tracking-tight text-text">History</h1>
           <p className="text-[12px] text-text-dim font-mono mt-0.5">
-            {format(parseLocalDate(fromStr), 'd MMM')} — {format(parseLocalDate(toStr), 'd MMM yyyy')}
+            {format(parseLocalDate(effFrom), 'd MMM')} — {format(parseLocalDate(effTo), 'd MMM yyyy')}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -529,7 +529,7 @@ function OwnerHistory() {
           </label>
           <input
             type="date"
-            value={fromStr}
+            value={effFrom}
             max={today}
             onChange={(e) => handleFromChange(e.target.value)}
             className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text font-mono text-sm focus:border-accent outline-none cursor-pointer [color-scheme:dark]"
@@ -541,7 +541,7 @@ function OwnerHistory() {
           </label>
           <input
             type="date"
-            value={toStr}
+            value={effTo}
             max={today}
             onChange={(e) => handleToChange(e.target.value)}
             className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text font-mono text-sm focus:border-accent outline-none cursor-pointer [color-scheme:dark]"
