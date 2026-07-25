@@ -187,6 +187,7 @@ export interface ClubSettings {
   alarmVibrationEnabled?: boolean // default true; stored in Dexie, NOT localStorage
   runawaySessionMinutes?: number // #161: warn when a running session exceeds this many minutes; default 150 (2.5h); 0 = off. Owner-only, NOT mirrored to Supabase.
   lowStockThreshold?: number     // default 5; treat missing as 5
+  dayBoundaryHour?: number       // #179: business-day start hour 0-11 (0 = midnight = default). A session before this hour counts toward the PREVIOUS day, so late-night (e.g. Sat→Sun) traffic stays in one business day. Owner-only, NOT mirrored to Supabase. Read via getDayBoundaryHour()/businessDayRange().
   piggyOpeningBalance?: number   // v13: owner-settable opening cash float; treat missing as 0
   piggyStartedAt?: number        // v13: Unix ms; piggy aggregation window start. Set at v13 upgrade if absent.
   slug?: string                  // v14: Player Hub slug; mirrors Supabase clubs.slug

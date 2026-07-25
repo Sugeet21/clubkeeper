@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { startOfDay, endOfDay } from 'date-fns'
+import { businessDayRange } from '../lib/time'
 import { db } from '../db/database'
 import { getRecentItems, type RecentItem } from '../db/queries'
 import { useAuthStore } from '../store/authStore'
@@ -114,9 +114,11 @@ export function useActiveSessions(): Session[] {
 
 export function useTodaysSessions(): Session[] {
   return (
-    useLiveQuery(() => {
-      const start = startOfDay(new Date()).getTime()
-      const end = endOfDay(new Date()).getTime()
+    useLiveQuery(async () => {
+      // #179 — business-day boundary. Reading settings inside the live query means
+      // changing the boundary in Settings re-runs this and totals update live.
+      const boundary = (await db.settings.get(1))?.dayBoundaryHour ?? 0
+      const { start, end } = businessDayRange(new Date(), boundary)
       return db.sessions
         .where('startedAt')
         .between(start, end, true, true)
@@ -148,17 +150,20 @@ export function useSessionsBetween(start: number, end: number): Session[] {
 }
 
 export function useSessionsForDate(date: Date): Session[] {
-  const start = startOfDay(date).getTime()
-  const end = endOfDay(date).getTime()
+  const dateMs = date.getTime()
   return (
     useLiveQuery(
-      () =>
-        db.sessions
+      async () => {
+        // #179 — range derived from the business-day boundary (read live).
+        const boundary = (await db.settings.get(1))?.dayBoundaryHour ?? 0
+        const { start, end } = businessDayRange(new Date(dateMs), boundary)
+        return db.sessions
           .where('startedAt')
           .between(start, end, true, true)
           .filter((s) => !s.deletedAt)
-          .toArray(),
-      [start, end],
+          .toArray()
+      },
+      [dateMs],
     ) ?? []
   )
 }

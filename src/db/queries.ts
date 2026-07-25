@@ -1,4 +1,4 @@
-import { startOfDay, endOfDay } from 'date-fns'
+import { businessDayRange } from '../lib/time'
 import { db } from './database'
 import { calculateAmount, applyRounding } from '../lib/money'
 import { validatePlayerName, validateItemName, validateCanteenItemName } from '../lib/validation'
@@ -531,8 +531,7 @@ export async function editSessionStart(
 
 export async function getTodaysSessions(): Promise<Session[]> {
   const now = new Date()
-  const start = startOfDay(now).getTime()
-  const end = endOfDay(now).getTime()
+  const { start, end } = businessDayRange(now, await getDayBoundaryHour()) // #179
   return db.sessions
     .where('startedAt')
     .between(start, end, true, true)
@@ -1178,6 +1177,14 @@ export async function decrementCanteenItemStock(
 export async function getLowStockThreshold(): Promise<number> {
   const settings = await db.settings.get(1)
   return settings?.lowStockThreshold ?? 5
+}
+
+// #179 — business-day start hour (0-11). Default 0 = calendar midnight (unchanged
+// behaviour). Feeds businessDayRange() in every day-range reader. Owner-only.
+export async function getDayBoundaryHour(): Promise<number> {
+  const settings = await db.settings.get(1)
+  const h = settings?.dayBoundaryHour
+  return typeof h === 'number' && h >= 0 && h <= 11 ? Math.floor(h) : 0
 }
 
 // #161 — runaway-session warning threshold in MINUTES. Default 150 (2.5h).
@@ -2297,8 +2304,7 @@ export async function reverseCanteenSale(saleId: string): Promise<void> {
  * Back-entry sessions are included (ADDENDUM-3: treated identically).
  */
 export async function getSessionsWithBreakdownByDate(date: Date): Promise<Session[]> {
-  const start = startOfDay(date).getTime()
-  const end = endOfDay(date).getTime()
+  const { start, end } = businessDayRange(date, await getDayBoundaryHour()) // #179
   const rows = await db.sessions
     .where('startedAt')
     .between(start, end, true, true)
@@ -2314,8 +2320,7 @@ export async function getSessionsWithBreakdownByDate(date: Date): Promise<Sessio
  * cash-in aggregation (Phase 5).
  */
 export async function getCanteenSalesByDate(date: Date): Promise<CanteenSale[]> {
-  const start = startOfDay(date).getTime()
-  const end = endOfDay(date).getTime()
+  const { start, end } = businessDayRange(date, await getDayBoundaryHour()) // #179
   return db.canteenSales
     .where('createdAt')
     .between(start, end, true, true)

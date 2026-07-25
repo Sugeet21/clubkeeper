@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { format, subDays, startOfDay, endOfDay, isToday, isYesterday } from 'date-fns'
+import { format, subDays, isSameDay } from 'date-fns'
 import { useSessionsInRange, useCanteenSalesInRange, useTables, useSettings } from '../hooks/useLiveData'
+import { useDexieSetting } from '../hooks/useDexieSetting'
 import { useTick } from '../hooks/useTick'
-import { getElapsedMs, formatDuration } from '../lib/time'
+import { getElapsedMs, formatDuration, businessDayOf, businessDayRangeFromDay } from '../lib/time'
 import { calculateAmount } from '../lib/money'
 import { BackEntryModal } from '../components/BackEntryModal'
 import { Modal } from '../components/Modal'
@@ -36,9 +37,13 @@ function sessionBaseAmt(s: Session): number {
   return calculateAmount(s, getElapsedMs(s))
 }
 
-function dayLabel(date: Date): string {
-  if (isToday(date)) return 'Today'
-  if (isYesterday(date)) return 'Yesterday'
+// #179 — labels compare against the current BUSINESS day so a late-night session
+// grouped under its business day still reads "Today"/"Yesterday" correctly.
+// `date` here is already a business-day date (00:00 of the business day).
+function dayLabel(date: Date, boundaryHour: number): string {
+  const todayBiz = businessDayOf(new Date(), boundaryHour)
+  if (isSameDay(date, todayBiz)) return 'Today'
+  if (isSameDay(date, subDays(todayBiz, 1))) return 'Yesterday'
   return format(date, 'EEEE, d MMM yyyy')
 }
 
@@ -240,9 +245,22 @@ function StaffHistoryView() {
 function OwnerHistory() {
   const tables = useTables()
   const settings = useSettings()
+  const [boundaryHour] = useDexieSetting('dayBoundaryHour', 0) // #179
   const currency = settings?.currency ?? '₹'
 
-  // Store as YYYY-MM-DD strings to match <input type="date"> format
+  // #179 — the picker thinks in BUSINESS days, not calendar days. After midnight
+  // (boundary > 0) the current business day is still "yesterday's" calendar date,
+  // so `max` (and the range clamp below) must use the business-day date — else a
+  // session logged at 1 AM (which belongs to the in-progress business day) becomes
+  // unreachable in the picker until the boundary hour, defeating Edit-history.
+  // boundaryHour=0 → this is exactly today's calendar date.
+  const today = format(businessDayOf(new Date(), boundaryHour), 'yyyy-MM-dd')
+
+  // Store as YYYY-MM-DD strings to match <input type="date"> format.
+  // NOTE: these useState initializers run on the FIRST render, when useDexieSetting
+  // is still resolving (boundaryHour = fallback 0). So they use plain calendar
+  // dates; correctness comes from the DERIVED rangeStart/rangeEnd + `today`/`max`
+  // below, which recompute every render once the real boundary loads (#179).
   const [fromStr, setFromStr] = useState(() => format(subDays(new Date(), 6), 'yyyy-MM-dd'))
   const [toStr, setToStr] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   // Post-v20 ID law (Pattern R5): table ids are UUID strings; was `number` +
@@ -293,8 +311,19 @@ function OwnerHistory() {
     else setToStr(value)
   }
 
-  const rangeStart = startOfDay(parseLocalDate(fromStr)).getTime()
-  const rangeEnd = endOfDay(parseLocalDate(toStr)).getTime()
+  // #179 — the range is computed on BUSINESS days. Two safeguards vs. the
+  // after-midnight edge (boundary > 0, current business day still "yesterday"):
+  //  - clamp `to` to `today` (the business-day max) so a default calendar "to"
+  //    that sits AHEAD of the in-progress business day can't produce an empty/
+  //    future window that hides tonight's sessions (the Edit-history bug).
+  //  - clamp `from` to `to` so an inverted range never yields nothing.
+  const effTo = toStr > today ? today : toStr
+  const effFrom = fromStr > effTo ? effTo : fromStr
+  // #179 — the picked dates ARE business-day dates, so use *FromDay (no re-shift).
+  // Using businessDayRange here double-shifted midnight back a day, so picking
+  // "25 Jul" queried the 24 Jul window — the Summary/History mismatch.
+  const rangeStart = businessDayRangeFromDay(parseLocalDate(effFrom), boundaryHour).start
+  const rangeEnd = businessDayRangeFromDay(parseLocalDate(effTo), boundaryHour).end
 
   // Single live query — sessions + their items in one shot, no N+1
   const rows = useSessionsInRange(rangeStart, rangeEnd)
@@ -329,15 +358,18 @@ function OwnerHistory() {
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(row)
     }
+    // #179 — bucket by BUSINESS day: collapse each timestamp to its business-day
+    // date first, so a 2 AM session (8 AM boundary) files under the prior day.
+    const bizKey = (ts: number) => format(businessDayOf(new Date(ts), boundaryHour), 'yyyy-MM-dd')
     for (const r of filteredRows) {
-      push(format(r.session.startedAt, 'yyyy-MM-dd'), { kind: 'session', ts: r.session.startedAt, data: r })
+      push(bizKey(r.session.startedAt), { kind: 'session', ts: r.session.startedAt, data: r })
     }
     for (const sale of filteredSales) {
-      push(format(sale.createdAt, 'yyyy-MM-dd'), { kind: 'sale', ts: sale.createdAt, data: sale })
+      push(bizKey(sale.createdAt), { kind: 'sale', ts: sale.createdAt, data: sale })
     }
     for (const [, arr] of map) arr.sort((a, b) => b.ts - a.ts)
     return map
-  }, [filteredRows, filteredSales])
+  }, [filteredRows, filteredSales, boundaryHour])
 
   const sortedDays = useMemo(
     () => [...grouped.keys()].sort((a, b) => b.localeCompare(a)),
@@ -407,8 +439,6 @@ function OwnerHistory() {
     URL.revokeObjectURL(url)
   }
 
-  const today = format(new Date(), 'yyyy-MM-dd')
-
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -419,7 +449,7 @@ function OwnerHistory() {
         <div className="min-w-0">
           <h1 className="text-[22px] font-bold tracking-tight text-text">History</h1>
           <p className="text-[12px] text-text-dim font-mono mt-0.5">
-            {format(parseLocalDate(fromStr), 'd MMM')} — {format(parseLocalDate(toStr), 'd MMM yyyy')}
+            {format(parseLocalDate(effFrom), 'd MMM')} — {format(parseLocalDate(effTo), 'd MMM yyyy')}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -502,7 +532,7 @@ function OwnerHistory() {
           </label>
           <input
             type="date"
-            value={fromStr}
+            value={effFrom}
             max={today}
             onChange={(e) => handleFromChange(e.target.value)}
             className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text font-mono text-sm focus:border-accent outline-none cursor-pointer [color-scheme:dark]"
@@ -514,7 +544,7 @@ function OwnerHistory() {
           </label>
           <input
             type="date"
-            value={toStr}
+            value={effTo}
             max={today}
             onChange={(e) => handleToChange(e.target.value)}
             className="w-full px-4 py-3.5 bg-bg-card border border-border rounded-2xl text-text font-mono text-sm focus:border-accent outline-none cursor-pointer [color-scheme:dark]"
@@ -568,7 +598,7 @@ function OwnerHistory() {
             return (
               <div key={dayKey} className="mb-5">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-[13px] font-semibold text-text">{dayLabel(dayDate)}</p>
+                  <p className="text-[13px] font-semibold text-text">{dayLabel(dayDate, boundaryHour)}</p>
                   <p className="text-[14px] font-bold text-accent tabular-nums">
                     {currency}{dayGrandTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                   </p>
