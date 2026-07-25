@@ -10,10 +10,17 @@
 
 > Custom domain went live 1 Jun 2026. DNS managed via Cloudflare. Both URLs serve the same deployment — no separate branch.
 
-## Staging environment (built 24 Jul 2026)
+## Staging environment (built 24 Jul 2026 — LIVE + isolation-verified 25 Jul)
 
 Full-isolation staging so changes get verified OFF the owner's live app (the "never test on
 live again" fix after the 24 Jul demo). See `supabase/staging/README.md` + `SETUP.md`.
+
+**STATUS: fully operational.** Owner completed all dashboard steps 25 Jul — Vercel branch-scoped
+env vars, staging Google OAuth (both prod+staging callbacks on the shared OAuth client), JWT hook
+enabled, staging URL config (Site URL + redirect = `clubkeeper-git-staging-sugeet-s-projects.vercel.app`).
+Owner signed in to staging → got a clean EMPTY account (1 trial sub, 0 clubs/tables) while prod's
+5 clubs/5 tables stayed untouched — **isolation proven via MCP probe both projects.**
+Staging URL: `https://clubkeeper-git-staging-sugeet-s-projects.vercel.app`.
 
 | | Production | Staging |
 |---|---|---|
