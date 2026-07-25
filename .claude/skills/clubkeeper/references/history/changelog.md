@@ -4,6 +4,15 @@
 
 ---
 
+## 25–26 Jul 2026 — #179 Configurable business-day boundary (SHIPPED to main via staging-first; pending owner prod verify)
+
+- **Owner ask (demo retro):** clubs open past midnight — Sat-night traffic split across two calendar days. Owner wants a configurable business-day start so the night counts as ONE day, consistently on EVERY screen.
+- **Feature:** `ClubSettings.dayBoundaryHour` (0–11, owner-only, NOT mirrored — runaway* pattern), Settings "Business day starts at" dropdown (12 AM default = unchanged behaviour). A session before the boundary hour counts toward the previous business day.
+- **Single source of truth (lib/time.ts):** `businessDayOf(instant,h)` → the business-day date an instant belongs to; `businessDayRange(instant,h)` → window for an INSTANT (now, session.startedAt); **`businessDayRangeFromDay(dayDate,h)`** → window for a date that IS ALREADY a business day (picker/`businessDayOf` output) — added after the root-cause bug below.
+- **Wired (all must agree):** Summary (staff + owner cards, every day-range + label site, `viewedBizDay` computed once), Home today-total, `useTodaysSessions`/`useSessionsForDate`, queries day-range helpers, History grouping + labels + range/`max`. Booking calendars (Bookings/BookingScreen) deliberately NOT changed (slots are literal dates).
+- **THREE staging rounds caught real bugs before prod (Rule 16 working):** (1) History date picker `max` used calendar not business day → 1 AM session unreachable → Edit-history useless; (2) inputs/subtitle displayed raw range while query used clamped → picker≠data; (3) **root cause** — `businessDayRange()` runs `businessDayOf()`, which shifts a midnight picker-date (00:00 < boundary) back a day, so picking "25 Jul" queried the 24 Jul window → Summary(instant) vs History(picked-date) mismatch. Fixed with `businessDayRangeFromDay` (no re-shift) for all business-day-date callers. Proven with a scratch logic test.
+- **Build clean; strict tsc at the 88-error #118/#138 baseline (0 new).** Shipped through staging → verified → merged `bd08760`. First feature through the staging-first flow. Spawned #181 (cross-midnight back-entry — the original demo bug), #182 (walk-in Quick Sale back-entry) as separate issues.
+
 ## 24 Jul 2026 — #178 Soft-deleted tables leak into list readers (demo-retro fix; CODE DONE, pending owner verify)
 
 - **Context — owner demo retro (24 Jul):** demo felt like a disaster (staff-create "wrong validation", canteen stock jumped to 60, deleted entries kept showing). RCA on all four symptoms found only ONE genuine code defect (#178). The "staff validation" was actually the TABLE duplicate-name check; the canteen double-count + stale-data were one-off artifacts of hand-deleting/re-importing prod data live via /rc during the demo — NOT standing bugs. Root lesson = "no safe environment, testing on live" (owner's page 7). Staging env queued next.
