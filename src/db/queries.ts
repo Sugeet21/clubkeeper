@@ -489,6 +489,32 @@ export async function cancelPaymentAndResume(sessionId: string): Promise<void> {
   })
 }
 
+// For a COMPLETED session, `amount` is a STORED value frozen at stop time —
+// editing either boundary (start or end) changes the billable duration, so we
+// MUST recompute it (and roundedDurationMs) with the exact same logic as
+// stopSession, or the bill shows the stale amount while the elapsed clock shows
+// the new duration (the "edited time but ₹ didn't change" bug). Shared by both
+// editSessionStart and editSessionEnd so the two edit paths can never drift.
+async function recomputeCompletedBill(
+  session: Session,
+  startedAt: number,
+  endedAt: number,
+): Promise<{ amount: number; roundedDurationMs: number | undefined }> {
+  const rawElapsedMs = endedAt - startedAt - session.pausedTotalMs
+  const settings = await db.settings.get(1)
+  const isRateCard = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
+  let billableMs = rawElapsedMs
+  let roundedDurationMs: number | undefined
+  if (!isRateCard && session.billingMode === 'per_hour' && settings && settings.rounding !== 'none') {
+    roundedDurationMs = applyRounding(rawElapsedMs, settings.rounding)
+    billableMs = roundedDurationMs
+  }
+  return {
+    amount: calculateAmount(session, billableMs, settings?.rounding ?? 'none'),
+    roundedDurationMs,
+  }
+}
+
 export async function editSessionStart(
   sessionId: string,
   newStartedAt: number,
@@ -504,29 +530,48 @@ export async function editSessionStart(
     throw new Error('Start time must be before end time')
   }
 
-  // For a COMPLETED session, `amount` is a STORED value frozen at stop time —
-  // moving the start time changes the billable duration, so we MUST recompute
-  // it (and roundedDurationMs) with the exact same logic as stopSession, or the
-  // bill shows the stale amount while the elapsed clock shows the new duration
-  // (the "edited start but ₹ didn't change" bug). Running/paused sessions
-  // compute amount live in the render body (Pattern T4), so they need only the
-  // startedAt write — their amount follows automatically.
+  // Running/paused sessions compute amount live in the render body (Pattern T4),
+  // so they need only the startedAt write — their amount follows automatically.
   const patch: Partial<Session> = { startedAt: newStartedAt }
   if (session.status === 'completed' && session.endedAt !== null) {
-    const rawElapsedMs = session.endedAt - newStartedAt - session.pausedTotalMs
-    const settings = await db.settings.get(1)
-    const isRateCard = session.rateCardSnapshot && session.rateCardSnapshot.length > 0
-    let billableMs = rawElapsedMs
-    let roundedDurationMs: number | undefined
-    if (!isRateCard && session.billingMode === 'per_hour' && settings && settings.rounding !== 'none') {
-      roundedDurationMs = applyRounding(rawElapsedMs, settings.rounding)
-      billableMs = roundedDurationMs
-    }
-    patch.amount = calculateAmount(session, billableMs, settings?.rounding ?? 'none')
-    patch.roundedDurationMs = roundedDurationMs
+    const bill = await recomputeCompletedBill(session, newStartedAt, session.endedAt)
+    patch.amount = bill.amount
+    patch.roundedDurationMs = bill.roundedDurationMs
   }
 
   await syncedUpdate<Session & { id: string }>('sessions', sessionId, patch)
+}
+
+/**
+ * Edit the END time of a COMPLETED session (#183 — mirrors editSessionStart).
+ * Only valid on a completed session (a running/paused one has no end yet).
+ * newEndedAt must be after startedAt and not in the future. Recomputes the
+ * frozen amount + roundedDurationMs with the same billing logic as stopSession.
+ */
+export async function editSessionEnd(
+  sessionId: string,
+  newEndedAt: number,
+): Promise<void> {
+  const session = await db.sessions.get(sessionId)
+  if (!session) throw new Error(`Session ${sessionId} not found`)
+  if (session.status !== 'completed' || session.endedAt === null) {
+    throw new Error('Only a completed session has an end time to edit')
+  }
+
+  const now = Date.now()
+  if (newEndedAt > now) {
+    throw new Error('End time cannot be in the future')
+  }
+  if (newEndedAt <= session.startedAt) {
+    throw new Error('End time must be after start time')
+  }
+
+  const bill = await recomputeCompletedBill(session, session.startedAt, newEndedAt)
+  await syncedUpdate<Session & { id: string }>('sessions', sessionId, {
+    endedAt: newEndedAt,
+    amount: bill.amount,
+    roundedDurationMs: bill.roundedDurationMs,
+  })
 }
 
 export async function getTodaysSessions(): Promise<Session[]> {

@@ -8,6 +8,7 @@ import {
   resumeSession,
   stopSession,
   editSessionStart,
+  editSessionEnd,
   updateSession,
   updateSessionNotify,
   moveSessionToTable,
@@ -409,6 +410,11 @@ export default function SessionDetail() {
   const [editDate, setEditDate] = useState('')
   const [editTime, setEditTime] = useState('')
   const [editError, setEditError] = useState<string | null>(null)
+  // #183 — edit END time of a completed session (mirrors edit-start)
+  const [editEndOpen, setEditEndOpen] = useState(false)
+  const [editEndDate, setEditEndDate] = useState('')
+  const [editEndTime, setEditEndTime] = useState('')
+  const [editEndError, setEditEndError] = useState<string | null>(null)
   // #162 — reverse (delete) session confirm
   const [reverseOpen, setReverseOpen] = useState(false)
   const [reverseReason, setReverseReason] = useState('')
@@ -472,6 +478,16 @@ export default function SessionDetail() {
     setEditError(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editStartOpen])
+
+  // #183 — populate edit-end fields whenever that modal opens
+  useEffect(() => {
+    if (!editEndOpen || !session || session.endedAt === null) return
+    const dt = new Date(session.endedAt)
+    setEditEndDate(format(dt, 'yyyy-MM-dd'))
+    setEditEndTime(format(dt, 'HH:mm'))
+    setEditEndError(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editEndOpen])
 
   // Re-enter payment screen when navigating to a session that is paused-for-payment
   // (staff closed the tab or navigated away after pauseForPayment but before confirming).
@@ -660,6 +676,31 @@ export default function SessionDetail() {
     await updateSession(session.id!, { framesPlayed: next })
   }
 
+  // #163 — after any edit that changes a completed session's total, a recorded
+  // paymentBreakdown that no longer sums to the new grand total is internally
+  // inconsistent (Summary PAYMENT MODE / piggy would be wrong), so re-open the
+  // split sheet for the owner to re-confirm how the new total was paid.
+  // resplitSessionPayment (parent onConfirm) reverses the old wallet leg before
+  // applying the new one. Shared by edit-start (#163) and edit-end (#183).
+  async function maybeReopenResplit() {
+    const sid = session?.id
+    if (!sid) return
+    const fresh = await db.sessions.get(sid)
+    if (fresh?.status === 'completed' && fresh.paymentBreakdown) {
+      const freshItems = await db.sessionItems
+        .where('sessionId')
+        .equals(sid)
+        .filter((i) => !i.deletedAt)
+        .toArray()
+      const newTotal =
+        fresh.amount + freshItems.reduce((s, i) => s + i.price * i.quantity, 0)
+      const bd = fresh.paymentBreakdown
+      if (bd.cash + bd.upi + bd.wallet !== newTotal) {
+        setResplitOpen(true)
+      }
+    }
+  }
+
   async function handleSaveEditStart() {
     setEditError(null)
     const combined = new Date(`${editDate}T${editTime}:00`)
@@ -679,31 +720,35 @@ export default function SessionDetail() {
     try {
       await editSessionStart(session.id!, newTs)
       setEditStartOpen(false)
-      // #163 — the edit may have changed the total. A completed session with a
-      // recorded paymentBreakdown that no longer sums to the new grand total is
-      // internally inconsistent (Summary PAYMENT MODE / piggy would be wrong),
-      // so re-open the split sheet for the owner to re-confirm how the new total
-      // was paid. resplitSessionPayment (parent onConfirm) reverses the old
-      // wallet leg before applying the new one.
-      const sid = session?.id
-      if (sid) {
-        const fresh = await db.sessions.get(sid)
-        if (fresh?.status === 'completed' && fresh.paymentBreakdown) {
-          const freshItems = await db.sessionItems
-            .where('sessionId')
-            .equals(sid)
-            .filter((i) => !i.deletedAt)
-            .toArray()
-          const newTotal =
-            fresh.amount + freshItems.reduce((s, i) => s + i.price * i.quantity, 0)
-          const bd = fresh.paymentBreakdown
-          if (bd.cash + bd.upi + bd.wallet !== newTotal) {
-            setResplitOpen(true)
-          }
-        }
-      }
+      await maybeReopenResplit()
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Failed to update.')
+    }
+  }
+
+  // #183 — edit the END time of a completed session (mirrors handleSaveEditStart)
+  async function handleSaveEditEnd() {
+    setEditEndError(null)
+    const combined = new Date(`${editEndDate}T${editEndTime}:00`)
+    if (isNaN(combined.getTime())) {
+      setEditEndError('Invalid date or time.')
+      return
+    }
+    const newTs = combined.getTime()
+    if (newTs > Date.now()) {
+      setEditEndError('End time cannot be in the future.')
+      return
+    }
+    if (newTs <= session.startedAt) {
+      setEditEndError('End time must be after start time.')
+      return
+    }
+    try {
+      await editSessionEnd(session.id!, newTs)
+      setEditEndOpen(false)
+      await maybeReopenResplit()
+    } catch (err) {
+      setEditEndError(err instanceof Error ? err.message : 'Failed to update.')
     }
   }
 
@@ -1060,6 +1105,17 @@ export default function SessionDetail() {
             Edit Start Time
           </button>
 
+          {/* #183 — Edit end time. COMPLETED sessions only (a running/paused one
+              has no end yet). Owner-only via the enclosing <OwnerOnly>. */}
+          {session.status === 'completed' && (
+            <button
+              onClick={() => setEditEndOpen(true)}
+              className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
+            >
+              Edit End Time
+            </button>
+          )}
+
           {/* #162 — Delete (reverse) this session. Owner-only. Full undo:
               removes it from all totals, returns stock, reverses wallet.
               #184 — only a COMPLETED session is reversible (reverseSession
@@ -1187,6 +1243,59 @@ export default function SessionDetail() {
             </button>
             <button
               onClick={handleSaveEditStart}
+              className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── #183 Edit end time modal ── inside the same <OwnerOnly> (Pattern
+          A12: gate the action, not just the trigger) ────────────────────── */}
+      <Modal
+        open={editEndOpen}
+        onClose={() => setEditEndOpen(false)}
+        title="Edit End Time"
+      >
+        <p className="text-text-faint text-[12px] font-mono mb-4">
+          Current: {session.endedAt !== null ? format(session.endedAt, 'h:mm a, d MMM yyyy') : '—'}
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-[11px] uppercase tracking-widest font-mono text-text-faint mb-1.5">
+              Date
+            </label>
+            <input
+              type="date"
+              value={editEndDate}
+              onChange={(e) => setEditEndDate(e.target.value)}
+              className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-[15px] focus:border-accent focus:outline-none transition-colors"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] uppercase tracking-widest font-mono text-text-faint mb-1.5">
+              Time
+            </label>
+            <input
+              type="time"
+              value={editEndTime}
+              onChange={(e) => setEditEndTime(e.target.value)}
+              className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-[15px] focus:border-accent focus:outline-none transition-colors"
+            />
+          </div>
+          {editEndError && (
+            <p className="text-busy text-[13px]">{editEndError}</p>
+          )}
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <button
+              onClick={() => setEditEndOpen(false)}
+              className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSaveEditEnd}
               className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold"
             >
               Save
