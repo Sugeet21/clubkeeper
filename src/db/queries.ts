@@ -630,9 +630,14 @@ export class ActiveSessionsPresentError extends Error {
  * Supabase and then abort locally, leaving the device out of sync.
  */
 export async function assertNoActiveSessions(): Promise<void> {
+  // #189 — MUST filter !deletedAt to match useActiveSessions (Tables running-count).
+  // A reversed/deleted session keeps status='running' on its tombstone, so a
+  // status-only count wrongly sees soft-deleted rows as active and blocks reset
+  // when the UI shows RUNNING: 0 (Pattern S27/S29 tombstone-leak, 5th recurrence).
   const activeCount = await db.sessions
     .where('status')
     .anyOf(['running', 'paused'])
+    .filter((s) => !s.deletedAt)
     .count()
   if (activeCount > 0) throw new ActiveSessionsPresentError()
 }

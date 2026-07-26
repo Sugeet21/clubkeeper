@@ -179,9 +179,13 @@ export async function importEverythingFromFile(file: File): Promise<ImportResult
 
   // 6. Pre-check: refuse if any active session in CURRENT DB
   try {
+    // #189 — filter !deletedAt (Pattern S27/S29): a soft-deleted session keeps
+    // status='running', so a status-only count wrongly blocks import when the
+    // real running-count (useActiveSessions) is 0.
     const activeCount = await db.sessions
       .where('status')
       .anyOf(['running', 'paused'])
+      .filter((s) => !s.deletedAt)
       .count()
     if (activeCount > 0) {
       return { ok: false, reason: 'active_sessions_present' }
