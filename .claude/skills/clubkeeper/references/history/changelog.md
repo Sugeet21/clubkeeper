@@ -4,6 +4,11 @@
 
 ---
 
+## 26 Jul 2026 — #165 + #166 CLOSED by owner (walk-in Quick Sale in History)
+
+- Owner confirmed both working on live: walk-in Quick Sales now appear in History (#165) and can be reversed/deleted from History under the Edit-history toggle (#166). Closed per owner confirmation.
+- The remaining walk-in gap the owner hit ("can't log a quick sale in Log Sessions") is the KNOWN, still-open **#182** (P2) — back-entry supports only table sessions, no walk-in Quick Sale path. Not a regression; the back-entry modal never had that path. (Related still-open: #167 shared CanteenItemPicker rollout — already partly done per module status.)
+
 ## 25–26 Jul 2026 — #179 Configurable business-day boundary (SHIPPED to main via staging-first; pending owner prod verify)
 
 - **Owner ask (demo retro):** clubs open past midnight — Sat-night traffic split across two calendar days. Owner wants a configurable business-day start so the night counts as ONE day, consistently on EVERY screen.
