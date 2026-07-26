@@ -753,8 +753,11 @@ function OwnerHistory() {
                         currency={currency}
                         displayAmount={base + itemsAmt}
                         editMode={editMode}
-                        // #190 — carry the Edit-history intent so SessionDetail
-                        // unlocks item add/edit/delete (owner-gated there too).
+                        // #190 — owner rows are ALWAYS tappable: toggle OFF opens
+                        // read-only (View Items), toggle ON opens editable (Edit
+                        // Items + Edit start/end + Delete). The Edit-history intent
+                        // rides in nav state; SessionDetail owner-gates the edit.
+                        alwaysTappable
                         onOpen={(id) => navigate(`/session/${id}`, { state: { editHistory: editMode } })}
                       />
                     )

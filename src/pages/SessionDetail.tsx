@@ -876,16 +876,20 @@ export default function SessionDetail() {
             <span className="text-sm">Home</span>
           </button>
           {/* Edit start time — owner-only (Pattern A12): staff RLS forbids
-              started_at edits; matrix "Edit session start time ❌ staff". */}
-          <OwnerOnly>
-            <button
-              onClick={() => setEditStartOpen(true)}
-              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim active:text-text transition-colors"
-              aria-label="Edit start time"
-            >
-              <PencilIcon />
-            </button>
-          </OwnerOnly>
+              started_at edits; matrix "Edit session start time ❌ staff".
+              #190 — on a completed session, only with the Edit-history toggle
+              (canEditCompletedItems); active sessions always show it. */}
+          {(isActive || canEditCompletedItems) && (
+            <OwnerOnly>
+              <button
+                onClick={() => setEditStartOpen(true)}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim active:text-text transition-colors"
+                aria-label="Edit start time"
+              >
+                <PencilIcon />
+              </button>
+            </OwnerOnly>
+          )}
         </div>
       </div>
 
@@ -1095,8 +1099,13 @@ export default function SessionDetail() {
           </button>
         )}
 
-        {/* Move table + edit start — owner-only (Pattern A12, §2 matrix):
-            both are staff-forbidden writes; a staff-queued one dead-letters. */}
+        {/* Move table + edit start/end + delete — owner-only (Pattern A12, §2
+            matrix): all are staff-forbidden writes; a staff-queued one
+            dead-letters. #190 — on a COMPLETED session these correction controls
+            ALSO require the Edit-history toggle (canEditCompletedItems): owner
+            opening a past session with the toggle OFF gets a pure read-only view.
+            Active (running/paused) sessions are managed live from Tables, so
+            their edit controls always show for the owner regardless of toggle. */}
         <OwnerOnly>
           {/* Move table button — active sessions only */}
           {isActive && (
@@ -1109,17 +1118,20 @@ export default function SessionDetail() {
             </button>
           )}
 
-          {/* Edit start time */}
-          <button
-            onClick={() => setEditStartOpen(true)}
-            className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
-          >
-            Edit Start Time
-          </button>
+          {/* Edit start time — active session (live management) OR completed
+              session opened WITH the Edit-history toggle (#190). */}
+          {(isActive || canEditCompletedItems) && (
+            <button
+              onClick={() => setEditStartOpen(true)}
+              className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
+            >
+              Edit Start Time
+            </button>
+          )}
 
           {/* #183 — Edit end time. COMPLETED sessions only (a running/paused one
-              has no end yet). Owner-only via the enclosing <OwnerOnly>. */}
-          {session.status === 'completed' && (
+              has no end yet) AND only with the Edit-history toggle (#190). */}
+          {session.status === 'completed' && canEditCompletedItems && (
             <button
               onClick={() => setEditEndOpen(true)}
               className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
@@ -1132,8 +1144,9 @@ export default function SessionDetail() {
               removes it from all totals, returns stock, reverses wallet.
               #184 — only a COMPLETED session is reversible (reverseSession
               rejects anything else); guard on status directly, NOT isActive
-              (which is false during the payment-in-progress window too). */}
-          {session.status === 'completed' && (
+              (which is false during the payment-in-progress window too).
+              #190 — also requires the Edit-history toggle (read-only otherwise). */}
+          {session.status === 'completed' && canEditCompletedItems && (
             <button
               onClick={() => setReverseOpen(true)}
               className="w-full py-3.5 bg-busy/10 text-busy border border-busy/40 rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
