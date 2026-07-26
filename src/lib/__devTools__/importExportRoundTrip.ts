@@ -108,9 +108,11 @@ export interface RoundTripResult {
 
 export async function runImportExportRoundTrip(): Promise<RoundTripResult> {
   // Refuse to run if any session is active — same guard as the production importer.
+  // #189 — filter !deletedAt so soft-deleted running tombstones don't block the test.
   const activeCount = await db.sessions
     .where('status')
     .anyOf(['running', 'paused'])
+    .filter((s) => !s.deletedAt)
     .count()
   if (activeCount > 0) {
     console.error(

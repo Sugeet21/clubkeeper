@@ -1061,13 +1061,18 @@ export default function SessionDetail() {
           </button>
 
           {/* #162 — Delete (reverse) this session. Owner-only. Full undo:
-              removes it from all totals, returns stock, reverses wallet. */}
-          <button
-            onClick={() => setReverseOpen(true)}
-            className="w-full py-3.5 bg-busy/10 text-busy border border-busy/40 rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
-          >
-            Delete Session
-          </button>
+              removes it from all totals, returns stock, reverses wallet.
+              #184 — only a COMPLETED session is reversible (reverseSession
+              rejects anything else); guard on status directly, NOT isActive
+              (which is false during the payment-in-progress window too). */}
+          {session.status === 'completed' && (
+            <button
+              onClick={() => setReverseOpen(true)}
+              className="w-full py-3.5 bg-busy/10 text-busy border border-busy/40 rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
+            >
+              Delete Session
+            </button>
+          )}
         </OwnerOnly>
       </div>
 

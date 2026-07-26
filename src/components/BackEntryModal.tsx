@@ -137,7 +137,16 @@ export function BackEntryModal({ open, onClose, onSaved }: BackEntryModalProps) 
   }
 
   const startedAt = toMs(dateStr, startTimeStr)
-  const endedAt = toMs(dateStr, endTimeStr)
+  // #181 — cross-midnight back-entry: the owner picks ONE date (the start date)
+  // plus a start and end time. If the end time is at or before the start time, the
+  // session ran past midnight and ended the NEXT day, so roll the end +24h. Back
+  // entries are capped under 24h (validateBackEntry), so "end ≤ start" can only
+  // mean next-day — never a >24h session. A small hint below tells the owner.
+  const rawEndedAt = toMs(dateStr, endTimeStr)
+  const endsNextDay =
+    startedAt !== null && rawEndedAt !== null && rawEndedAt <= startedAt
+  const endedAt =
+    rawEndedAt === null ? null : endsNextDay ? rawEndedAt + 24 * 60 * 60_000 : rawEndedAt
 
   const sessionValidation = validateBackEntry({
     tableId,
@@ -420,6 +429,15 @@ export function BackEntryModal({ open, onClose, onSaved }: BackEntryModalProps) 
             />
           </Field>
         </div>
+
+        {/* #181 — cross-midnight hint: reassure the owner the end rolled to the
+            next day (rather than silently, or looking like an error). */}
+        {endsNextDay && (
+          <p className="text-[12px] text-accent mt-1 flex items-center gap-1">
+            <span aria-hidden>🌙</span>
+            Ends next day ({format(new Date(endedAt as number), 'd MMM, h:mm a')})
+          </p>
+        )}
 
         {/* Player name */}
         <Field label="Player Name (optional)">
