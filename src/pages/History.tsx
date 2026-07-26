@@ -7,6 +7,7 @@ import { useTick } from '../hooks/useTick'
 import { getElapsedMs, formatDuration, businessDayOf, businessDayRangeFromDay } from '../lib/time'
 import { calculateAmount } from '../lib/money'
 import { BackEntryModal } from '../components/BackEntryModal'
+import { BackEntryQuickSaleModal } from '../components/BackEntryQuickSaleModal'
 import { Modal } from '../components/Modal'
 import { Toggle } from '../components/Toggle'
 import { useRole } from '../hooks/useRole'
@@ -56,6 +57,7 @@ function SessionRow({
   displayAmount,
   editMode,
   onOpen,
+  alwaysTappable = false,
 }: {
   session: Session
   table: GameTable | undefined
@@ -63,6 +65,10 @@ function SessionRow({
   displayAmount: number
   editMode: boolean
   onOpen: (id: string) => void
+  // #185 — staff read-only view: rows open the (owner-gated, read-only)
+  // SessionDetail without the owner Edit-history toggle. Distinct from
+  // `editMode` (which unlocks owner edit/delete); this only enables navigation.
+  alwaysTappable?: boolean
 }) {
   const elapsed = getElapsedMs(session)
   const abbr = table ? tableAbbr(table.name) : '?'
@@ -91,7 +97,7 @@ function SessionRow({
   // owner turns on the "Edit history" toggle, a row becomes a button that opens
   // the session detail (where Delete / Edit Start Time live). Only completed
   // sessions are openable for correction here.
-  const tappable = editMode && !!session.id
+  const tappable = (editMode || alwaysTappable) && !!session.id
   return (
     <div
       role={tappable ? 'button' : undefined}
@@ -206,11 +212,54 @@ export default function History() {
   return <OwnerHistory />
 }
 
-// Staff view: ONLY the "Log past session" card — no session list, no revenue.
+// Staff view: the "Log past session" card + a READ-ONLY recent-sessions list
+// (#185). Staff can open any past session to settle a player's bill dispute
+// (start/end time + items), but SEE NO revenue totals and CANNOT edit/delete —
+// every mutating control in SessionDetail is <OwnerOnly>, and rows here open
+// via `alwaysTappable` (no owner Edit-history toggle). Deliberately NO date
+// picker / table filter / day grand-totals — that stays owner-only.
 // BackEntryModal is fully functional (staff RLS allows sessions/session_items
 // INSERT + canteen stock UPDATE, exactly what a back entry writes).
 function StaffHistoryView() {
   const [showBackEntry, setShowBackEntry] = useState(false)
+  const [showBackSale, setShowBackSale] = useState(false) // #182
+  const tables = useTables()
+  const settings = useSettings()
+  const [boundaryHour] = useDexieSetting('dayBoundaryHour', 0) // #179
+  const navigate = useNavigate()
+  useTick()
+
+  const currency = settings?.currency ?? '₹'
+
+  // Last 7 business days, ending at the current business day's end. Uses the
+  // same business-day helpers as OwnerHistory so a late-night session groups
+  // under the correct day (#179). Fixed window — no picker (staff view).
+  const todayBiz = businessDayOf(new Date(), boundaryHour)
+  const rangeStart = businessDayRangeFromDay(subDays(todayBiz, 6), boundaryHour).start
+  const rangeEnd = businessDayRangeFromDay(todayBiz, boundaryHour).end
+
+  const rows = useSessionsInRange(rangeStart, rangeEnd)
+
+  const tableMap = useMemo(() => {
+    const m = new Map<string, GameTable>() // Pattern R5: table ids are UUID strings
+    for (const t of tables) if (t.id !== undefined) m.set(t.id, t)
+    return m
+  }, [tables])
+
+  // Group sessions by business day, newest day first, newest session first.
+  const grouped = useMemo(() => {
+    const g = new Map<string, typeof rows>()
+    for (const row of rows) {
+      const key = format(businessDayOf(new Date(row.session.startedAt), boundaryHour), 'yyyy-MM-dd')
+      const list = g.get(key) ?? []
+      list.push(row)
+      g.set(key, list)
+    }
+    for (const list of g.values()) list.sort((a, b) => b.session.startedAt - a.session.startedAt)
+    return g
+  }, [rows, boundaryHour])
+
+  const sortedDays = useMemo(() => [...grouped.keys()].sort((a, b) => (a < b ? 1 : -1)), [grouped])
 
   return (
     <div className="pt-safe min-h-screen bg-bg pb-32">
@@ -218,7 +267,7 @@ function StaffHistoryView() {
         <h1 className="text-[22px] font-bold tracking-tight text-text">History</h1>
       </div>
 
-      <div className="px-4">
+      <div className="px-4 space-y-3">
         <div className="bg-bg-card border border-border rounded-2xl p-5">
           <p className="text-[15px] font-semibold text-text">Log a past session</p>
           <p className="text-[13px] text-text-dim mt-1 leading-snug">
@@ -231,12 +280,71 @@ function StaffHistoryView() {
             + Log past session
           </button>
         </div>
+
+        {/* #182 — back-dated walk-in canteen sale (no table). */}
+        <div className="bg-bg-card border border-border rounded-2xl p-5">
+          <p className="text-[15px] font-semibold text-text">Log a past walk-in sale</p>
+          <p className="text-[13px] text-text-dim mt-1 leading-snug">
+            Forgot to record a walk-in canteen sale? Add it here with its date and time.
+          </p>
+          <button
+            onClick={() => setShowBackSale(true)}
+            className="mt-4 w-full min-h-[48px] bg-bg border border-accent/60 text-accent font-bold rounded-2xl text-[15px] active:scale-[0.99] transition-transform"
+          >
+            + Log past walk-in sale
+          </button>
+        </div>
+      </div>
+
+      {/* #185 — recent sessions, read-only. Tap a row to see start/end + items
+          when a player questions their bill. No revenue totals shown. */}
+      <div className="px-4 mt-5">
+        <p className="text-[13px] font-semibold text-text-dim px-1 mb-2">Recent sessions</p>
+        {sortedDays.length === 0 ? (
+          <div className="bg-bg-card border border-border rounded-2xl px-5 py-8 text-center">
+            <p className="text-[13px] text-text-faint">No sessions in the last 7 days.</p>
+          </div>
+        ) : (
+          sortedDays.map((dayKey) => {
+            const dayRows = grouped.get(dayKey)!
+            const dayDate = new Date(dayKey + 'T00:00:00')
+            return (
+              <div key={dayKey} className="mb-5">
+                <p className="text-[13px] font-semibold text-text mb-2">{dayLabel(dayDate, boundaryHour)}</p>
+                <div className="bg-bg-card border border-border rounded-2xl divide-y divide-border overflow-hidden">
+                  {dayRows.map((row) => {
+                    const { session, items } = row
+                    const base = sessionBaseAmt(session)
+                    const itemsAmt = items.reduce((s, i) => s + i.price * i.quantity, 0)
+                    return (
+                      <SessionRow
+                        key={session.id}
+                        session={session}
+                        table={tableMap.get(session.tableId)}
+                        currency={currency}
+                        displayAmount={base + itemsAmt}
+                        editMode={false}
+                        alwaysTappable
+                        onOpen={(id) => navigate(`/session/${id}`)}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })
+        )}
       </div>
 
       <BackEntryModal
         open={showBackEntry}
         onClose={() => setShowBackEntry(false)}
         onSaved={() => setShowBackEntry(false)}
+      />
+      <BackEntryQuickSaleModal
+        open={showBackSale}
+        onClose={() => setShowBackSale(false)}
+        onSaved={() => setShowBackSale(false)}
       />
     </div>
   )
@@ -267,6 +375,7 @@ function OwnerHistory() {
   // Number(uuid)=NaN so the filter dropdown never matched (#134 sibling).
   const [filterTableId, setFilterTableId] = useState<string | 'all'>('all')
   const [showBackEntry, setShowBackEntry] = useState(false)
+  const [showBackSale, setShowBackSale] = useState(false) // #182
   // #162 — "Edit history" unlock. OFF by default so a stray tap can never open
   // (and risk deleting) a past session — History is the money record. Not
   // persisted: it resets to OFF every visit, so the unlock is always deliberate.
@@ -459,6 +568,13 @@ function OwnerHistory() {
           >
             + Log past session
           </button>
+          {/* #182 — back-dated walk-in canteen sale (no table). */}
+          <button
+            onClick={() => setShowBackSale(true)}
+            className="bg-bg-card border border-border text-accent font-semibold rounded-2xl px-4 py-2 text-sm min-h-[44px]"
+          >
+            + Log past sale
+          </button>
           {(filteredRows.length > 0 || filteredSales.length > 0) && (
             <button onClick={handleExport} className="text-[13px] text-accent font-semibold min-h-[44px]">
               Export ↓
@@ -486,6 +602,16 @@ function OwnerHistory() {
           setFromStr(dateISO)
           setToStr(dateISO)
           setShowBackEntry(false)
+        }}
+      />
+      {/* #182 — back-dated walk-in sale. Snap the range to its date so it shows. */}
+      <BackEntryQuickSaleModal
+        open={showBackSale}
+        onClose={() => setShowBackSale(false)}
+        onSaved={(dateISO) => {
+          setFromStr(dateISO)
+          setToStr(dateISO)
+          setShowBackSale(false)
         }}
       />
 

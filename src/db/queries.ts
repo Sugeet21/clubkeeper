@@ -2019,6 +2019,11 @@ export async function createCanteenSale(input: {
   paymentBreakdown: { cash: number; upi: number; wallet: number }
   customerId?: string
   notes?: string
+  // #182 — back-dated walk-in sale: the epoch-ms to stamp on the SALE row so it
+  // buckets under the correct business day (#179). Omit for a live sale (= now).
+  // The wallet-ledger/lastVisit timestamps below deliberately stay `now` (they
+  // record WHEN the entry was made, an audit fact, like a back-entry session).
+  createdAt?: number
 }): Promise<string> {
   const { cash, upi, wallet } = input.paymentBreakdown
   if (
@@ -2033,6 +2038,15 @@ export async function createCanteenSale(input: {
   }
   if (input.items.length === 0) {
     throw new CanteenSaleInvalidError('Cannot create an empty canteen sale.')
+  }
+  // #182 — a back-dated sale time must be a finite past-or-now instant.
+  if (input.createdAt !== undefined) {
+    if (!Number.isFinite(input.createdAt) || input.createdAt <= 0) {
+      throw new CanteenSaleInvalidError('Invalid sale date/time.')
+    }
+    if (input.createdAt > Date.now()) {
+      throw new CanteenSaleInvalidError('A past sale cannot be in the future.')
+    }
   }
   // Validate each line
   for (const line of input.items) {
@@ -2128,7 +2142,8 @@ export async function createCanteenSale(input: {
       // Insert the sale row last so any earlier throw rolls everything back.
       await b.insert('canteen_sales', {
         id: saleId,
-        createdAt: now,
+        createdAt: input.createdAt ?? now, // #182 — back-dated sales stamp the chosen time
+
         items: input.items.map((line) => ({
           name: line.name,
           price: line.price,

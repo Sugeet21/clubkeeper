@@ -4,6 +4,15 @@
 
 ---
 
+## 26 Jul 2026 — #184 + #185 + #182 built together on staging (owner batch — merge to main after staging verify)
+
+- **Owner asked for three things (26 Jul), filed as separate issues (Rule F), built to merge together:**
+- **#184 (BUG, P2) — "Delete Session" showed on a LIVE session but always failed.** Root cause: the button (`SessionDetail.tsx`) was gated only by `<OwnerOnly>`, no active-check; `reverseSession()` (queries.ts) rejects anything not `status==='completed'`. Fix: wrap the button in `{session.status === 'completed' && …}`. Deliberately NOT `!isActive` — `isActive` is also false during the payment-in-progress window (still non-reversible), so `status==='completed'` aligns UI exactly with the DB guard.
+- **#185 (ENH, P2) — staff read-only History.** `StaffHistoryView` previously showed ONLY the back-entry card. Now it also renders a read-only recent-sessions list (last 7 business days, grouped by business day), rows `alwaysTappable` (new opt-in prop on `SessionRow`) → open `/session/:id` WITHOUT the owner Edit-history toggle. Staff land on a pure-read SessionDetail: Edit-start/Move/Delete are `<OwnerOnly>`, alarm pill is active-only, items sheet is read-only when completed. No day revenue totals shown to staff (owner decision). No date picker/table filter (simple recent list). For settling a player's bill dispute.
+- **#182 (ENH, P2) — back-dated walk-in Quick Sale.** New `BackEntryQuickSaleModal`: date+time → shared `CanteenItemPicker` (usePeakPricing=false, showStock) → cart with +/- steppers → **Cash+UPI-only** split (no wallet/customer — owner decision, safer backfill) → `createCanteenSale({ items, paymentBreakdown:{cash,upi,wallet:0}, createdAt })`. `createCanteenSale` gained an optional `createdAt` (stamps the SALE row for #179 business-day bucketing; wallet-ledger/lastVisit timestamps stay `now`) + a future-time guard. Entry point = a second card in History (owner top-bar button too), for staff AND owner.
+- **Reviewer (fresh-eyes, Rule J) caught a real #179 bug before commit:** owner `onSaved` snapped the range to the raw calendar date, but History interprets its range as BUSINESS days — so an after-midnight sale with `boundaryHour>0` bucketed under the previous day and was filtered OUT of the snapped range (looked failed). Fixed: modal now hands back `businessDayOf(createdAt, boundaryHour)` formatted, not the calendar date. Also folded the future-time check into the save-button `canSave` (button state now honest).
+- **Build clean; strict tsc at the 88-error #118/#138 baseline (0 new).** All three on the `staging` branch, NOT yet merged to main — one staging verify pass covers #181 (cross-midnight, already built) + #184 + #185 + #182, then merge together.
+
 ## 26 Jul 2026 — #165 + #166 CLOSED by owner (walk-in Quick Sale in History)
 
 - Owner confirmed both working on live: walk-in Quick Sales now appear in History (#165) and can be reversed/deleted from History under the Edit-history toggle (#166). Closed per owner confirmation.
