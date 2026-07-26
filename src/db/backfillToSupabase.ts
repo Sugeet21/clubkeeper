@@ -68,6 +68,34 @@ export async function backfillLocalRowsToSupabase(): Promise<BackfillResult> {
     return { ran: false, enqueued: 0, perTable: {} }
   }
 
+  const { enqueued, perTable } = await enqueueAllLocalRowsToOutbox()
+  return { ran: true, enqueued, perTable }
+}
+
+/**
+ * Sentinel-FREE core of the backfill: enqueue one `insert` outbox row
+ * (ignoreDuplicates) per local row across all 9 synced tables, FK-safe order,
+ * stamp the backfill sentinel, and kick the drain. Runs UNCONDITIONALLY — the
+ * caller owns the "should this run" decision.
+ *
+ * Two callers:
+ *   - `backfillLocalRowsToSupabase()` guards on the sentinel (once per device,
+ *     the #129 boot backfill).
+ *   - `importEverythingFromFile()` (#188) calls this DIRECTLY after a restore:
+ *     imported rows are raw `bulkAdd`s that never touched the outbox, so without
+ *     this they would never reach Supabase (Pattern S31). A fresh import is new
+ *     data that must upload regardless of any prior device backfill, so it must
+ *     NOT be sentinel-gated — hence the unconditional entry point.
+ *
+ * ignoreDuplicates:true (ON CONFLICT DO NOTHING) makes re-enqueuing a row that
+ * is already on the server harmless — required for append-only wallet_transactions
+ * (an ON-CONFLICT-DO-UPDATE there 403s, see header). Enqueue + sentinel stamp are
+ * one Dexie tx (no network) so a power-cut can't half-enqueue.
+ */
+export async function enqueueAllLocalRowsToOutbox(): Promise<{
+  enqueued: number
+  perTable: Partial<Record<SyncTableName, number>>
+}> {
   const perTable: Partial<Record<SyncTableName, number>> = {}
   let enqueued = 0
 
@@ -94,12 +122,13 @@ export async function backfillLocalRowsToSupabase(): Promise<BackfillResult> {
       if (count > 0) perTable[syncTable] = count
       enqueued += count
     }
-    // Stamp the sentinel INSIDE the tx — atomic with the enqueue.
+    // Stamp the sentinel INSIDE the tx — atomic with the enqueue. After an import
+    // this also re-arms the once-per-device boot guard so it never double-enqueues.
     await db.settings.update(SETTINGS_ROW_ID, { backfillEnqueuedAt: Date.now() })
   })
 
   if (enqueued > 0) scheduleDrain()
-  return { ran: true, enqueued, perTable }
+  return { enqueued, perTable }
 }
 
 // Mirrors buildOutboxRow in syncWrappers.ts (kept private there), but always an

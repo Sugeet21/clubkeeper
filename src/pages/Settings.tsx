@@ -1602,6 +1602,17 @@ function OwnerSettings() {
             </div>
             <h2 className="text-[22px] font-bold text-text mb-2">Backup restored</h2>
             <p className="text-[14px] text-text-dim mb-6">Your data is back. Tap Done to continue.</p>
+            {/* #188 — restore succeeded locally but the cloud sync push failed.
+                Non-blocking: data is safe on this device and will sync on the next
+                change. Owner should know it isn't in the cloud yet. */}
+            {importSuccess.syncEnqueueFailed && (
+              <div className="w-full max-w-sm bg-paused/10 border border-paused/40 rounded-2xl px-4 py-3 mb-4">
+                <p className="text-[13px] text-paused font-semibold">Saved on this device — cloud sync pending</p>
+                <p className="text-[12px] text-text-dim mt-1 leading-snug">
+                  Your data is restored here but couldn't be pushed to the cloud yet. It will sync on your next change, or re-import to retry.
+                </p>
+              </div>
+            )}
             <div className="w-full max-w-sm bg-bg-card border border-border rounded-2xl divide-y divide-border">
               <ImportCountRow label="Tables" value={importSuccess.counts.tables} />
               <ImportCountRow label="Sessions" value={importSuccess.counts.sessions} />

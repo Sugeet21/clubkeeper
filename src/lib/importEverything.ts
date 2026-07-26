@@ -1,5 +1,6 @@
 import { db } from '../db/database'
 import { CURRENT_SCHEMA_VERSION } from '../db/queries'
+import { enqueueAllLocalRowsToOutbox } from '../db/backfillToSupabase'
 import type {
   GameTable,
   Session,
@@ -36,6 +37,11 @@ export interface ImportSuccess {
     bookings: number
   }
   walletBalanceTotal: number
+  // #188 — the local restore succeeded, but pushing the restored rows to the
+  // sync outbox failed. Data is safe on THIS device; it just won't reach the
+  // cloud/other devices until the next successful write kicks a drain, or the
+  // owner re-imports. UI surfaces a non-blocking warning so it isn't silent.
+  syncEnqueueFailed?: boolean
 }
 
 export interface ImportFailure {
@@ -232,6 +238,24 @@ export async function importEverythingFromFile(file: File): Promise<ImportResult
     return { ok: false, reason: 'transaction_failed', detail: String(err) }
   }
 
+  // 7b. Push the restored rows to Supabase (#188, Pattern S31). The import above
+  // is a raw `bulkAdd` that bypasses the sync outbox, so without this the restored
+  // data would live ONLY on this device and never reach the cloud / other devices.
+  // enqueueAllLocalRowsToOutbox() enqueues one insert-outbox row per local row
+  // (ignoreDuplicates → ON CONFLICT DO NOTHING, safe for append-only wallet rows)
+  // in its own tx and kicks the drain; the SyncRunner uploads them when online
+  // (or later, once a user_club_id claim exists). Best-effort: a failure here must
+  // NOT fail the import — the local restore already succeeded, and the boot
+  // backfill / next write will re-drive sync. Log and continue.
+  let syncEnqueueFailed = false
+  try {
+    await enqueueAllLocalRowsToOutbox()
+  } catch (err) {
+    syncEnqueueFailed = true
+    // eslint-disable-next-line no-console
+    console.error('[importEverything] outbox enqueue after restore failed:', err)
+  }
+
   // 8. Post-import: compute counts + wallet balance total
   const walletBalanceTotal = customers.reduce(
     (sum, c) => sum + (typeof c.walletBalance === 'number' ? c.walletBalance : 0),
@@ -259,5 +283,6 @@ export async function importEverythingFromFile(file: File): Promise<ImportResult
       bookings: bookings.length,
     },
     walletBalanceTotal,
+    syncEnqueueFailed,
   }
 }
