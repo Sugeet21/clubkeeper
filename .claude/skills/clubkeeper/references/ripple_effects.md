@@ -90,6 +90,7 @@ Matrix-row → gate map (extend this table in D6/D7; every new gate gets a row):
 |---|---|
 | Add/edit table (`game_tables` INSERT) | `Home.tsx` FAB + `TableFormModal` mount in `<OwnerOnly>` (D5 plan amendment — prompt said "Home: no gating" but the FAB is an owner-only write). Settings table CRUD is unreachable for staff via the D4 role split. |
 | Edit session start time | `SessionDetail.tsx`: top-bar pencil + "Edit Start Time" button + edit-start `Modal` mount, all in `<OwnerOnly>` |
+| Edit session end time (#183) | `SessionDetail.tsx`: completed-only "Edit End Time" button + edit-end `Modal` mount, both in `<OwnerOnly>` (no top-bar pencil — end edits are rarer; action-list button only). `queries.ts` `editSessionEnd(sessionId, newEndedAt)` (completed-only, not-future, > startedAt) recomputes `amount`+`roundedDurationMs` via the SHARED `recomputeCompletedBill()` helper (same billing logic as `editSessionStart`+`stopSession` — the two edit paths can't drift). Both handlers call the shared `maybeReopenResplit()` (#163 re-split reopen when the new total no longer matches `paymentBreakdown`). |
 | Move session between tables | `SessionDetail.tsx`: "Move table" button + `MoveTableModal` mount in `<OwnerOnly>` |
 | Delete session | `SessionDetail.tsx`: "Delete Session" button (#162 reverse) inside `<OwnerOnly>` AND gated `{session.status === 'completed'}` (#184 — never shown on a live/paused/payment-in-progress session; `reverseSession()` is completed-only). Delete confirm `Modal` mount also `<OwnerOnly>`. |
 | History list / revenue / CSV export | `History.tsx` role split: default export branches on `useRole()` → `StaffHistoryView` vs `OwnerHistory`. **Staff view (#185): "Log a past session" card + "Log a past walk-in sale" card (#182) + a READ-ONLY recent-sessions list (last 7 business days, rows `alwaysTappable` → `/session/:id`, NO day revenue totals, NO date picker).** Owner view keeps the full body + Edit-history toggle + both back-entry CTAs. Staff KEEP back-entry creation (owner amendment 10 Jul). `SessionRow` has an opt-in `alwaysTappable` prop (staff read-nav without the owner toggle). |
@@ -156,7 +157,7 @@ Owns: `Session` interface, session lifecycle (start/pause/resume/stop), timer ma
 
 Files in scope:
 - `src/types/index.ts` — `Session`, `PaymentBreakdown`, `TableMove`
-- `src/db/queries.ts` — `startSession`, `pauseSession`, `resumeSession`, `stopSession`, `editSessionStart`, `pauseForPayment`, `confirmPaymentAndStop`, `cancelPaymentAndResume`, `reconcileActiveSessions` + `compareSessionCanonical` + `TableBusyError` + `returnSessionItemStock` (#168, Pattern T11)
+- `src/db/queries.ts` — `startSession`, `pauseSession`, `resumeSession`, `stopSession`, `editSessionStart`, `editSessionEnd` (#183, shares `recomputeCompletedBill`), `pauseForPayment`, `confirmPaymentAndStop`, `cancelPaymentAndResume`, `reconcileActiveSessions` + `compareSessionCanonical` + `TableBusyError` + `returnSessionItemStock` (#168, Pattern T11)
 - `src/lib/time.ts` — `getElapsedMs`
 - `src/lib/money.ts` — `calculateAmount`, `applyRounding`
 - `src/lib/summaryMath.ts` — pure aggregation called from Summary render body
