@@ -753,7 +753,9 @@ function OwnerHistory() {
                         currency={currency}
                         displayAmount={base + itemsAmt}
                         editMode={editMode}
-                        onOpen={(id) => navigate(`/session/${id}`)}
+                        // #190 — carry the Edit-history intent so SessionDetail
+                        // unlocks item add/edit/delete (owner-gated there too).
+                        onOpen={(id) => navigate(`/session/${id}`, { state: { editHistory: editMode } })}
                       />
                     )
                   })}

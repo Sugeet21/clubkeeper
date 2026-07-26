@@ -44,6 +44,11 @@ interface AddItemBottomSheetProps {
   onClose: () => void
   sessionId: string // Post-v20 ID law (Pattern R5): session ids are UUID strings (#134 sibling)
   sessionStatus: 'running' | 'paused' | 'completed'
+  // #190 — owner-with-Edit-history-toggle unlocks item add/edit/delete on a
+  // COMPLETED session. Off (default) keeps the #185 read-only view for staff
+  // and owner-without-toggle. SessionDetail only sets it after an OwnerOnly
+  // role gate, so this prop is never true on a staff device.
+  allowCompletedEdit?: boolean
 }
 
 // ─── Shared inline atomic transaction ────────────────────────────────────────
@@ -104,6 +109,7 @@ export function AddItemBottomSheet({
   onClose,
   sessionId,
   sessionStatus,
+  allowCompletedEdit = false,
 }: AddItemBottomSheetProps) {
   const items = useSessionItems(sessionId)
   const canteenItems = useLiveQuery(() => getCanteenItems(false), [], [] as CanteenItem[])
@@ -134,7 +140,9 @@ export function AddItemBottomSheet({
   const [manualOpen, setManualOpen] = useState(false)
   const [priceWarning, setPriceWarning] = useState<{ canteenItem: CanteenItem } | null>(null)
 
-  const isReadOnly = sessionStatus === 'completed'
+  // #190 — a completed session is read-only UNLESS the owner opened it with the
+  // Edit-history toggle on (allowCompletedEdit). Running/paused are always editable.
+  const isReadOnly = sessionStatus === 'completed' && !allowCompletedEdit
 
   // Canteen picker is the shared <CanteenItemPicker> (#167) — it owns its own
   // search box + grid. This component only supplies the tap handler + the ×N

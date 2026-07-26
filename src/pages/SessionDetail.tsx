@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { format } from 'date-fns'
 import { db } from '../db/database'
@@ -31,6 +31,7 @@ import { AddItemBottomSheet } from '../components/AddItemBottomSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
 import { OwnerOnly } from '../components/auth/RoleGuard'
+import { useRole } from '../hooks/useRole'
 import { CoinRedemptionPill } from '../components/CoinRedemptionPill'
 import { redeemCoins, getCoinConfig, reverseSession, SessionReversalError, resplitSessionPayment } from '../db/queries'
 import { resolveCoinConfig } from '../lib/coins'
@@ -367,8 +368,17 @@ function formatPlayers(s: Session): string {
 export default function SessionDetail() {
   const { sessionId: rawSessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const role = useRole()
   const sid = rawSessionId ?? ''
   const sidValid = sid.length === 36
+
+  // #190 — owner opened this session from History with the Edit-history toggle
+  // ON (nav state) → unlock item add/edit/delete on a completed session. Nav
+  // state is NEVER trusted alone: the `role === 'owner'` gate blocks a staff
+  // device that somehow carries the flag (Pattern A12 — gate the action).
+  const editHistoryRequested = (location.state as { editHistory?: boolean } | null)?.editHistory === true
+  const canEditCompletedItems = editHistoryRequested && role === 'owner'
 
   // undefined = loading, null = not found, Session = loaded
   const session = useLiveQuery<Session | null>(
@@ -1065,13 +1075,15 @@ export default function SessionDetail() {
           </div>
         )}
 
-        {/* Add Item / View Items button */}
+        {/* Add Item / Edit Items / View Items button. #190 — completed session
+            reads 'Edit Items' only when the owner arrived with the Edit-history
+            toggle on (canEditCompletedItems); otherwise 'View Items' (read-only). */}
         {!isActive ? (
           <button
             onClick={() => setSheetOpen(true)}
             className="w-full min-h-[44px] bg-bg-card text-text-dim border border-border rounded-2xl flex items-center justify-center gap-2 font-medium text-[14px] active:scale-[0.99] transition-transform"
           >
-            View Items
+            {canEditCompletedItems ? 'Edit Items' : 'View Items'}
           </button>
         ) : (
           <button
@@ -1386,9 +1398,17 @@ export default function SessionDetail() {
       {/* ── Add Item bottom sheet ───────────────────────────────────────── */}
       <AddItemBottomSheet
         open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
+        onClose={() => {
+          setSheetOpen(false)
+          // #190 — editing items on a completed session changes the grand total,
+          // so re-confirm the payment split (#163) exactly like a time edit does.
+          if (canEditCompletedItems && session.status === 'completed') {
+            void maybeReopenResplit()
+          }
+        }}
         sessionId={session.id!}
         sessionStatus={session.status}
+        allowCompletedEdit={canEditCompletedItems}
       />
 
       {/* ── Set Alarm bottom sheet ─────────────────────────────────────── */}
