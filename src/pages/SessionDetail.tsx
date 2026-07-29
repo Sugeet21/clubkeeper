@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { format } from 'date-fns'
 import { db } from '../db/database'
@@ -8,6 +8,7 @@ import {
   resumeSession,
   stopSession,
   editSessionStart,
+  editSessionEnd,
   updateSession,
   updateSessionNotify,
   moveSessionToTable,
@@ -30,6 +31,7 @@ import { AddItemBottomSheet } from '../components/AddItemBottomSheet'
 import { UpiQrCard } from '../components/UpiQrCard'
 import { PaymentSplitSheet } from '../components/PaymentSplitSheet'
 import { OwnerOnly } from '../components/auth/RoleGuard'
+import { useRole } from '../hooks/useRole'
 import { CoinRedemptionPill } from '../components/CoinRedemptionPill'
 import { redeemCoins, getCoinConfig, reverseSession, SessionReversalError, resplitSessionPayment } from '../db/queries'
 import { resolveCoinConfig } from '../lib/coins'
@@ -366,8 +368,17 @@ function formatPlayers(s: Session): string {
 export default function SessionDetail() {
   const { sessionId: rawSessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const role = useRole()
   const sid = rawSessionId ?? ''
   const sidValid = sid.length === 36
+
+  // #190 — owner opened this session from History with the Edit-history toggle
+  // ON (nav state) → unlock item add/edit/delete on a completed session. Nav
+  // state is NEVER trusted alone: the `role === 'owner'` gate blocks a staff
+  // device that somehow carries the flag (Pattern A12 — gate the action).
+  const editHistoryRequested = (location.state as { editHistory?: boolean } | null)?.editHistory === true
+  const canEditCompletedItems = editHistoryRequested && role === 'owner'
 
   // undefined = loading, null = not found, Session = loaded
   const session = useLiveQuery<Session | null>(
@@ -409,6 +420,11 @@ export default function SessionDetail() {
   const [editDate, setEditDate] = useState('')
   const [editTime, setEditTime] = useState('')
   const [editError, setEditError] = useState<string | null>(null)
+  // #183 — edit END time of a completed session (mirrors edit-start)
+  const [editEndOpen, setEditEndOpen] = useState(false)
+  const [editEndDate, setEditEndDate] = useState('')
+  const [editEndTime, setEditEndTime] = useState('')
+  const [editEndError, setEditEndError] = useState<string | null>(null)
   // #162 — reverse (delete) session confirm
   const [reverseOpen, setReverseOpen] = useState(false)
   const [reverseReason, setReverseReason] = useState('')
@@ -472,6 +488,16 @@ export default function SessionDetail() {
     setEditError(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editStartOpen])
+
+  // #183 — populate edit-end fields whenever that modal opens
+  useEffect(() => {
+    if (!editEndOpen || !session || session.endedAt === null) return
+    const dt = new Date(session.endedAt)
+    setEditEndDate(format(dt, 'yyyy-MM-dd'))
+    setEditEndTime(format(dt, 'HH:mm'))
+    setEditEndError(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editEndOpen])
 
   // Re-enter payment screen when navigating to a session that is paused-for-payment
   // (staff closed the tab or navigated away after pauseForPayment but before confirming).
@@ -660,6 +686,31 @@ export default function SessionDetail() {
     await updateSession(session.id!, { framesPlayed: next })
   }
 
+  // #163 — after any edit that changes a completed session's total, a recorded
+  // paymentBreakdown that no longer sums to the new grand total is internally
+  // inconsistent (Summary PAYMENT MODE / piggy would be wrong), so re-open the
+  // split sheet for the owner to re-confirm how the new total was paid.
+  // resplitSessionPayment (parent onConfirm) reverses the old wallet leg before
+  // applying the new one. Shared by edit-start (#163) and edit-end (#183).
+  async function maybeReopenResplit() {
+    const sid = session?.id
+    if (!sid) return
+    const fresh = await db.sessions.get(sid)
+    if (fresh?.status === 'completed' && fresh.paymentBreakdown) {
+      const freshItems = await db.sessionItems
+        .where('sessionId')
+        .equals(sid)
+        .filter((i) => !i.deletedAt)
+        .toArray()
+      const newTotal =
+        fresh.amount + freshItems.reduce((s, i) => s + i.price * i.quantity, 0)
+      const bd = fresh.paymentBreakdown
+      if (bd.cash + bd.upi + bd.wallet !== newTotal) {
+        setResplitOpen(true)
+      }
+    }
+  }
+
   async function handleSaveEditStart() {
     setEditError(null)
     const combined = new Date(`${editDate}T${editTime}:00`)
@@ -679,31 +730,35 @@ export default function SessionDetail() {
     try {
       await editSessionStart(session.id!, newTs)
       setEditStartOpen(false)
-      // #163 — the edit may have changed the total. A completed session with a
-      // recorded paymentBreakdown that no longer sums to the new grand total is
-      // internally inconsistent (Summary PAYMENT MODE / piggy would be wrong),
-      // so re-open the split sheet for the owner to re-confirm how the new total
-      // was paid. resplitSessionPayment (parent onConfirm) reverses the old
-      // wallet leg before applying the new one.
-      const sid = session?.id
-      if (sid) {
-        const fresh = await db.sessions.get(sid)
-        if (fresh?.status === 'completed' && fresh.paymentBreakdown) {
-          const freshItems = await db.sessionItems
-            .where('sessionId')
-            .equals(sid)
-            .filter((i) => !i.deletedAt)
-            .toArray()
-          const newTotal =
-            fresh.amount + freshItems.reduce((s, i) => s + i.price * i.quantity, 0)
-          const bd = fresh.paymentBreakdown
-          if (bd.cash + bd.upi + bd.wallet !== newTotal) {
-            setResplitOpen(true)
-          }
-        }
-      }
+      await maybeReopenResplit()
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Failed to update.')
+    }
+  }
+
+  // #183 — edit the END time of a completed session (mirrors handleSaveEditStart)
+  async function handleSaveEditEnd() {
+    setEditEndError(null)
+    const combined = new Date(`${editEndDate}T${editEndTime}:00`)
+    if (isNaN(combined.getTime())) {
+      setEditEndError('Invalid date or time.')
+      return
+    }
+    const newTs = combined.getTime()
+    if (newTs > Date.now()) {
+      setEditEndError('End time cannot be in the future.')
+      return
+    }
+    if (newTs <= session.startedAt) {
+      setEditEndError('End time must be after start time.')
+      return
+    }
+    try {
+      await editSessionEnd(session.id!, newTs)
+      setEditEndOpen(false)
+      await maybeReopenResplit()
+    } catch (err) {
+      setEditEndError(err instanceof Error ? err.message : 'Failed to update.')
     }
   }
 
@@ -821,16 +876,20 @@ export default function SessionDetail() {
             <span className="text-sm">Home</span>
           </button>
           {/* Edit start time — owner-only (Pattern A12): staff RLS forbids
-              started_at edits; matrix "Edit session start time ❌ staff". */}
-          <OwnerOnly>
-            <button
-              onClick={() => setEditStartOpen(true)}
-              className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim active:text-text transition-colors"
-              aria-label="Edit start time"
-            >
-              <PencilIcon />
-            </button>
-          </OwnerOnly>
+              started_at edits; matrix "Edit session start time ❌ staff".
+              #190 — on a completed session, only with the Edit-history toggle
+              (canEditCompletedItems); active sessions always show it. */}
+          {(isActive || canEditCompletedItems) && (
+            <OwnerOnly>
+              <button
+                onClick={() => setEditStartOpen(true)}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center text-text-dim active:text-text transition-colors"
+                aria-label="Edit start time"
+              >
+                <PencilIcon />
+              </button>
+            </OwnerOnly>
+          )}
         </div>
       </div>
 
@@ -1020,13 +1079,15 @@ export default function SessionDetail() {
           </div>
         )}
 
-        {/* Add Item / View Items button */}
+        {/* Add Item / Edit Items / View Items button. #190 — completed session
+            reads 'Edit Items' only when the owner arrived with the Edit-history
+            toggle on (canEditCompletedItems); otherwise 'View Items' (read-only). */}
         {!isActive ? (
           <button
             onClick={() => setSheetOpen(true)}
             className="w-full min-h-[44px] bg-bg-card text-text-dim border border-border rounded-2xl flex items-center justify-center gap-2 font-medium text-[14px] active:scale-[0.99] transition-transform"
           >
-            View Items
+            {canEditCompletedItems ? 'Edit Items' : 'View Items'}
           </button>
         ) : (
           <button
@@ -1038,8 +1099,13 @@ export default function SessionDetail() {
           </button>
         )}
 
-        {/* Move table + edit start — owner-only (Pattern A12, §2 matrix):
-            both are staff-forbidden writes; a staff-queued one dead-letters. */}
+        {/* Move table + edit start/end + delete — owner-only (Pattern A12, §2
+            matrix): all are staff-forbidden writes; a staff-queued one
+            dead-letters. #190 — on a COMPLETED session these correction controls
+            ALSO require the Edit-history toggle (canEditCompletedItems): owner
+            opening a past session with the toggle OFF gets a pure read-only view.
+            Active (running/paused) sessions are managed live from Tables, so
+            their edit controls always show for the owner regardless of toggle. */}
         <OwnerOnly>
           {/* Move table button — active sessions only */}
           {isActive && (
@@ -1052,20 +1118,35 @@ export default function SessionDetail() {
             </button>
           )}
 
-          {/* Edit start time */}
-          <button
-            onClick={() => setEditStartOpen(true)}
-            className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
-          >
-            Edit Start Time
-          </button>
+          {/* Edit start time — active session (live management) OR completed
+              session opened WITH the Edit-history toggle (#190). */}
+          {(isActive || canEditCompletedItems) && (
+            <button
+              onClick={() => setEditStartOpen(true)}
+              className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
+            >
+              Edit Start Time
+            </button>
+          )}
+
+          {/* #183 — Edit end time. COMPLETED sessions only (a running/paused one
+              has no end yet) AND only with the Edit-history toggle (#190). */}
+          {session.status === 'completed' && canEditCompletedItems && (
+            <button
+              onClick={() => setEditEndOpen(true)}
+              className="w-full py-3.5 bg-bg-card text-text-dim border border-border rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
+            >
+              Edit End Time
+            </button>
+          )}
 
           {/* #162 — Delete (reverse) this session. Owner-only. Full undo:
               removes it from all totals, returns stock, reverses wallet.
               #184 — only a COMPLETED session is reversible (reverseSession
               rejects anything else); guard on status directly, NOT isActive
-              (which is false during the payment-in-progress window too). */}
-          {session.status === 'completed' && (
+              (which is false during the payment-in-progress window too).
+              #190 — also requires the Edit-history toggle (read-only otherwise). */}
+          {session.status === 'completed' && canEditCompletedItems && (
             <button
               onClick={() => setReverseOpen(true)}
               className="w-full py-3.5 bg-busy/10 text-busy border border-busy/40 rounded-2xl text-[14px] font-semibold active:scale-[0.99] transition-transform"
@@ -1195,6 +1276,59 @@ export default function SessionDetail() {
         </div>
       </Modal>
 
+      {/* ── #183 Edit end time modal ── inside the same <OwnerOnly> (Pattern
+          A12: gate the action, not just the trigger) ────────────────────── */}
+      <Modal
+        open={editEndOpen}
+        onClose={() => setEditEndOpen(false)}
+        title="Edit End Time"
+      >
+        <p className="text-text-faint text-[12px] font-mono mb-4">
+          Current: {session.endedAt !== null ? format(session.endedAt, 'h:mm a, d MMM yyyy') : '—'}
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-[11px] uppercase tracking-widest font-mono text-text-faint mb-1.5">
+              Date
+            </label>
+            <input
+              type="date"
+              value={editEndDate}
+              onChange={(e) => setEditEndDate(e.target.value)}
+              className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-[15px] focus:border-accent focus:outline-none transition-colors"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] uppercase tracking-widest font-mono text-text-faint mb-1.5">
+              Time
+            </label>
+            <input
+              type="time"
+              value={editEndTime}
+              onChange={(e) => setEditEndTime(e.target.value)}
+              className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-[15px] focus:border-accent focus:outline-none transition-colors"
+            />
+          </div>
+          {editEndError && (
+            <p className="text-busy text-[13px]">{editEndError}</p>
+          )}
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <button
+              onClick={() => setEditEndOpen(false)}
+              className="py-3.5 bg-bg-card border border-border text-text rounded-xl text-[14px] font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSaveEditEnd}
+              className="py-3.5 bg-accent text-bg rounded-xl text-[14px] font-bold"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* ── #162 Delete/reverse confirm — owner-only mount (Pattern A12) ─── */}
       <Modal
         open={reverseOpen}
@@ -1277,9 +1411,17 @@ export default function SessionDetail() {
       {/* ── Add Item bottom sheet ───────────────────────────────────────── */}
       <AddItemBottomSheet
         open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
+        onClose={() => {
+          setSheetOpen(false)
+          // #190 — editing items on a completed session changes the grand total,
+          // so re-confirm the payment split (#163) exactly like a time edit does.
+          if (canEditCompletedItems && session.status === 'completed') {
+            void maybeReopenResplit()
+          }
+        }}
         sessionId={session.id!}
         sessionStatus={session.status}
+        allowCompletedEdit={canEditCompletedItems}
       />
 
       {/* ── Set Alarm bottom sheet ─────────────────────────────────────── */}
